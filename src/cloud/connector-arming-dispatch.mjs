@@ -96,8 +96,9 @@ import { createCredentialConnectClient } from './credential-connect.mjs';
 import { createMcpPromptsClient } from './connector-mcp-prompts.mjs';
 import { createToolConnectionsStore } from './tool-connections.mjs';
 import { classifyCustomGate, customGateKey } from './connector-custom-gate.mjs';
-import { createConnectorOAuthClient } from './connector-oauth-pending.mjs';
+import { createConnectorOAuthClient, createTenantPairOAuthClient } from './connector-oauth-pending.mjs';
 import { fixedProviderForEntry } from './connector-oauth-dcr.mjs';
+import { isTenantPairProvider, resolveTenantPair } from './connector-tenant-pair.mjs';
 
 // sanitizeArmedConnectors caps the stored set at MAX_MESSAGE_CONNECTORS
 // (envoy-agents.mjs); the resolved set keeps the same ceiling.
@@ -317,6 +318,32 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
     return { ...base, ...facts, state: connection.state, reason: `connection-${connection.state}`, detail: `its connection is ${connection.state}` };
   }
 
+  // TENANT PAIR (connector-tenant-pair.mjs): for a tenant-pair
+  // entry (Box, Salesforce) the tenant's pair is resolved ONCE
+  // here, under the dispatch's own actor and the oauth_refresh
+  // reason class — the vault's qualification for this kind; the
+  // renewal road below is the pair's only unattended reader. The
+  // pair feeds two things: the refresh leg's client (built from
+  // the pair, never env), and the record's endpoint when the
+  // pair carries the per-customer endpoint (Salesforce: the
+  // org's own MCP server address, which the catalog can only
+  // name as a template). Records for a connection that is not
+  // connected keep the catalog's endpoint — the pair completes
+  // the address only for a connection that can run against it.
+  const pairProvider = fixedProviderForEntry(entry);
+  let tenantPair = null;
+  if (pairProvider && isTenantPairProvider(pairProvider) && credentials) {
+    tenantPair = await resolveTenantPair(credentials, {
+      tenantId,
+      actorContext: actorContext ?? armingActorContext({ tenantId }),
+      provider: pairProvider,
+      reasonClass: 'oauth_refresh',
+    });
+  }
+  const recordFacts = tenantPair?.mcpEndpointUrl
+    ? { ...facts, endpointUrl: tenantPair.mcpEndpointUrl }
+    : facts;
+
   // The turn's token, in the design's order (§1.1/§2.2): the
   // person's own connection, then the operator's token for the
   // provider, then none. Between the connection and the operator
@@ -341,8 +368,17 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
     // and with the provenance provider id it resolves identically
     // on every seat. Presenting the turn's seat would look up a
     // vault row that was never written and arm nothing.
+    // The same provenance law names the ENTRY: a connection
+    // family's physical row can sit under a sibling member's
+    // entry id (the Microsoft four are one connection), and the
+    // tokens were stored under the provider id and references
+    // minted with THAT entry. The connection record's own
+    // entryId is the physical one; the requested pair's entryId
+    // equals it for every non-family entry, so nothing changes
+    // outside a family.
     const provenanceSeat = connection.seatId ?? seatId;
-    const providerId = `connector.${provenanceSeat}.${entryId}`;
+    const provenanceEntryId = connection.entryId ?? entryId;
+    const providerId = `connector.${provenanceSeat}.${provenanceEntryId}`;
     const resolved = await credentials.resolveVaultCredential({
       ...baseActor,
       providerId,
@@ -352,7 +388,13 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
     const value = resolved?.accepted ? tokenFromCredential(resolved.credential) : null;
     if (value) { accessToken = value; tokenSource = 'connection'; }
     if (!accessToken && connection.refreshTokenRef && typeof credentials.storeCredential === 'function') {
-      const refreshClient = refreshClientForEntry(entry, oauthClientFor);
+      let refreshClient = refreshClientForEntry(entry, oauthClientFor);
+      if (!refreshClient && tenantPair) {
+        // TENANT PAIR: the renewal runs under the tenant's own
+        // pair — the registry holds no client for this provider
+        // by design, so the pair resolved above is the only road.
+        refreshClient = createTenantPairOAuthClient(pairProvider, tenantPair, {});
+      }
       if (refreshClient) {
         // The refresh token: from this resolve's own bundle when
         // it carried one, else from the refresh reference under
@@ -383,7 +425,7 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
               await store.markNeedsReconnect(tenantId, key, baseActor.actorSubject);
             }
             return {
-              ...base, ...facts, state: 'needs-reconnect', reason: 'connection-needs-reconnect',
+              ...base, ...recordFacts, state: 'needs-reconnect', reason: 'connection-needs-reconnect',
               detail: 'its sign-in could not be renewed — the provider refused the renewal, so it needs reconnecting',
             };
           }
@@ -394,8 +436,8 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
             // above): the set's references stay one family, so the
             // next resolve — on any seat — finds them under the
             // same provider id the connection has always used.
-            const nextAccessRef = buildConnectorTokenRef({ tenantId, seatId: provenanceSeat, entryId, personId, tokenKind: 'access' });
-            const nextRefreshRef = buildConnectorTokenRef({ tenantId, seatId: provenanceSeat, entryId, personId, tokenKind: 'refresh' });
+            const nextAccessRef = buildConnectorTokenRef({ tenantId, seatId: provenanceSeat, entryId: provenanceEntryId, personId, tokenKind: 'access' });
+            const nextRefreshRef = buildConnectorTokenRef({ tenantId, seatId: provenanceSeat, entryId: provenanceEntryId, personId, tokenKind: 'refresh' });
             const bundle = {
               ...baseActor, providerId, credentialKind: 'oauth_bundle',
               accessToken: tokens.accessToken, refreshToken: nextRefreshToken,
@@ -438,11 +480,11 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
   let snapshot = await store.getCurrentSnapshot(tenantId, key);
   let settled = refreshedConnection ?? connection;
   if (!snapshot && entry.kind === 'custom') {
-    return { ...base, ...facts, state: 'freeze-failed', reason: 'freeze-failed', detail: 'it passed its safety check but has no frozen tool list from that check yet, so this turn cannot run its tools' };
+    return { ...base, ...recordFacts, state: 'freeze-failed', reason: 'freeze-failed', detail: 'it passed its safety check but has no frozen tool list from that check yet, so this turn cannot run its tools' };
   }
   if (!snapshot) {
     if (!accessToken && entry.authMode !== 'none') {
-      return { ...base, ...facts, state: 'freeze-failed', reason: 'freeze-failed', detail: 'it has no frozen tool list yet, and no sign-in could be resolved to take one' };
+      return { ...base, ...recordFacts, state: 'freeze-failed', reason: 'freeze-failed', detail: 'it has no frozen tool list yet, and no sign-in could be resolved to take one' };
     }
     try {
       const listed = await listTools({ endpoint: entry.mcpEndpointUrl, accessToken });
@@ -450,13 +492,13 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
       snapshot = await store.freezeSnapshot(tenantId, key, listed.tools, personId);
       settled = (await store.getConnection(tenantId, key)) ?? connection;
     } catch (error) {
-      return { ...base, ...facts, state: 'freeze-failed', reason: 'freeze-failed', detail: `its tool list could not be frozen for this turn (${error.message})` };
+      return { ...base, ...recordFacts, state: 'freeze-failed', reason: 'freeze-failed', detail: `its tool list could not be frozen for this turn (${error.message})` };
     }
   }
 
   return {
     ...base,
-    ...facts,
+    ...recordFacts,
     state: 'connected',
     accountIdentity: settled.accountIdentity ?? null,
     posture: settled.posture ?? 'ask',

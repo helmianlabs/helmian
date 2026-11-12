@@ -617,8 +617,23 @@ export function dcrProviderKeyForEntry(entry) {
 // Helmian is not in, so the DCR road cannot serve it either
 // (Dropbox's general authorization-server metadata does publish
 // a registration endpoint; the MCP server's own documentation
-// is what gates it to the trusted set). An entry not named
-// here with an OAuth road and a server endpoint takes the
+// is what gates it to the trusted set). The Microsoft bite
+// (2026-11-10) adds the four Microsoft entries — OneDrive,
+// Outlook, Microsoft Teams, SharePoint — all under the ONE
+// provider 'microsoft': Microsoft's unified Work IQ server
+// serves all four behind one Entra app registration, and Entra
+// offers neither dynamic registration nor a client-id metadata
+// document (REGISTRATION-PACK §6), so the fixed road is the
+// only one that can serve them. The Box bite (2026-11-10) adds
+// 'helmian-box' under the provider 'box' — the first TENANT-PAIR
+// provider (connector-tenant-pair.mjs): the fixed map names it
+// so kind resolution and the refresh leg find the road, but its
+// client is built from the tenant's own stored pair, never from
+// env — connectorOAuthKindForEntry's `configured` for a tenant-
+// pair provider therefore reads the ENV truth (unconfigured),
+// and the write route resolves the pair per tenant before it
+// ever consults that flag. An entry not named here with an
+// OAuth road and a server endpoint takes the
 // discovery-driven DCR kind.
 const FIXED_PROVIDER_BY_ENTRY_ID = Object.freeze({
   github: 'github',
@@ -631,6 +646,12 @@ const FIXED_PROVIDER_BY_ENTRY_ID = Object.freeze({
   'helmian-google-drive': 'google',
   'helmian-canva': 'canva',
   'helmian-dropbox': 'dropbox',
+  'helmian-onedrive': 'microsoft',
+  'helmian-outlook': 'microsoft',
+  'helmian-microsoft-teams': 'microsoft',
+  'helmian-sharepoint': 'microsoft',
+  'helmian-box': 'box',
+  'helmian-salesforce': 'salesforce',
 });
 
 // The fixed provider a catalog entry's OAuth road runs under, or

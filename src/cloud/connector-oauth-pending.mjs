@@ -132,6 +132,35 @@ export function createConnectorOAuthPendingStore(pool) {
         throw error;
       }
     },
+    // Read a handshake WITHOUT consuming it: the same row take()
+    // would return, or null on the same conditions. The callback's
+    // provider-error road peeks first — a failed handshake's row
+    // is consumed only by the one error road that acts on it (the
+    // Microsoft admin-consent page); every other error keeps
+    // today's behaviour, the row untouched.
+    async peek(tenantId, stateHash) {
+      try {
+        return await withTenant(tenantId, async (client) => {
+          const r = await client.query(
+            `select * from helmion.connector_oauth_pending where ${whereRow} and expires_at > clock_timestamp()`,
+            [stateHash],
+          );
+          const row = r.rows[0];
+          if (!row) return null;
+          return {
+            personId: row.person_id, seatId: row.seat_id, entryId: row.entry_id, provider: row.provider,
+            clientId: row.client_id, codeVerifier: row.code_verifier, redirectUri: row.redirect_uri,
+            scopes: Array.isArray(row.scopes) ? row.scopes : [],
+            clientSecret: row.client_secret ?? null,
+            tokenEndpoint: row.token_endpoint ?? null,
+            tokenEndpointAuthMethod: row.token_endpoint_auth_method ?? null,
+          };
+        });
+      } catch (error) {
+        if (isMissingTable(error)) return null;
+        throw error;
+      }
+    },
     // Consume a handshake: returns the pending row exactly once, or
     // null when it is unknown, expired, or the road is not switched on.
     async take(tenantId, stateHash) {
@@ -808,6 +837,203 @@ function createDropboxOAuthClient({ fetchImpl, env }) {
   };
 }
 
+const MICROSOFT_AUTHORIZE_URL = 'https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize';
+const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/organizations/oauth2/v2.0/token';
+
+// Microsoft: ONE fixed Entra app registration for the whole
+// Microsoft connection (REGISTRATION-PACK §6) — OneDrive,
+// Outlook, Microsoft Teams and SharePoint are one connection
+// underneath (the catalog's 'microsoft' family), served by
+// Microsoft's unified Work IQ server. Entra offers no dynamic
+// registration, so this factory's pair — MICROSOFT_OAUTH_CLIENT_ID
+// / MICROSOFT_OAUTH_CLIENT_SECRET — is placed by the pack's
+// registration sitting; until it is placed the factory answers
+// null and a connect start answers the consent boundary naming
+// Microsoft. The authorization server is the one the Work IQ
+// server's own protected-resource document names
+// (login.microsoftonline.com/organizations, live read
+// 2026-11-10): 'organizations' admits any work or school
+// account; a personal Microsoft account has no Work IQ behind
+// it, which the entries' words say. The exchange is the plain
+// form road; Entra rotates the refresh token on every renewal,
+// and exchangeRefreshTokenForm surfaces the rotated token for
+// the re-store. NO fetchIdentity: the token is scoped to the
+// Work IQ resource, not to a profile read — the callback falls
+// back to this client's display name, the Asana precedent.
+// The scopes come from the caller (each Microsoft entry
+// declares the same ask on its catalog definition), never from
+// a table here.
+function createMicrosoftOAuthClient({ fetchImpl, env }) {
+  const clientId = String(env?.MICROSOFT_OAUTH_CLIENT_ID ?? '').trim();
+  const clientSecret = String(env?.MICROSOFT_OAUTH_CLIENT_SECRET ?? '').trim();
+  if (!clientId || !clientSecret) return null;
+  return {
+    provider: 'microsoft',
+    displayName: 'Microsoft',
+    clientId,
+    async authorizeUrl({ redirectUri, state, challenge, scopes }) {
+      const url = new URL(MICROSOFT_AUTHORIZE_URL);
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('redirect_uri', redirectUri);
+      if (Array.isArray(scopes) && scopes.length) url.searchParams.set('scope', scopes.join(' '));
+      url.searchParams.set('state', state);
+      if (challenge) {
+        url.searchParams.set('code_challenge', challenge);
+        url.searchParams.set('code_challenge_method', 'S256');
+      }
+      return url.toString();
+    },
+    async exchangeCode({ code, codeVerifier, redirectUri }) {
+      return exchangeAuthorizationCodeForm({
+        fetchImpl, tokenUrl: MICROSOFT_TOKEN_URL, clientId, clientSecret,
+        code, codeVerifier, redirectUri, providerName: 'Microsoft',
+      });
+    },
+    async refreshTokens({ refreshToken }) {
+      return exchangeRefreshTokenForm({
+        fetchImpl, tokenUrl: MICROSOFT_TOKEN_URL, clientId, clientSecret,
+        refreshToken, providerName: 'Microsoft',
+      });
+    },
+  };
+}
+
+// ------------------------------------------------------------ tenant pairs
+// Providers whose client pair is minted PER CUSTOMER (Troy's
+// ruling, 2026-11-10; connector-tenant-pair.mjs holds the pair's
+// custody): their factories take the resolved pair, never env —
+// there is no project pair for them by design, and
+// createConnectorOAuthClient below answers null for their names
+// always (they are deliberately NOT in the registry — the
+// registry's "configured" answer must keep meaning "an env pair
+// is placed", and for these providers no env pair can ever be
+// the truth).
+
+const BOX_AUTHORIZE_URL = 'https://account.box.com/api/oauth2/authorize';
+const BOX_TOKEN_URL = 'https://api.box.com/oauth2/token';
+
+// Box (REGISTRATION-PACK §9): the customer's Box admin mints the
+// pair in the Box Admin Console (Integrations → Box MCP server →
+// integration credentials, Helmian's callback as the redirect)
+// and selects the Access Scopes THERE — so this factory sends NO
+// scope parameter at all (the Asana / HubSpot precedent: where
+// the provider's own console or fixed set governs the grant, the
+// authorize URL carries none, whatever the caller declared). Box
+// publishes no scopes_supported for its MCP server (its
+// protected-resource document names none, live read 2026-11-10),
+// which is the same fact from the other side. The exchange is the
+// plain form road; Box rotates refresh tokens, and the form
+// helper surfaces the rotated one for the re-store. NO
+// fetchIdentity: Box publishes no identity read for MCP tokens
+// on this road — the callback records "Box account".
+function createBoxPairClient({ fetchImpl, clientId, clientSecret }) {
+  return {
+    provider: 'box',
+    displayName: 'Box',
+    clientId,
+    async authorizeUrl({ redirectUri, state, challenge }) {
+      const url = new URL(BOX_AUTHORIZE_URL);
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('redirect_uri', redirectUri);
+      url.searchParams.set('state', state);
+      if (challenge) {
+        url.searchParams.set('code_challenge', challenge);
+        url.searchParams.set('code_challenge_method', 'S256');
+      }
+      return url.toString();
+    },
+    async exchangeCode({ code, codeVerifier, redirectUri }) {
+      return exchangeAuthorizationCodeForm({
+        fetchImpl, tokenUrl: BOX_TOKEN_URL, clientId, clientSecret,
+        code, codeVerifier, redirectUri, providerName: 'Box',
+      });
+    },
+    async refreshTokens({ refreshToken }) {
+      return exchangeRefreshTokenForm({
+        fetchImpl, tokenUrl: BOX_TOKEN_URL, clientId, clientSecret,
+        refreshToken, providerName: 'Box',
+      });
+    },
+  };
+}
+
+/**
+ * Build an OAuth client from a TENANT's stored pair (the vault's
+ * 'client_pair' record, resolved per tenant by
+ * connector-tenant-pair.mjs). Null when the provider takes no
+ * tenant pair, or the pair is incomplete — an incomplete pair is
+ * no pair, and the roads say so rather than half-starting.
+ */
+const SALESFORCE_AUTHORIZE_URL = 'https://login.salesforce.com/services/oauth2/authorize';
+const SALESFORCE_TOKEN_URL = 'https://login.salesforce.com/services/oauth2/token';
+
+// Salesforce (REGISTRATION-PACK §10): the customer's Salesforce
+// admin creates an External Client App in the org's Setup (Enable
+// OAuth, Helmian's callback as the callback URL, scopes mcp_api
+// + refresh_token, "Issue JWT-based access tokens for named
+// users" + "Require Secret for Web Server Flow" selected), and
+// the pair that app mints — plus the org's MCP server path, which
+// the pair record carries as the composed endpoint — is the
+// whole client identity on this road. Unlike Box, Salesforce
+// PUBLISHES its scopes (its server metadata advertises exactly
+// mcp_api and refresh_token), so the caller's declared scopes
+// ride the authorize URL. The exchange is the plain form road
+// (the External Client App's web-server flow, secret required);
+// PKCE rides when the caller supplies a challenge, as Salesforce
+// supports it. Org-specific login hosts (a customer's My Domain)
+// are NOT part of the registered shape — the pack registers the
+// login.salesforce.com door; a My Domain variant would be a new
+// fact for the pack, not an assumption here. NO fetchIdentity:
+// the advertised scopes carry no openid, so no identity read
+// exists on this road — the callback records "Salesforce
+// account".
+function createSalesforcePairClient({ fetchImpl, clientId, clientSecret }) {
+  return {
+    provider: 'salesforce',
+    displayName: 'Salesforce',
+    clientId,
+    async authorizeUrl({ redirectUri, state, challenge, scopes }) {
+      const url = new URL(SALESFORCE_AUTHORIZE_URL);
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('redirect_uri', redirectUri);
+      url.searchParams.set('state', state);
+      const scope = (Array.isArray(scopes) ? scopes : []).filter(Boolean).join(' ');
+      if (scope) url.searchParams.set('scope', scope);
+      if (challenge) {
+        url.searchParams.set('code_challenge', challenge);
+        url.searchParams.set('code_challenge_method', 'S256');
+      }
+      return url.toString();
+    },
+    async exchangeCode({ code, codeVerifier, redirectUri }) {
+      return exchangeAuthorizationCodeForm({
+        fetchImpl, tokenUrl: SALESFORCE_TOKEN_URL, clientId, clientSecret,
+        code, codeVerifier, redirectUri, providerName: 'Salesforce',
+      });
+    },
+    async refreshTokens({ refreshToken }) {
+      return exchangeRefreshTokenForm({
+        fetchImpl, tokenUrl: SALESFORCE_TOKEN_URL, clientId, clientSecret,
+        refreshToken, providerName: 'Salesforce',
+      });
+    },
+  };
+}
+
+export function createTenantPairOAuthClient(provider, pair, { fetchImpl = fetch } = {}) {
+  const clientId = String(pair?.clientId ?? '').trim();
+  const clientSecret = String(pair?.clientSecret ?? '').trim();
+  if (!clientId || !clientSecret) return null;
+  switch (String(provider ?? '').trim().toLowerCase()) {
+    case 'box': return createBoxPairClient({ fetchImpl, clientId, clientSecret });
+    case 'salesforce': return createSalesforcePairClient({ fetchImpl, clientId, clientSecret });
+    default: return null;
+  }
+}
+
 const CONNECTOR_OAUTH_PROVIDERS = Object.freeze({
   github: createGithubOAuthClient,
   slack: createSlackOAuthClient,
@@ -816,6 +1042,7 @@ const CONNECTOR_OAUTH_PROVIDERS = Object.freeze({
   google: createGoogleOAuthClient,
   canva: createCanvaOAuthClient,
   dropbox: createDropboxOAuthClient,
+  microsoft: createMicrosoftOAuthClient,
 });
 
 // Resolve the OAuth client for a provider — always the pending

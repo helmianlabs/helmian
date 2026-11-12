@@ -872,6 +872,254 @@ const BROKERED_SERVERS = Object.freeze([
       },
     }),
   }),
+  // MICROSOFT — ONE CONNECTION UNDER FOUR NAMES (Troy's ruling,
+  // 2026-11-10; REGISTRATION-PACK §6). OneDrive, Outlook,
+  // Microsoft Teams and SharePoint keep their separate names in
+  // the catalog and the panel, and underneath they are ONE
+  // Microsoft connection: Microsoft's unified Work IQ server
+  // (https://workiq.svc.cloud.microsoft/mcp) serves all four —
+  // Outlook mail and calendar, OneDrive and SharePoint files,
+  // Teams chats and channels — behind ONE sign-in. Connecting
+  // any one of the four connects the Microsoft connection; the
+  // other three rows then read connected too, because they are
+  // the same connection. The four definitions declare that with
+  // connectionFamily 'microsoft', and the store resolves the
+  // family's connections as one set entry (connector-library.mjs
+  // carries the same table by hand, pinned by test).
+  //   - The road is a FIXED registration: Entra offers no dynamic
+  //     registration and no client-id metadata document, so the
+  //     connect road runs under the fixed registry's 'microsoft'
+  //     provider (connector-oauth-pending.mjs), its pair held as
+  //     project env (MICROSOFT_OAUTH_CLIENT_ID /
+  //     MICROSOFT_OAUTH_CLIENT_SECRET). Placing that registration
+  //     is the registration pack's §6 sitting step — an Entra app
+  //     registration for work or school accounts with Helmian's
+  //     callback as its web redirect. Until the pair is placed,
+  //     a connect start answers the honest consent boundary
+  //     naming Microsoft, and connects nothing.
+  //   - The ask each entry declares is the Work IQ server's own:
+  //     its protected-resource document
+  //     (https://workiq.svc.cloud.microsoft/.well-known/oauth-
+  //     protected-resource/mcp, live read 2026-11-10) publishes
+  //     exactly one scope, named there in its resource form
+  //     (fdcc1f02-fc51-4226-8753-f668596af7f7/WorkIQAgent.Ask —
+  //     the same scope the pack names in its api:// spelling),
+  //     plus the standard sign-in scopes that carry the refresh
+  //     token (offline_access) and the account identity (openid,
+  //     profile). All four entries declare the same ask because
+  //     the connection is one.
+  //   - The connection is work-or-school only: Microsoft's own
+  //     rules put Work IQ behind an organization's tenant, its
+  //     admin's approval, and Copilot licensing measured in
+  //     Copilot Credits — a personal Microsoft account cannot
+  //     connect, and every entry's words say so. When the
+  //     organization's admin has not approved Helmian yet, the
+  //     callback answers with the admin-approval road in plain
+  //     words (the write route's consent page), never a bare
+  //     failure.
+  //   - Placement follows the fixed-tail geography — claude,
+  //     chatgpt, grok. The mirrors stay as data beside these rows
+  //     (all four names mirror on grok); the brokered row
+  //     represents the name where both exist. Trust labels
+  //     follow the mirrors' own label — 'verified' for all four;
+  //     no label is upgraded here.
+  //   - Teams honesty: Work IQ's published surface reads Teams
+  //     chats and channels; whether it can post is not verified,
+  //     so the Teams entry's words promise reading only.
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-onedrive',
+      name: 'OneDrive',
+      oneLiner: 'Search, open, and work with files in OneDrive',
+      icon: 'onedrive',
+      vendorName: 'Microsoft',
+      trustLabel: 'verified',
+      category: 'documents',
+      connectionFamily: 'microsoft',
+      oauthScopes: Object.freeze([
+        'fdcc1f02-fc51-4226-8753-f668596af7f7/WorkIQAgent.Ask',
+        'offline_access', 'openid', 'profile',
+      ]),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://workiq.svc.cloud.microsoft/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens Microsoft\u2019s own sign-in page: you sign in with your work or school Microsoft account and approve the connection there \u2014 nothing to paste, and a personal Microsoft account cannot connect. OneDrive, Outlook, Microsoft Teams and SharePoint share this one Microsoft connection in Helmian: connecting any one of them connects all four. This agent can then search, open, and work with your OneDrive files under the access your own account already has. Your organization\u2019s Microsoft admin may need to approve Helmian before the first connection can finish.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-outlook',
+      name: 'Outlook',
+      oneLiner: 'Read and search your Outlook mail and calendar',
+      icon: 'outlook',
+      vendorName: 'Microsoft',
+      trustLabel: 'verified',
+      category: 'communication',
+      connectionFamily: 'microsoft',
+      oauthScopes: Object.freeze([
+        'fdcc1f02-fc51-4226-8753-f668596af7f7/WorkIQAgent.Ask',
+        'offline_access', 'openid', 'profile',
+      ]),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://workiq.svc.cloud.microsoft/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens Microsoft\u2019s own sign-in page: you sign in with your work or school Microsoft account and approve the connection there \u2014 nothing to paste, and a personal Microsoft account cannot connect. Outlook, OneDrive, Microsoft Teams and SharePoint share this one Microsoft connection in Helmian: connecting any one of them connects all four. This agent can then read and search your Outlook mail and work with your calendar under the access your own account already has. Your organization\u2019s Microsoft admin may need to approve Helmian before the first connection can finish.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-microsoft-teams',
+      name: 'Microsoft Teams',
+      oneLiner: 'Read your Teams chats and channels',
+      icon: 'microsoft-teams',
+      vendorName: 'Microsoft',
+      trustLabel: 'verified',
+      category: 'communication',
+      connectionFamily: 'microsoft',
+      oauthScopes: Object.freeze([
+        'fdcc1f02-fc51-4226-8753-f668596af7f7/WorkIQAgent.Ask',
+        'offline_access', 'openid', 'profile',
+      ]),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://workiq.svc.cloud.microsoft/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens Microsoft\u2019s own sign-in page: you sign in with your work or school Microsoft account and approve the connection there \u2014 nothing to paste, and a personal Microsoft account cannot connect. Microsoft Teams, OneDrive, Outlook and SharePoint share this one Microsoft connection in Helmian: connecting any one of them connects all four. This agent can then read your Teams chats and channels under the access your own account already has. Your organization\u2019s Microsoft admin may need to approve Helmian before the first connection can finish.',
+      },
+    }),
+  }),
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-sharepoint',
+      name: 'SharePoint',
+      oneLiner: 'Search, open, and work with files in SharePoint',
+      icon: 'sharepoint',
+      vendorName: 'Microsoft',
+      trustLabel: 'verified',
+      category: 'documents',
+      connectionFamily: 'microsoft',
+      oauthScopes: Object.freeze([
+        'fdcc1f02-fc51-4226-8753-f668596af7f7/WorkIQAgent.Ask',
+        'offline_access', 'openid', 'profile',
+      ]),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://workiq.svc.cloud.microsoft/mcp',
+        authMode: 'oauth',
+        scopesSummary: 'Connect opens Microsoft\u2019s own sign-in page: you sign in with your work or school Microsoft account and approve the connection there \u2014 nothing to paste, and a personal Microsoft account cannot connect. SharePoint, OneDrive, Outlook and Microsoft Teams share this one Microsoft connection in Helmian: connecting any one of them connects all four. This agent can then search, open, and work with your SharePoint files and sites under the access your own account already has. Your organization\u2019s Microsoft admin may need to approve Helmian before the first connection can finish.',
+      },
+    }),
+  }),
+  // BOX — THE FIRST TENANT-PAIR PROVIDER (Troy's ruling,
+  // 2026-11-10; REGISTRATION-PACK §9). Box offers Helmian no
+  // registration of its own: its MCP server supports no dynamic
+  // registration (Box's own Support page says so), and its road
+  // runs on integration credentials minted PER CUSTOMER in the
+  // Box Admin Console. So this entry's OAuth road is the fixed
+  // kind under the provider 'box' — but the client is built from
+  // the TENANT's stored pair (connector-tenant-pair.mjs), never
+  // from project env: the customer's Box admin creates the
+  // credentials with Helmian's callback as the redirect, the
+  // workspace owner or admin stores the pair in Helmian (the
+  // panel's Client pair form), and every connect in that tenant
+  // runs under it. Until a pair is stored, a connect start
+  // answers needs-tenant-pair in plain words and connects
+  // nothing.
+  //   - The entry declares NO oauthScopes: the access is what
+  //     the Box admin SELECTED when creating the integration
+  //     credentials (the console's Access Scopes govern the
+  //     grant), and Box's server publishes no scopes_supported
+  //     for its MCP server (its protected-resource document,
+  //     live read 2026-11-10). The factory therefore sends no
+  //     scope parameter — what the authorize request actually
+  //     grants on this road is UNVERIFIED until a live walk.
+  //   - Placement follows the fixed geography — claude, chatgpt,
+  //     grok. The mirror stays as data beside this row (Box
+  //     mirrors on grok); the brokered row represents the name.
+  //     Trust label follows the mirror's own — 'community'; no
+  //     label is upgraded here.
+  //   - Box meters this road (one API call per tool invocation,
+  //     plus AI Units for its AI tools, per Box's own MCP page) —
+  //     a pricing fact for the tenant, not a build input, and
+  //     the entry's words do not promise otherwise.
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-box',
+      name: 'Box',
+      oneLiner: 'Search, open, and work with files stored in Box',
+      icon: 'box',
+      vendorName: 'Box',
+      trustLabel: 'community',
+      category: 'documents',
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://mcp.box.com',
+        authMode: 'oauth',
+        scopesSummary: 'Connecting Box takes one setup step in your own Box first: your Box admin creates integration credentials for Helmian in the Box Admin Console and selects the access there, and your workspace owner or admin stores that client pair in Helmian with the Client pair action on this row. Connect then opens Box\u2019s own sign-in page: you sign in with your Box account and approve the connection there. This agent can then search, open, and work with your Box files under the access your admin selected and your own account already has.',
+      },
+    }),
+  }),
+  // SALESFORCE — THE SECOND TENANT-PAIR PROVIDER (Troy's ruling,
+  // 2026-11-10; REGISTRATION-PACK §10). Same shape as Box: no
+  // Helmian registration exists on this road — the customer's
+  // Salesforce admin turns on MCP Servers in their org's Setup,
+  // creates an External Client App there with Helmian's callback,
+  // and the pair that app mints is stored PER TENANT
+  // (connector-tenant-pair.mjs) and builds every client on this
+  // entry's road. Two Salesforce-only facts shape the build:
+  //   - The endpoint is PER ORG. Salesforce's MCP endpoint is a
+  //     fixed host template plus the org's own server path
+  //     (Salesforce's example: platform/sobject-reads). The
+  //     endpoint declared below is that TEMPLATE, braces and
+  //     all — it is not a callable address. The pair completes
+  //     it: the admin enters the org's server path in the Client
+  //     pair form, the write route composes the complete
+  //     endpoint at the store, and the roads that run against
+  //     the org (dispatch arming, the prompts road) take the
+  //     endpoint from the pair. Any consumer that reads only
+  //     this declaration still sees the template — named here so
+  //     nobody mistakes it for a live address.
+  //   - The scopes ARE published: the server's own metadata
+  //     advertises exactly mcp_api and refresh_token, and the
+  //     entry declares exactly those (the admin also selects
+  //     them on the External Client App). No openid rides this
+  //     road, so the factory carries no identity read — the
+  //     callback records the provider's name as the account
+  //     label, like Box.
+  //   Placement follows the fixed geography — claude, chatgpt,
+  //   grok. The mirror stays as data beside this row (Salesforce
+  //   mirrors on grok); trust label follows the mirror's own —
+  //   'verified'. Salesforce MCP requires Enterprise Edition or
+  //   above — the customer's edition is their admin's fact, and
+  //   the entry's words do not promise otherwise.
+  Object.freeze({
+    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    def: Object.freeze({
+      id: 'helmian-salesforce',
+      name: 'Salesforce',
+      oneLiner: 'Look up accounts, leads, and opportunities',
+      icon: 'salesforce',
+      vendorName: 'Salesforce',
+      trustLabel: 'verified',
+      category: 'sales',
+      oauthScopes: Object.freeze(['mcp_api', 'refresh_token']),
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://api.salesforce.com/platform/mcp/v1/{server}',
+        authMode: 'oauth',
+        scopesSummary: 'Connecting Salesforce takes one setup step in your own Salesforce first: your Salesforce admin turns on MCP Servers in Setup and creates an External Client App there with Helmian\u2019s callback, and your workspace owner or admin stores that client pair in Helmian with the Client pair action on this row, together with the MCP server path Setup shows for your org. Connect then opens Salesforce\u2019s own sign-in page: you sign in with your Salesforce account and approve the connection there. This agent can then look up accounts, leads, and opportunities in your org.',
+      },
+    }),
+  }),
 ]);
 
 function brokeredServerEntriesForSeat(seatId) {
@@ -890,6 +1138,13 @@ function brokeredServerEntriesForSeat(seatId) {
       // data on the built entry, read by the connect road from
       // this definition, never from the stored row.
       ...(server.def.cimdClientId ? { cimdClientId: server.def.cimdClientId } : {}),
+      // And for a declared connection family: several entries
+      // that are ONE connection underneath (the Microsoft four
+      // below). Catalog data on the built entry; the store's
+      // family table (connector-library.mjs) is kept in step with
+      // these declarations by hand and pinned against them by
+      // test, the VAULT_REFERENCE discipline.
+      ...(server.def.connectionFamily ? { connectionFamily: server.def.connectionFamily } : {}),
     }));
 }
 

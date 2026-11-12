@@ -255,8 +255,16 @@ export function stateLabelFor(row) {
     if (gate.state === 'missing') return 'Not connected — connecting runs its safety check for this agent';
     return 'Not ready — safety check has not passed';
   }
-  if (row.state === 'connected') return row.accountIdentity ? `Connected as ${row.accountIdentity}` : 'Connected';
-  if (row.state === 'needs-reconnect') return 'Needs reconnect';
+  // A connection-family row (the Microsoft four) says the
+  // connection is shared: this row's connected state IS the one
+  // family connection, recorded under whichever member name the
+  // person connected — the read names it in the detail
+  // (sharedConnection), and the label carries the truth so four
+  // rows never each imply their own connection.
+  const shared = row.sharedConnection ?? row.stateDetail?.sharedConnection ?? null;
+  const sharedWords = shared ? ` — the shared ${shared.family === 'microsoft' ? 'Microsoft' : shared.family} connection` : '';
+  if (row.state === 'connected') return row.accountIdentity ? `Connected as ${row.accountIdentity}${sharedWords}` : `Connected${sharedWords}`;
+  if (row.state === 'needs-reconnect') return `Needs reconnect${sharedWords}`;
   if (row.state === 'disabled-by-owner') return 'Turned off by your workspace owner';
   return 'Not connected';
 }
@@ -278,6 +286,17 @@ function rowModel(row, state, conversationId) {
       state: row.stateDetail.gate.state ?? null,
       passed: row.stateDetail.gate.passed === true,
       lastError: row.stateDetail.gate.lastError ?? null,
+    })
+    : null;
+  // A connection-family projection (the Microsoft four): the read
+  // marks a row whose connection is the family's one connection,
+  // recorded under a sibling member's name. Carried on the model
+  // so the row can say the connection is shared (stateLabelFor
+  // above reads the same detail).
+  const sharedConnection = row.stateDetail?.sharedConnection
+    ? Object.freeze({
+      family: row.stateDetail.sharedConnection.family ?? null,
+      recordedUnderEntryId: row.stateDetail.sharedConnection.recordedUnderEntryId ?? null,
     })
     : null;
   // The one toggle law: only a Connected row on a pipe Helmian holds
@@ -320,6 +339,15 @@ function rowModel(row, state, conversationId) {
     brokerMode: row.brokerMode,
     kind: row.kind,
     gate,
+    sharedConnection,
+    // A tenant-pair row (Box, Salesforce): the read marks it from
+    // the definition (connector-library-read.mjs), and the
+    // renderer offers the Client pair action — the pair is the
+    // TENANT's, entered once for the whole workspace, never per
+    // row or per person. oauthProvider names the pair's provider
+    // for the pair form. False/null on every other row.
+    tenantPair: row.tenantPair === true,
+    oauthProvider: typeof row.oauthProvider === 'string' && row.oauthProvider ? row.oauthProvider : null,
     toggleable,
     connectable,
     reconnect,

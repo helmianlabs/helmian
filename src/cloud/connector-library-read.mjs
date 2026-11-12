@@ -66,6 +66,9 @@
 // 'needs-reconnect', 'disabled-by-owner'.
 
 import { isVerifiedFresh } from './tool-connections.mjs';
+import { fixedProviderForEntry } from './connector-oauth-dcr.mjs';
+import { isTenantPairProvider } from './connector-tenant-pair.mjs';
+import { CONNECTOR_CONNECTION_FAMILIES, connectionFamilyForEntry } from './connector-library.mjs';
 import { customGateDetail, customGateKey } from './connector-custom-gate.mjs';
 import { NATIVE_STATE_SOURCES, LIVE_SEATS, createCatalogRefresh, catalogEntriesForSeat, catalogEntryById, catalogStarterActions } from './connector-catalog.mjs';
 
@@ -307,6 +310,22 @@ function localFactsOf(entry) {
   };
 }
 
+// A connection-family projection names itself in the detail: the
+// store's listConnections projects the family's one connection
+// onto every member entry and marks the projections whose
+// physical row sits under a DIFFERENT member with
+// provenanceEntryId. The detail carries the family and the
+// member the connection was recorded under, so a surface can say
+// the connection is shared instead of letting four rows each
+// imply their own.
+function sharedConnectionDetail(connection) {
+  if (!connection?.provenanceEntryId) return null;
+  return {
+    family: connectionFamilyForEntry(connection.provenanceEntryId),
+    recordedUnderEntryId: connection.provenanceEntryId,
+  };
+}
+
 function joinedStateInner(entry, { connection, mirror, nativeSurface, repoLinks }) {
   // The owner's disable wins over every other state (§1.2's fourth
   // state is entry-level, §2.1).
@@ -352,13 +371,22 @@ function joinedStateInner(entry, { connection, mirror, nativeSurface, repoLinks 
   if (!connection || connection.state === 'disconnected') {
     return { state: 'not-connected', accountIdentity: null, detail: null };
   }
+  const sharedConnection = sharedConnectionDetail(connection);
   if (connection.state === 'needs-reconnect') {
-    return { state: 'needs-reconnect', accountIdentity: connection.accountIdentity ?? null, detail: null };
+    return {
+      state: 'needs-reconnect',
+      accountIdentity: connection.accountIdentity ?? null,
+      detail: sharedConnection ? { sharedConnection } : null,
+    };
   }
   return {
     state: 'connected',
     accountIdentity: connection.accountIdentity ?? null,
-    detail: { posture: connection.posture, lastUsedAt: connection.lastUsedAt ?? null },
+    detail: {
+      posture: connection.posture,
+      lastUsedAt: connection.lastUsedAt ?? null,
+      ...(sharedConnection ? { sharedConnection } : {}),
+    },
   };
 }
 
@@ -412,6 +440,23 @@ function definitionAuthMode(entry) {
   let definition = null;
   try { definition = catalogEntryById(entry.seatId, entry.id); } catch { definition = null; }
   return definition?.authMode ?? entry.authMode ?? null;
+}
+
+// Whether the entry's OAuth road runs on a TENANT CLIENT PAIR
+// (Box, Salesforce), and under which provider — from the entry
+// DEFINITION, the same discipline as definitionAuthMode above:
+// the catalog def's fixed provider decides, never stored state.
+// The panel learns from this read that the row carries the
+// Client pair action; whether a pair is actually STORED is the
+// credential service's fact, answered by the tenant-pair/status
+// action when the form opens — never by this read (the read
+// holds no credential material and resolves none).
+function definitionTenantPair(entry) {
+  if (!entry || entry.kind === 'custom') return null;
+  let definition = null;
+  try { definition = catalogEntryById(entry.seatId, entry.id); } catch { definition = null; }
+  const provider = fixedProviderForEntry(definition ?? entry);
+  return provider && isTenantPairProvider(provider) ? provider : null;
 }
 
 function rowOf(entry, joined) {
@@ -471,6 +516,14 @@ function rowOf(entry, joined) {
     // only on set-projected rows.
     ...(entry.workspaceSet
       ? { workspaceSet: true, provenanceSeatId: entry.provenanceSeatId ?? entry.seatId }
+      : {}),
+    // A tenant-pair entry's marking (Box, Salesforce): the row's
+    // connection runs under the TENANT's stored client pair, and
+    // oauthProvider names the pair's provider for the panel's
+    // pair form. Present only on tenant-pair rows; whether a
+    // pair is stored is NOT stated here (see definitionTenantPair).
+    ...(definitionTenantPair(entry)
+      ? { tenantPair: true, oauthProvider: definitionTenantPair(entry) }
       : {}),
   };
 }
@@ -879,6 +932,25 @@ export function createSeatLibraryRead({
         const t = new Date(c.updatedAt ?? 0).getTime();
         const pt = new Date(prev.updatedAt ?? 0).getTime();
         if (t > pt || (t === pt && Number(c.id ?? 0) > Number(prev.id ?? 0))) connectionByEntry.set(c.entryId, c);
+      }
+      // A CONNECTION FAMILY's winner is the connection for EVERY
+      // member entry (Troy's Microsoft ruling, 2026-11-10): the
+      // per-entry winners above are re-ruled across the family's
+      // member keys with the same collapse rule, and every member
+      // then answers with the family's winner — so a seat's
+      // connectedCount counts the one Microsoft connection once
+      // per member row, exactly as the row read lists it.
+      for (const members of Object.values(CONNECTOR_CONNECTION_FAMILIES)) {
+        let winner = null;
+        for (const memberId of members) {
+          const c = connectionByEntry.get(memberId);
+          if (!c) continue;
+          if (!winner) { winner = c; continue; }
+          const t = new Date(c.updatedAt ?? 0).getTime();
+          const wt = new Date(winner.updatedAt ?? 0).getTime();
+          if (t > wt || (t === wt && Number(c.id ?? 0) > Number(winner.id ?? 0))) winner = c;
+        }
+        if (winner) for (const memberId of members) connectionByEntry.set(memberId, winner);
       }
       const mirrorBySeatEntry = new Map(mirrors.map((m) => [`${m.seatId} ${m.entryId}`, m]));
 

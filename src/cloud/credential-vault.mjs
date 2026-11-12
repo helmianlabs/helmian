@@ -75,11 +75,35 @@
 //      replacement is the qualification above, stated here, and the
 //      replacement audit event names it ('oauth_refresh_provenance')
 //      in the guardGate field instead of claiming a Guard approval.
+//
+// THE TENANT CLIENT PAIR (box-tenant-pair bite, 2026-11-10). The
+// 'client_pair' kind holds a TENANT's OAuth client pair for a
+// provider whose console mints one pair per customer (Box and
+// Salesforce, REGISTRATION-PACK §§9–10): the client id and secret
+// the CUSTOMER's own admin created in their provider console for
+// Helmian's callback. It is not a person's credential — it is
+// Helmian's client identity inside that tenant's provider app —
+// and it is the TENANT's, addressed per tenant under the pair's
+// own provider id (connector-tenant-pair.mjs). Custody follows
+// the standing rules unchanged: encrypted like every kind, the
+// full actor context on every call, a REPLACEMENT store routed
+// through the Guard replacement gate like every other kind. The
+// one qualification, stated as narrowly as road (b): the arming
+// system actor may RESOLVE a client_pair under reasonClass
+// 'oauth_refresh' without tenant membership — the dispatch's
+// renewal road is the pair's only unattended reader, and it reads
+// the pair for the same reason it reads the bundle: keeping the
+// tenant's own connection working. No provenance is minted for a
+// pair (nothing is ever re-stored under a pair's address by a
+// machine road; a pair changes only when the tenant's admin mints
+// a new one and a person stores it), and the arming actor's
+// resolves under any other reason class run the membership check
+// and refuse, exactly as before.
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { requireActiveTenantMembership, withTenantTransaction } from '../core/tenant-context.mjs';
 
-export const CREDENTIAL_KINDS = Object.freeze(['api_key', 'oauth_bundle', 'password', 'session']);
+export const CREDENTIAL_KINDS = Object.freeze(['api_key', 'oauth_bundle', 'password', 'session', 'client_pair']);
 export const RESOLVE_REASON_CLASSES = Object.freeze(['provider_call', 'browser_sign_in', 'probe', 'oauth_refresh', 'desktop_handshake']);
 
 // The cloud dispatch's arming actor (connector-arming-dispatch.mjs's
@@ -178,6 +202,29 @@ function normalizePayload(input) {
     const expiresAt = input.expiresAt ?? (Number.isFinite(Number(input.expiresIn)) && Number(input.expiresIn) > 0 ? new Date(Date.now() + Number(input.expiresIn) * 1000).toISOString() : null);
     return { kind, payload, tokenType: input.tokenType ?? 'Bearer', scope: input.scope ?? null, expiresAt };
   }
+  if (kind === 'client_pair') {
+    // A tenant's OAuth client pair (see the header note): the
+    // client id and secret a provider console minted for this
+    // tenant, plus the pair's own non-secret configuration when
+    // the provider's endpoint is per-customer (mcpEndpointUrl —
+    // a complete https URL, validated here so a stored pair can
+    // never point a later call at an arbitrary address; it rides
+    // the encrypted payload so the pair stays ONE record in one
+    // custody). No expiry: a pair lives until the tenant's admin
+    // replaces it.
+    const payload = {
+      clientId: secretString(input.clientId, 'client id', { max: 512 }),
+      clientSecret: secretString(input.clientSecret, 'client secret'),
+    };
+    if (input.mcpEndpointUrl != null) {
+      const endpoint = String(input.mcpEndpointUrl);
+      let parsed = null;
+      try { parsed = new URL(endpoint); } catch { parsed = null; }
+      if (!parsed || parsed.protocol !== 'https:' || endpoint.length > 512) throw new TypeError('client pair endpoint is invalid');
+      payload.mcpEndpointUrl = endpoint;
+    }
+    return { kind, payload, tokenType: 'ClientPair', scope: null, expiresAt: null };
+  }
   // session: an opaque JSON value (cookies / session tokens the service set).
   let serialized;
   try { serialized = JSON.stringify(input.session ?? null); } catch { throw new TypeError('session payload is invalid'); }
@@ -190,6 +237,7 @@ function shapeResolved(kind, payload, row) {
   if (kind === 'api_key') return { ...base, credential: payload.apiKey };
   if (kind === 'password') return { ...base, credential: payload.password, username: payload.username ?? null };
   if (kind === 'oauth_bundle') return { ...base, credential: payload.accessToken, refreshToken: payload.refreshToken ?? null, scope: row.scope ?? null };
+  if (kind === 'client_pair') return { ...base, clientId: payload.clientId, clientSecret: payload.clientSecret, mcpEndpointUrl: payload.mcpEndpointUrl ?? null };
   return { ...base, session: JSON.parse(payload.session) };
 }
 
@@ -337,8 +385,10 @@ export function createCredentialVault({ pool, masterKey, auditSink = null, guard
       // arming actor's oauth_refresh resolve the membership decision
       // is made after the peek, where the record's kind is known:
       // that resolve is qualified exactly when the record is an
-      // oauth_bundle (road (b)); anything else runs the membership
-      // check in the resolve transaction and is refused there.
+      // oauth_bundle (road (b)) or a client_pair (the tenant-pair
+      // qualification in the header note); anything else runs the
+      // membership check in the resolve transaction and is refused
+      // there.
       const peeked = await withTenantTransaction(pool, txContext, async (client) => {
         if (!(systemArming && refreshReason)) await requireActiveTenantMembership(client, txContext);
         return { found: await peek(client, input) };
@@ -350,13 +400,30 @@ export function createCredentialVault({ pool, masterKey, auditSink = null, guard
       // oauth_bundle, whose expires_at describes the access token,
       // not the refresh token being retrieved.
       const refreshRetrieval = refreshReason && head.credential_kind === 'oauth_bundle';
+      // The tenant-pair qualification (header note): the arming
+      // actor's oauth_refresh resolve of a client_pair is
+      // membership-qualified like the bundle retrieval. A pair
+      // carries no expires_at, so road (a) above never turns on
+      // it; no provenance is minted for a pair below.
+      const pairRetrieval = refreshReason && head.credential_kind === 'client_pair';
+      const dispatchRetrieval = refreshRetrieval || pairRetrieval;
+      // A client pair resolves ONLY on its two roads: a sign-in
+      // (browser_sign_in — the connect/callback/pair-status road,
+      // under a person's own actor context) and the renewal
+      // (oauth_refresh). Under any other reason class the record
+      // reads as not available: the pair is Helmian's client
+      // identity for the tenant's app, never a credential a
+      // provider call or a preview spends.
+      if (head.credential_kind === 'client_pair' && !refreshReason && reasonClass !== 'browser_sign_in') {
+        return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
+      }
       if (head.expires_at && new Date(head.expires_at).getTime() <= Date.now() && !refreshRetrieval) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
       if (head.credential_kind === 'password') {
         const refused = await runGate('credential.password_resolve', { ...input, credentialKind: 'password' }, context);
         if (refused) return refused;
       }
       const resolved = await withTenantTransaction(pool, txContext, async (client) => {
-        if (!(systemArming && refreshRetrieval)) await requireActiveTenantMembership(client, txContext);
+        if (!(systemArming && dispatchRetrieval)) await requireActiveTenantMembership(client, txContext);
         const result = await client.query(`select credential_kind, record_key_wrapped, record_key_iv, record_key_auth_tag, ciphertext, iv, auth_tag, token_type, scope from helmion.provider_credentials where tenant_id=$1 and provider_id=$2 and credential_reference=$3 and revoked_at is null${refreshRetrieval ? '' : ' and (expires_at is null or expires_at > clock_timestamp())'}`, [input.tenantId, input.providerId, input.credentialReference]);
         if (result.rowCount !== 1) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
         const row = result.rows[0];
