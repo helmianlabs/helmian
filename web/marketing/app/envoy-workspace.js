@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=e8509813a8bc9fe7';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=e8509813a8bc9fe7';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=e8509813a8bc9fe7';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=e8509813a8bc9fe7';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=e8509813a8bc9fe7';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=e8509813a8bc9fe7';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=e8509813a8bc9fe7';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=e8509813a8bc9fe7';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=e8509813a8bc9fe7';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=e8509813a8bc9fe7';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=e8509813a8bc9fe7';
-import { createConnectFields } from './connect-fields.mjs?v=e8509813a8bc9fe7';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=e8509813a8bc9fe7';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=e8509813a8bc9fe7';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=f20e3e200baadd1c';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=f20e3e200baadd1c';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=f20e3e200baadd1c';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=f20e3e200baadd1c';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=f20e3e200baadd1c';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=f20e3e200baadd1c';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=f20e3e200baadd1c';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=f20e3e200baadd1c';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=f20e3e200baadd1c';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=f20e3e200baadd1c';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=f20e3e200baadd1c';
+import { createConnectFields } from './connect-fields.mjs?v=f20e3e200baadd1c';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=f20e3e200baadd1c';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=f20e3e200baadd1c';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -262,6 +262,44 @@ export const ACTIVITY_TERMINAL_SHOW_MS = 10_000;
 // (The pre-kill FAST_POLL_MS value, kept as an internal constant: the
 // exported name went away with the age-derived mirror it served.)
 const ACTIVITY_POLL_MS = 800;
+
+// ---------- polling diet (optimization bite 5) ----------
+// The cadences above buy freshness with requests: the calm tick
+// pulls the full message window every 2.5 s forever in a tab
+// people leave open for hours. The diet cuts the two cases where
+// that freshness is worth nothing, and leaves the round case —
+// the 800 ms live cadence — exactly as it is:
+// - Hidden tab: nobody is looking. The tick parks outright (no
+//   timer chain standing at all) and the return to visible runs
+//   ONE full re-sync instead of trusting elapsed ticks. The poll
+//   carries no cursor or watermark — every loadMessages fetches
+//   the full window and dedupes on the joined message-id
+//   signature (ws.sig) — so the re-sync IS the standing loads:
+//   the message window plus the slow timer's set. A hidden spell
+//   shorter than POLL_RESYNC_MIN_MS earns only an immediate
+//   ordinary pass; a longer one earns the full batch.
+// - Idle room: visible, but POLL_IDLE_AFTER calm passes in a row
+//   changed nothing (no message-signature move, no live activity,
+//   no voice playing). The calm cadence stretches to IDLE_POLL_MS
+//   and snaps back the moment any of those move again; a send or
+//   a channel switch also resets it on the spot (ws.pollWake,
+//   wired at mount).
+// Voice is the hard exception both ways: while a reply is
+// actually playing — speakingNow, which the voice controller
+// reports at playback start/end through noteSpeaking — the tab
+// is audible. The rhythm never stretches under speech, and a
+// tab that hides mid-speech keeps its chain; the chain parks
+// itself on the first pass after the speech ends.
+export const IDLE_POLL_MS = 10_000;
+export const POLL_IDLE_AFTER = 12;
+export const POLL_RESYNC_MIN_MS = 5_000;
+// The next poll delay, decided from what the last pass saw.
+// Pure; the mount's tick and its return re-sync are the callers.
+export function pollDelay({ live = false, speaking = false, unchanged = 0 } = {}) {
+  if (live) return ACTIVITY_POLL_MS;
+  if (speaking) return CALM_POLL_MS;
+  return unchanged >= POLL_IDLE_AFTER ? IDLE_POLL_MS : CALM_POLL_MS;
+}
 
 // Activity rides under presence names (the qwen seat reports as
 // 'ollama', grok may report as 'xai') — the same mapping loadPresence
@@ -1702,6 +1740,7 @@ async function selectChannel(id) {
   $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Loading…'));
   if (narrow()) closeSheets();
   await Promise.allSettled([loadConfig(), loadMessages()]);
+  ws.pollWake?.();
   $('maestro-input').focus({ preventScroll: true });
 }
 
@@ -5192,7 +5231,7 @@ async function send(e) {
   ws.messages = [...ws.messages, { id: `pending-${key}`, authorKind: 'human', authorSubject: ws.ctx.state.actor?.subject, body: req.payload.body, createdAt: new Date().toISOString(), _pending: true }];
   renderMessages();
   box.value = ''; grow(); closeSlashMenu();
-  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; ws.skillAttach.channel = []; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); loadPresence().catch(() => {}); }
+  try { await ws.ctx.post('/api/admin/envoy/messages', req.payload); ws.attach.channel = []; ws.webSearch.channel = false; ws.skillAttach.channel = []; renderAttachChips('channel'); closePicker(); ws.sig = null; await loadMessages(); loadPresence().catch(() => {}); ws.pollWake?.(); }
   catch { box.value = body; grow(); ws.messages = ws.messages.filter((m) => !m._pending); renderMessages(); ws.ctx.toast('Not sent. Your message is back in the box.'); }
   finally { btn.disabled = false; }
 }
@@ -5487,7 +5526,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=e8509813a8bc9fe7');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=f20e3e200baadd1c');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -5875,16 +5914,97 @@ export async function mountWorkspace(ctx) {
   // never message age. The generation counter retires a chain whose
   // mount has been superseded, so remounts never stack pollers.
   const gen = (ws.pollGen = (ws.pollGen ?? 0) + 1);
+  // Polling diet state (bite 5; constants and pollDelay live with
+  // the cadence family above): how many calm passes in a row
+  // changed nothing, and when the current hidden spell began
+  // (0 = the chain is not parked).
+  let unchangedTicks = 0;
+  let hiddenSince = 0;
+  // A reply playing right now: the voice controller reports
+  // playback start/end into speakingNow through noteSpeaking.
+  const speaking = () => speakingNow != null;
+  const tabHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  // The hidden half of the diet, checked at both ends of a pass
+  // so a hide that lands mid-flight still parks the chain: park
+  // stamps the spell and leaves NO timer standing — the
+  // visibility listener below is what restarts the chain, so
+  // browser throttling of hidden timers cannot delay the return.
+  // Voice playing is the exception: an audible tab keeps its
+  // rhythm, and its chain parks on the first pass after the
+  // speech ends.
+  const parkIfHidden = () => {
+    if (!tabHidden() || speaking()) return false;
+    if (!hiddenSince) hiddenSince = Date.now();
+    ws.timer = null;
+    return true;
+  };
   const tick = async () => {
     if (gen !== ws.pollGen) return;
+    if (parkIfHidden()) return;
+    const sigBefore = ws.sig;
     if (visible()) { await loadMessages().catch(() => {}); }
     if (gen !== ws.pollGen) return;
     let live = activityLive(ws.activity, ws.channelId, ws.config?.customAgents);
     if (visible() && live) { await loadPresence().catch(() => {}); live = activityLive(ws.activity, ws.channelId, ws.config?.customAgents); }
     if (gen !== ws.pollGen) return;
     syncActivityViews();
-    ws.timer = setTimeout(tick, live ? ACTIVITY_POLL_MS : CALM_POLL_MS);
+    if (parkIfHidden()) return;
+    // A pass that moved — a message landed, a seat is working, a
+    // reply is playing — resets the idle stretch on the spot; a
+    // pass that changed nothing lets it grow toward IDLE_POLL_MS.
+    if (ws.sig !== sigBefore || live || speaking()) unchangedTicks = 0;
+    else unchangedTicks += 1;
+    ws.timer = setTimeout(tick, pollDelay({ live, speaking: speaking(), unchanged: unchangedTicks }));
   };
+  // A deliberate act in the room — a send, a channel switch —
+  // earns full cadence from that moment, so a stretched tick can
+  // never delay a round the member just started: those acts run
+  // their own loads (the room is already fresh), and this only
+  // re-arms the chain at the calm cadence so the fast cadence
+  // can engage on the very next pass. While hidden-parked it
+  // stands down: the return re-sync owns the catch-up.
+  ws.pollWake = () => {
+    if (gen !== ws.pollGen || hiddenSince) return;
+    unchangedTicks = 0;
+    clearTimeout(ws.timer);
+    ws.timer = setTimeout(tick, CALM_POLL_MS);
+  };
+  // The return half of the diet. A real absence
+  // (POLL_RESYNC_MIN_MS or more) earns ONE full re-sync — the
+  // message window plus the slow timer's set (presence, agent
+  // state, config, faces) as a single batch. Reactions ride the
+  // loadMessages inside it: their 5 s throttle is long outlasted
+  // by any real absence, and a short spell skips them correctly.
+  // A shorter spell earns one immediate ordinary pass. If
+  // another view is up, no fetches at all: the chain re-arms and
+  // gates itself exactly as before, and entering the Desktop
+  // view re-mounts and loads the room then. A hide that arrives
+  // while voice is playing leaves the chain alone entirely —
+  // it parks itself when the speech ends (parkIfHidden).
+  const onVisibility = () => {
+    if (gen !== ws.pollGen) return;
+    if (document.visibilityState === 'hidden') {
+      if (speaking()) return;
+      if (!hiddenSince) hiddenSince = Date.now();
+      clearTimeout(ws.timer); ws.timer = null;
+      return;
+    }
+    if (document.visibilityState !== 'visible' || !hiddenSince) return;
+    const awayMs = Date.now() - hiddenSince;
+    hiddenSince = 0;
+    unchangedTicks = 0;
+    clearTimeout(ws.timer); ws.timer = null;
+    if (!visible()) { ws.timer = setTimeout(tick, CALM_POLL_MS); return; }
+    if (awayMs < POLL_RESYNC_MIN_MS) { void tick(); return; }
+    void (async () => {
+      await Promise.allSettled([loadMessages(), loadPresence(), loadAgentState(), loadConfig(), loadFaces()]);
+      if (gen !== ws.pollGen || hiddenSince) return;
+      ws.timer = setTimeout(tick, pollDelay({ live: activityLive(ws.activity, ws.channelId, ws.config?.customAgents), speaking: speaking(), unchanged: 0 }));
+    })();
+  };
+  if (ws.pollVisHandler) document.removeEventListener('visibilitychange', ws.pollVisHandler);
+  ws.pollVisHandler = onVisibility;
+  document.addEventListener('visibilitychange', onVisibility);
   ws.timer = setTimeout(tick, CALM_POLL_MS);
   ws.slowTimer = setInterval(() => { if (visible()) { loadPresence(); loadAgentState(); loadConfig(); loadFaces(); } }, 15000);
 }
