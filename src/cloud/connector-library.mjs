@@ -823,11 +823,17 @@ export function createConnectorLibraryStore(pool) {
   // member name each was recorded under, and the same collapse
   // picks the family's winner.
   async function readSetRows(client, key) {
+    // The query names the carried seat parameter through a
+    // $2::text is not null clause: a parameter the statement never
+    // names has no type Postgres can infer and the read fails
+    // 42P18. The clause filters nothing (seatId is a required
+    // non-empty string); it only types the carried parameter.
+    // Same discipline as readCustomEntryRows above.
     const family = familyEntryIds(key.entryId);
     if (family) {
       const r = await client.query(
         `select * from helmion.connector_connections
-          where tenant_id = current_setting('helmion.tenant_id', true) and person_id = $1 and entry_id = any($3::text[])
+          where tenant_id = current_setting('helmion.tenant_id', true) and person_id = $1 and $2::text is not null and entry_id = any($3::text[])
           order by updated_at desc, id desc`,
         [key.personId, key.seatId, family],
       );
@@ -835,7 +841,7 @@ export function createConnectorLibraryStore(pool) {
     }
     const r = await client.query(
       `select * from helmion.connector_connections
-        where tenant_id = current_setting('helmion.tenant_id', true) and person_id = $1 and entry_id = $3
+        where tenant_id = current_setting('helmion.tenant_id', true) and person_id = $1 and $2::text is not null and entry_id = $3
         order by updated_at desc, id desc`,
       [key.personId, key.seatId, key.entryId],
     );
