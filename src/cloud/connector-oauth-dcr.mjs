@@ -121,13 +121,34 @@ const fail = (code, message) => { throw new ConnectorOAuthDcrError(code, message
 
 const trimSlash = (value) => String(value ?? '').replace(/\/+$/, '');
 
+// Every fetch on the connect-start roads is bounded
+// (2026-11-10 defect fix): this road answers a person's Connect
+// click, and an unbounded fetch to a stalled provider endpoint
+// left the click with no answer at all — no redirect, no form,
+// no message. The codebase's other outbound fetches all carry
+// AbortSignal.timeout (the GitHub file read's 10s, spoke
+// setup's 8s, the OIDC gateway's own constant); the OAuth
+// connect-start fetches were the ones with none. A timeout
+// surfaces as the named 'network-failure' below, in Helmian's
+// time, not the provider's.
+export const DCR_FETCH_TIMEOUT_MS = 8000;
+
+// Discovery chains up to four metadata fetches (two resource
+// documents, then two authorization-server forms), so a
+// per-fetch bound alone still lets a stalled provider hold a
+// Connect click for half a minute. Discovery therefore shares
+// one deadline across its fetches: healthy providers answer
+// each document in well under a second, and the whole lookup
+// gives up — with the named failure — inside this budget.
+export const DCR_DISCOVERY_BUDGET_MS = 12000;
+
 // JSON-or-named-failure fetch: a non-JSON or non-2xx answer from a
 // metadata/registration/token endpoint is a fact about the road,
 // reported by endpoint role, never parsed hopefully.
 async function fetchJson(fetchImpl, url, { role, ...opts } = {}) {
   let res;
   try {
-    res = await fetchImpl(url, opts);
+    res = await fetchImpl(url, { ...opts, signal: opts.signal ?? AbortSignal.timeout(DCR_FETCH_TIMEOUT_MS) });
   } catch (error) {
     fail('network-failure', `the ${role} could not be reached (${error?.message ?? 'network error'})`);
   }
@@ -175,6 +196,12 @@ export async function discoverAuthorizationServer(resourceUrl, { fetchImpl = fet
   }
   const origin = resourceUrlParsed.origin;
   const path = resourceUrlParsed.pathname.replace(/\/+$/, '');
+  // One deadline for the whole discovery (see
+  // DCR_DISCOVERY_BUDGET_MS above): each fetch's signal is the
+  // time left, so a stalled first document leaves nothing for
+  // the retries and the lookup fails inside the budget.
+  const deadline = Date.now() + DCR_DISCOVERY_BUDGET_MS;
+  const discoverySignal = () => AbortSignal.timeout(Math.max(1, deadline - Date.now()));
   // The path-suffixed document first (RFC 9728 §3.1), then the
   // origin-wide one; servers publish either or both.
   const resourceDocs = [];
@@ -185,7 +212,7 @@ export async function discoverAuthorizationServer(resourceUrl, { fetchImpl = fet
   let lastMiss = null;
   for (const docUrl of resourceDocs) {
     try {
-      const body = await fetchJson(fetchImpl, docUrl, { role: 'resource metadata document' });
+      const body = await fetchJson(fetchImpl, docUrl, { role: 'resource metadata document', signal: discoverySignal() });
       if (trimSlash(body.resource) === resource) { resourceMeta = body; break; }
       lastMiss = new ConnectorOAuthDcrError('resource-mismatch',
         `the resource metadata at ${docUrl} names ${body.resource ?? 'a different resource'}, not this connector`);
@@ -199,7 +226,7 @@ export async function discoverAuthorizationServer(resourceUrl, { fetchImpl = fet
   let lastAsMiss = null;
   for (const docUrl of asMetadataUrls(issuer)) {
     try {
-      const body = await fetchJson(fetchImpl, docUrl, { role: 'authorization server metadata document' });
+      const body = await fetchJson(fetchImpl, docUrl, { role: 'authorization server metadata document', signal: discoverySignal() });
       if (trimSlash(body.issuer) !== issuer) {
         lastAsMiss = new ConnectorOAuthDcrError('issuer-mismatch',
           `the authorization server metadata names issuer ${body.issuer ?? '(none)'}, not the ${issuer} the resource named — refused`);

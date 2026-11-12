@@ -85,11 +85,53 @@ function fakeLibraryStore() {
       entries.set(k, row);
       return { ...row };
     },
-    async listEntries(tenant, seat) {
-      return [...entries.values()].filter((e) => e.seatId === seat).map((e) => ({ ...e })).sort((a, b) => a.id.localeCompare(b.id));
+    async listEntries(tenant, seat, { personId } = {}) {
+      const out = [...entries.values()].filter((e) => e.seatId === seat).map((e) => ({ ...e })).sort((a, b) => a.id.localeCompare(b.id));
+      if (!personId) return out;
+      // The real store's SET projection (2026-11-10 defect fix),
+      // mirrored so this fake keeps the store's current contract:
+      // a brokered catalog / helmian-native entry the person's set
+      // holds a connection for is carried by every live seat, as
+      // that seat's view of the record on the set winner's seat.
+      // (The fake holds one connection row per entry at most, so
+      // the collapse the real store rules over its rows is the
+      // first row seen here.) Without it the counts read — which
+      // re-derives the same projection from the tenant listings,
+      // the counts law — and the row read disagree, which is
+      // exactly what law (c) below exists to catch.
+      const seen = new Set(out.map((e) => e.id));
+      const winners = new Map();
+      for (const c of connections.values()) {
+        if (c.personId !== personId || winners.has(c.entryId)) continue;
+        winners.set(c.entryId, c);
+      }
+      for (const [entryId, winner] of winners) {
+        if (seen.has(entryId)) continue;
+        const physical = entries.get(key(winner.seatId, entryId));
+        if (!physical || (physical.kind !== 'catalog' && physical.kind !== 'helmian-native')) continue;
+        out.push({ ...physical, seatId: seat, workspaceSet: true, provenanceSeatId: winner.seatId });
+        seen.add(entryId);
+      }
+      return out.sort((a, b) => a.id.localeCompare(b.id));
     },
     async listConnections(tenant, { personId, seatId }) {
-      return [...connections.values()].filter((c) => c.personId === personId && c.seatId === seatId).map((c) => ({ ...c }));
+      // The real store's SET shape (SYNC S1 + the 2026-11-10
+      // carried bound): the set's winner per entry, for the
+      // entries this seat carries — stocked, the person's own
+      // customs, and the brokered entries the set itself holds.
+      const carriedIds = new Set([...entries.values()].filter((e) => e.seatId === seatId).map((e) => e.id));
+      for (const e of entries.values()) if (e.kind === 'custom' && e.addedBy === personId) carriedIds.add(e.id);
+      const byEntry = new Map();
+      for (const c of connections.values()) {
+        if (c.personId !== personId || byEntry.has(c.entryId)) continue;
+        byEntry.set(c.entryId, c);
+      }
+      for (const [entryId, winner] of byEntry) {
+        if (carriedIds.has(entryId)) continue;
+        const physical = entries.get(key(winner.seatId, entryId));
+        if (physical && (physical.kind === 'catalog' || physical.kind === 'helmian-native')) carriedIds.add(entryId);
+      }
+      return [...byEntry.values()].filter((c) => carriedIds.has(c.entryId)).map((c) => ({ ...c }));
     },
     async listMirrors(tenant, { personId, seatId }) {
       return [...mirrors.values()].filter((m) => m.personId === personId && m.seatId === seatId).map((m) => ({ ...m }));

@@ -46,9 +46,22 @@
 //     reads PROJECT that one row into every seat's library for its
 //     owner: the same entry id, the same record, no copies stocked.
 //     Catalog / helmian-native / mcp-local entries are NOT
-//     projected — their per-seat stocking is unchanged (GATE 1
-//     stands for them). Another person's custom entries, and
-//     another tenant's, are never projected. Legacy duplicate
+//     projected on custom-entry grounds — their per-seat stocking
+//     is unchanged (GATE 1 stands for them). The one entry-level
+//     projection for them is the SET's (the defect fix of
+//     2026-11-10, below): a brokered catalog / helmian-native
+//     entry the person's workspace SET holds a connection for is
+//     carried by every LIVE seat for that person — the physical record
+//     on the set winner's seat, answered in the requesting seat's
+//     name with its provenance named (workspaceSet /
+//     provenanceSeatId on the record) — because a seat the
+//     catalog stocks only a subset of the brokered entries on
+//     (Gemini) otherwise has no row for the set's shared state to
+//     join onto, and the service is silently absent from that
+//     seat's library. Vendor entries (mirrors, never connections)
+//     and mcp-local entries (a machine's own install fact) never
+//     project. Another person's entries, and another tenant's,
+//     are never projected. Legacy duplicate
 //     physical rows for one (person, custom id) — creatable before
 //     the projection existed — collapse by the ENTRY COLLAPSE RULE
 //     below, the entry-level mirror of S1's set rule.
@@ -59,6 +72,7 @@
 //     refuses a duplicate custom id — remove it and add it again.
 
 import { createHash } from 'node:crypto';
+import { LIVE_SEATS } from './connector-catalog.mjs';
 
 export const CONNECTOR_ENTRY_KINDS = Object.freeze(['catalog', 'helmian-native', 'custom', 'mcp-local']);
 export const CONNECTOR_TRUST_LABELS = Object.freeze(['verified', 'community', 'custom']);
@@ -691,7 +705,11 @@ export function createConnectorLibraryStore(pool) {
    * person: the physical row on that seat when there is one (any
    * kind; a custom row only when it is the person's own), else the
    * person's workspace custom entry for that id (its collapse
-   * winner), else null. Returns { row, provenanceSeatId } — the
+   * winner), else — for a brokered catalog / helmian-native entry
+   * the person's workspace SET holds a connection for — the
+   * physical entry record on the set winner's seat (the
+   * 2026-11-10 defect fix; viaSet names that road on the result),
+   * else null. Returns { row, provenanceSeatId } — the
    * row is the physical record; provenanceSeatId is the seat that
    * record lives on. Without a personId no ownership can be ruled,
    * so a physical row answers as-is and the cross-seat search runs
@@ -709,6 +727,32 @@ export function createConnectorLibraryStore(pool) {
     const candidates = personId ? rows.filter((row) => row.added_by === personId) : rows;
     const winner = customEntryWinner(candidates);
     if (winner) return { row: winner, provenanceSeatId: winner.seat_id };
+    if (personId && LIVE_SEATS.includes(seatId)) {
+      // The workspace SET (SYNC S1), carried-entry half of the
+      // 2026-11-10 defect fix: a brokered entry this seat does
+      // not stock still resolves for the person when their set
+      // holds a connection for it — the entry record lives on
+      // the set winner's seat, and that seat is its provenance.
+      // Without this, a connect / disconnect / arm addressed
+      // through a seat the catalog stocks only a subset on
+      // (Gemini) refuses a connection the person's other seats
+      // show as shared, and the entry cannot be resolved there
+      // at all. Only brokered kinds resolve this way: a custom
+      // entry's own projection above is its only cross-seat
+      // road, a vendor entry holds a mirror not a connection,
+      // and a local install is a machine's own fact. And only
+      // LIVE seats carry this way: the set is a workspace of
+      // real agents, and a seat id the catalog does not know
+      // (the §3.4 wall's never-stocked seat) shows nothing of
+      // the set, exactly as before.
+      const setRow = await readSetConnection(client, { personId, seatId, entryId });
+      if (setRow) {
+        const entryRow = await readEntry(client, setRow.seat_id, entryId);
+        if (entryRow && entryRow.kind !== 'custom' && entryRow.kind !== 'mcp-local' && entryRow.broker_mode !== 'vendor') {
+          return { row: entryRow, provenanceSeatId: setRow.seat_id, viaSet: true };
+        }
+      }
+    }
     return physical && !personId ? { row: physical, provenanceSeatId: seatId } : null;
   }
 
@@ -756,6 +800,24 @@ export function createConnectorLibraryStore(pool) {
   /** The set's row for (person, entry): the collapse winner, or null. */
   async function readSetConnection(client, key) {
     return setWinner(await readSetRows(client, key));
+  }
+
+  // Every physical connection row ONE person holds in this tenant,
+  // any seat, any entry — the candidate set the SET COLLAPSE RULE
+  // rules over, shared by the per-seat list (listConnections) and
+  // the entry-level SET projection (listEntries). The seat
+  // parameter rides in the key's own position ($2) for shape
+  // consistency with the other connection queries; it is
+  // deliberately NOT a filter — filtering by seat is the per-seat
+  // ownership the set removes.
+  async function readConnectionRowsForPerson(client, personId, seatId) {
+    const r = await client.query(
+      `select * from helmion.connector_connections
+        where tenant_id = current_setting('helmion.tenant_id', true) and person_id = $1 and $2::text is not null
+        order by entry_id, updated_at desc, id desc`,
+      [personId, seatId],
+    );
+    return r.rows ?? [];
   }
 
   // The exact-row WHERE for a resolved set row: writes land on the
@@ -850,7 +912,12 @@ export function createConnectorLibraryStore(pool) {
 
     /**
      * One seat's entry. A catalog / native / local record written
-     * for another seat reads as absent (GATE 1, unchanged). A CUSTOM
+     * for another seat reads as absent (GATE 1, unchanged) — with
+     * one person-scoped exception: a brokered catalog /
+     * helmian-native entry the person's workspace SET holds a
+     * connection for resolves from the set winner's seat for that
+     * person (2026-11-10 defect fix; readCarriedEntry's set
+     * resolution). A CUSTOM
      * entry is the person's workspace entry (SYNC S2a): when no
      * physical row sits on this seat, the person's own custom row
      * for the id — wherever it was created — answers as THIS seat's
@@ -881,8 +948,13 @@ export function createConnectorLibraryStore(pool) {
      * seat's views of their one workspace record (see getEntry),
      * and custom rows on this seat that belong to another person
      * drop out — a person's library never lists another person's
-     * customs. Without a personId the physical list answers exactly
-     * as before (the catalog refresh's road).
+     * customs. With a personId the brokered catalog /
+     * helmian-native entries the person's workspace SET holds a
+     * connection for join the same way (2026-11-10 defect fix):
+     * this seat's view of the physical record on the set winner's
+     * seat, marked workspaceSet with its provenance named.
+     * Without a personId the physical list answers exactly as
+     * before (the catalog refresh's road).
      */
     async listEntries(tenantId, seatId, { personId } = {}) {
       const seat = requireString(seatId ?? '', 'seatId', { max: 128 });
@@ -906,6 +978,36 @@ export function createConnectorLibraryStore(pool) {
           for (const [id, row] of winners) {
             if (seen.has(id)) continue;
             out.push(entryOf(row, seat));
+          }
+          // The workspace SET projection (2026-11-10 defect fix):
+          // a brokered catalog / helmian-native entry the person's
+          // set holds a connection for joins the list as this
+          // seat's view of the physical record on the set winner's
+          // seat — workspaceSet / provenanceSeatId on the record
+          // name the road, exactly as the custom projection names
+          // its own above. Without the row, a seat the catalog
+          // does not stock the entry on (Gemini stocks Weather and
+          // the native GitHub entry, not the brokered set) has
+          // nothing for the set's shared state to join onto, and
+          // the service is silently absent from that seat's panel.
+          // Vendor entries (mirrors, never connections) and
+          // mcp-local entries (a machine's own install fact) never
+          // project; another person's set rows are never read; and
+          // only LIVE seats project — a seat id the catalog does
+          // not know carries nothing (§3.4).
+          if (LIVE_SEATS.includes(seat)) {
+            const setWinners = new Map();
+            for (const row of await readConnectionRowsForPerson(client, personId, seat)) {
+              const prev = setWinners.get(row.entry_id);
+              if (!prev || setWinner([prev, row]) === row) setWinners.set(row.entry_id, row);
+            }
+            for (const [id, winner] of setWinners) {
+              if (seen.has(id)) continue;
+              const entryRow = await readEntry(client, winner.seat_id, id);
+              if (!entryRow || (entryRow.kind !== 'catalog' && entryRow.kind !== 'helmian-native')) continue;
+              out.push({ ...entryOf(entryRow, seat), workspaceSet: true, provenanceSeatId: winner.seat_id });
+              seen.add(id);
+            }
           }
           out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
           return out;
@@ -1077,9 +1179,19 @@ export function createConnectorLibraryStore(pool) {
      * wall). "Carries" is S1's stocked entries PLUS the person's
      * own workspace custom entries (SYNC S2a): a custom entry is
      * carried by every seat for its owner, so its set connection —
-     * S1's rule, unchanged — now reaches every seat too. Person and
-     * tenant scoping are untouched: another person's rows, and
-     * another tenant's, are never in the candidate set.
+     * S1's rule, unchanged — now reaches every seat too. PLUS, as
+     * of the 2026-11-10 defect fix, the brokered catalog /
+     * helmian-native entries the person's SET itself holds a
+     * connection for, on LIVE seats (the readCarriedEntry set
+     * resolution): the
+     * set is the person's workspace set, so a seat the catalog
+     * stocks only a subset on (Gemini) carries the set's brokered
+     * entries for that person — the row exists there precisely so
+     * the shared state has something to show on. Vendor and
+     * mcp-local entries never carry this way, and a seat id the
+     * catalog does not know carries nothing. Person and tenant
+     * scoping are untouched: another person's rows, and another
+     * tenant's, are never in the candidate set.
      */
     async getConnection(tenantId, key) {
       const params = connectionKeyParams(key);
@@ -1098,9 +1210,12 @@ export function createConnectorLibraryStore(pool) {
     /**
      * The SET's connections as seen from one seat: one collapsed
      * row per entry (the set winner), for exactly the entries this
-     * seat's library carries. Person and seat are both mandatory —
-     * the seat names the library whose entries bound the answer,
-     * never which physical rows may answer.
+     * seat's library carries — stocked entries, the person's own
+     * custom entries, and (2026-11-10 defect fix) the brokered
+     * entries the set itself holds for the person. Person and
+     * seat are both mandatory — the seat names the library whose
+     * entries bound the answer, never which physical rows may
+     * answer.
      */
     async listConnections(tenantId, filter = {}) {
       const personId = requireString(filter.personId ?? '', 'personId');
@@ -1118,26 +1233,35 @@ export function createConnectorLibraryStore(pool) {
           // by every seat (SYNC S2a) — their ids join the bound, so
           // the set's row for a custom entry lists from any seat.
           for (const row of await readCustomEntryRowsForPerson(client, personId)) carriedIds.add(row.id);
-          if (!carriedIds.size) return [];
           // Every physical row this person holds for ANY entry, in
           // this tenant: the candidate set the collapse rules over.
-          // $2 binds the requesting seat (the key's shape, validated
-          // above) but is deliberately NOT a filter — filtering by
-          // seat is the per-seat ownership the set removes; the
-          // carried-entries bound below is the seat's only say.
-          const r = await client.query(
-            `select * from helmion.connector_connections
-              where tenant_id = current_setting('helmion.tenant_id', true) and person_id = $1 and $2::text is not null
-              order by entry_id, updated_at desc, id desc`,
-            [personId, seatId],
-          );
           const byEntry = new Map();
-          for (const row of r.rows ?? []) {
-            if (!carriedIds.has(row.entry_id)) continue;
+          for (const row of await readConnectionRowsForPerson(client, personId, seatId)) {
             const prev = byEntry.get(row.entry_id);
             if (!prev || setWinner([prev, row]) === row) byEntry.set(row.entry_id, row);
           }
-          return [...byEntry.values()].map(connectionOf).sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0));
+          // The SET carried bound (2026-11-10 defect fix): an
+          // entry the person's set holds a connection for is ALSO
+          // carried by every LIVE seat when its physical record —
+          // on the set winner's seat — is a brokered catalog /
+          // helmian-native entry, so the set's row lists from a
+          // seat the catalog does not stock the entry on (Gemini)
+          // exactly as from the seat that set it up. Vendor
+          // entries (mirrors, never connections) and mcp-local
+          // entries (a machine's own install fact) never widen
+          // the bound, and a seat id the catalog does not know
+          // carries nothing (§3.4).
+          if (LIVE_SEATS.includes(seatId)) {
+            for (const [entryId, winner] of byEntry) {
+              if (carriedIds.has(entryId)) continue;
+              const entryRow = await readEntry(client, winner.seat_id, entryId);
+              if (entryRow && (entryRow.kind === 'catalog' || entryRow.kind === 'helmian-native')) carriedIds.add(entryId);
+            }
+          }
+          return [...byEntry.values()]
+            .filter((row) => carriedIds.has(row.entry_id))
+            .map(connectionOf)
+            .sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0));
         });
       } catch (error) {
         if (isMissingTable(error)) return [];

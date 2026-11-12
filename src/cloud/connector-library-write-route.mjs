@@ -358,7 +358,21 @@ export function declaredCimdClientId(entry) {
 // 9728) names its authorization server, whose metadata names the
 // consent endpoint. Fetched server-side; any failure still answers
 // the boundary with what the entry itself proves.
-async function consentBoundary(entry, fetchImpl) {
+//
+// The metadata lookup is DECORATIVE (2026-11-10 defect fix): the
+// answer's visible content — the plain note naming the provider
+// and the unplaced registration — does not depend on it (the
+// panel never renders authorizationEndpoint), yet the fetches
+// ran unbounded and sequential in front of that answer, so a
+// stalled provider endpoint left the Connect click with no
+// answer at all: no redirect, no form, no message. The whole
+// lookup now shares one short budget; whatever it cannot read
+// inside the budget leaves authorizationEndpoint null, exactly
+// as a failed fetch did before. Exported so the road itself —
+// not a copy of it — is what the timeout tests exercise.
+export const CONSENT_BOUNDARY_FETCH_BUDGET_MS = 4000;
+
+export async function consentBoundary(entry, fetchImpl) {
   const endpoint = String(entry.mcpEndpointUrl ?? '');
   let resourceMetadataUrl = null;
   let authorizationEndpoint = null;
@@ -367,14 +381,17 @@ async function consentBoundary(entry, fetchImpl) {
     resourceMetadataUrl = `${u.origin}/.well-known/oauth-protected-resource${u.pathname.replace(/\/$/, '')}`;
   } catch { /* the entry's endpoint was validated at creation; defensive only */ }
   if (resourceMetadataUrl && fetchImpl) {
+    const deadline = Date.now() + CONSENT_BOUNDARY_FETCH_BUDGET_MS;
+    const boundedFetch = (url) => fetchImpl(url, { signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
     try {
-      const res = await fetchImpl(resourceMetadataUrl);
+      const res = await boundedFetch(resourceMetadataUrl);
       if (res?.ok) {
         const meta = await res.json();
         const servers = Array.isArray(meta?.authorization_servers) ? meta.authorization_servers : [];
         for (const server of servers) {
+          if (Date.now() >= deadline) break;
           try {
-            const asRes = await fetchImpl(`${String(server).replace(/\/$/, '')}/.well-known/oauth-authorization-server`);
+            const asRes = await boundedFetch(`${String(server).replace(/\/$/, '')}/.well-known/oauth-authorization-server`);
             if (asRes?.ok) { authorizationEndpoint = (await asRes.json())?.authorization_endpoint ?? null; if (authorizationEndpoint) break; }
           } catch { /* try the next server */ }
         }
