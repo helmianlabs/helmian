@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=f20e3e200baadd1c';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=f20e3e200baadd1c';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=f20e3e200baadd1c';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=f20e3e200baadd1c';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=765728ff7cdada1e';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=765728ff7cdada1e';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=765728ff7cdada1e';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=765728ff7cdada1e';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -232,6 +232,19 @@ function renderGuardApprovals() {
 }
 
 // ---- views ----
+// The shell stage's loading state ships in the markup (#boot-loading
+// in index.html, optimization bite 6): it covers the main area from
+// the first paint until the first real content paints — this module's
+// own arrival, the session read, and the workspace module's fetch all
+// happen behind it. Every path that paints content first hides it:
+// show() for views (the Desktop view's areas ship their own loading
+// look in the markup, and mountWorkspace's painted one takes over
+// from there), boot()'s signed-out branch, and the Maestro gate when
+// it shows the ceremony. It is never unhidden again, so later view
+// switches keep exactly the loading states they have today. The
+// lookup stays guarded (the app-dom-ids census's shape): a markup
+// change must never be able to break the boot.
+function hideBootLoading() { const b = $('#boot-loading'); if (b) b.hidden = true; }
 function show(view) {
   if (!state.actor) return;
   if (PANEL_VIEWS.includes(view)) {
@@ -242,6 +255,7 @@ function show(view) {
     view = 'desktop';
   }
   shell.dataset.view = view;
+  hideBootLoading();
   // Chats is the general-list face of the session console: the same panel
   // and loaders under its own nav item, title and hash.
   const panelView = view === 'chats' ? 'console' : view;
@@ -2503,7 +2517,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=f20e3e200baadd1c'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=765728ff7cdada1e'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2517,9 +2531,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  integrationsMod ??= await import('./integrations-view.mjs?v=f20e3e200baadd1c');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=f20e3e200baadd1c');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=f20e3e200baadd1c');
+  integrationsMod ??= await import('./integrations-view.mjs?v=765728ff7cdada1e');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=765728ff7cdada1e');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=765728ff7cdada1e');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2716,7 +2730,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=f20e3e200baadd1c')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=765728ff7cdada1e')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3592,7 +3606,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=f20e3e200baadd1c');
+  workspaceModule ??= await import('./envoy-workspace.js?v=765728ff7cdada1e');
   // The feed load rides along unawaited (boot-load fix, 2026-11-11):
   // it used to be awaited here, so the whole workspace mount — the
   // Desktop view's first paint — waited on the slowest of the events,
@@ -4150,7 +4164,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=f20e3e200baadd1c');
+    const mod = await import('./maestro-activation.mjs?v=765728ff7cdada1e');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }
@@ -4161,7 +4175,7 @@ async function boot() {
   try { const res = await fetch('/api/admin/session?scope=member', { credentials: 'same-origin' }); model = sessionModel(res.status, await res.json().catch(() => ({}))); }
   catch { model = sessionModel(0); }
   if (!model.member) {
-    shell.classList.add('signed-out'); $('#signed-out').hidden = false; $('#view-title').textContent = 'Helmian';
+    shell.classList.add('signed-out'); $('#signed-out').hidden = false; hideBootLoading(); $('#view-title').textContent = 'Helmian';
     // The sidebar service line names the state that was actually
     // read on EVERY boot outcome (P2 fix, 2026-11-09): before this,
     // only the member path below ever set it, so a signed-in person

@@ -57,6 +57,11 @@ export async function runMaestroActivationGate({
     const button = documentImpl.getElementById('maestro-activation-button');
     if (!section || !button) return false;
     section.hidden = false;
+    // The ceremony is the main area's content now: hand off from
+    // the shell's static boot loader (index.html #boot-loading,
+    // optimization bite 6) so the two never stack.
+    const bootLoading = documentImpl.getElementById('boot-loading');
+    if (bootLoading) bootLoading.hidden = true;
     if (typeof button.focus === 'function') button.focus();
     await new Promise((resolve) => {
       button.addEventListener('click', async () => {
