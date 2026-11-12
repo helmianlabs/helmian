@@ -1100,6 +1100,7 @@ test('boxless faces: no 28px tile, no dark stage, mask on, clips in message rows
   assert.ok(css.includes('.ew-msg .ew-avatar.face-ava'), 'message character faces carry a boxless rule');
   assert.ok(css.includes('background:transparent'), 'boxless faces sit on transparency');
   assert.ok(css.includes('mask-image:var(--face-mask)'), 'clips are masked with the still');
+  assert.ok(css.includes('.ew-msg .ew-avatar.face-ava > video.ew-crew-face-video { width:36px; height:36px;'), 'message-row clips carry the same explicit 36px size as crew clips (an unsized video renders at its 512px intrinsic size)');
   const msgSeat = js.slice(js.indexOf('function msgSeatAvatar'), js.indexOf('function msgOwnerAvatar'));
   assert.ok(msgSeat.includes('crewSeatFaceClip'), 'message faces mount the clip stack, not the still alone');
   assert.ok(!msgSeat.includes('crewSeatFaceImg'), 'message faces no longer mount the still alone');

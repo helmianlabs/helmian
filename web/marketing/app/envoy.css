@@ -373,7 +373,8 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-crew-row.selected { background:var(--panel-2); border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
 .ew-crew-face { position:relative; flex:none; width:36px; height:36px; border-radius:0; background:transparent; display:grid; place-items:center; font-weight:700; color:var(--text); overflow:visible; }
 .ew-crew-face > img { width:36px; height:36px; border-radius:0; object-fit:contain; display:block; }
-.ew-crew-face > video.ew-crew-face-video { width:36px; height:36px; border-radius:0; object-fit:contain; display:block; }
+.ew-crew-face > video.ew-crew-face-video,
+.ew-msg .ew-avatar.face-ava > video.ew-crew-face-video { width:36px; height:36px; border-radius:0; object-fit:contain; display:block; }
 /* Clips are opaque black-stage VP9. The matching still is real RGBA.
    Mask the video with that still so a boxless slot does not become
    a black square. Motion outside the still silhouette is clipped. */
