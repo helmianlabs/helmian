@@ -461,6 +461,17 @@ function rowOf(entry, joined) {
     ...(entry.kind === 'custom'
       ? { workspaceCustom: true, provenanceSeatId: entry.provenanceSeatId ?? entry.seatId }
       : {}),
+    // A workspace SET marking (2026-11-10 defect fix): this row
+    // is a brokered catalog / helmian-native entry the person's
+    // set holds a connection for, projected from the physical
+    // record on the set winner's seat (the store's listEntries
+    // SET projection) so a seat the catalog does not stock it on
+    // still carries the row with the set's shared state.
+    // provenanceSeatId is the seat that record lives on. Present
+    // only on set-projected rows.
+    ...(entry.workspaceSet
+      ? { workspaceSet: true, provenanceSeatId: entry.provenanceSeatId ?? entry.seatId }
+      : {}),
   };
 }
 
@@ -609,7 +620,12 @@ export function createSeatLibraryRead({
      * listEntries projects the person's own custom entries into
      * this seat's list (and keeps another person's customs out), so
      * a custom entry appears here with the same entry id on every
-     * seat — one record, not a copy stocked per seat.
+     * seat — one record, not a copy stocked per seat. The same
+     * person-scoped list also projects the brokered catalog /
+     * helmian-native entries the person's SET holds a connection
+     * for (2026-11-10 defect fix), so a seat the catalog stocks
+     * only a subset of the brokered entries on (Gemini) carries
+     * the set's rows with their shared state too.
      */
     async readSeatLibrary(tenantId, { personId, seatId, now = Date.now(), verifiedMaxAgeMs = CONNECTOR_LIBRARY_FRESH_MS, actor = null } = {}) {
       const person = requireString(personId ?? '', 'personId');
@@ -865,6 +881,38 @@ export function createSeatLibraryRead({
         if (t > pt || (t === pt && Number(c.id ?? 0) > Number(prev.id ?? 0))) connectionByEntry.set(c.entryId, c);
       }
       const mirrorBySeatEntry = new Map(mirrors.map((m) => [`${m.seatId} ${m.entryId}`, m]));
+
+      // The workspace SET projection, counts half (2026-11-10
+      // defect fix): the listings above are physical, so a seat
+      // the catalog does not stock a brokered entry on (Gemini)
+      // holds no record for it at all — while connectionByEntry
+      // already holds the person's set winner for the entry.
+      // Count that one entry on every live seat that lacks it,
+      // from the physical summary record on the winner's seat,
+      // exactly as the row read lists it (the store's listEntries
+      // SET projection is the same rule one level down; on the
+      // fallback path the per-seat lists arrive already projected
+      // and the lacks-it check keeps this block from doubling
+      // them). Vendor entries (mirrors, never connections) and
+      // mcp-local entries never project.
+      {
+        const heldBySeat = new Map();
+        for (const entry of entries) {
+          if (!heldBySeat.has(entry.seatId)) heldBySeat.set(entry.seatId, new Set());
+          heldBySeat.get(entry.seatId).add(entry.id);
+        }
+        const physicalBySeatEntry = new Map(entries.map((entry) => [`${entry.seatId} ${entry.id}`, entry]));
+        for (const [entryId, connection] of connectionByEntry) {
+          const physical = physicalBySeatEntry.get(`${connection.seatId} ${entryId}`);
+          if (!physical || (physical.kind !== 'catalog' && physical.kind !== 'helmian-native')) continue;
+          for (const seatId of LIVE_SEATS) {
+            if (heldBySeat.get(seatId)?.has(entryId)) continue;
+            entries.push({ ...physical, seatId, workspaceSet: true, provenanceSeatId: physical.seatId });
+            if (!heldBySeat.has(seatId)) heldBySeat.set(seatId, new Set());
+            heldBySeat.get(seatId).add(entryId);
+          }
+        }
+      }
 
       // Gate rows only where they can change a count: a custom
       // entry whose connection reads connected (an unpassed gate
