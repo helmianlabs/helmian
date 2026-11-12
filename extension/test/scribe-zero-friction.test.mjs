@@ -85,13 +85,16 @@ test('ROOT CAUSE FIX: the popup opened as a full tab is accepted; content script
   }
 });
 
-test('the welcome page opens on first install only', () => {
+test('the welcome page opens on first install only', async () => {
   const tabs = [];
   const api = { tabs: { create: (o) => tabs.push(o) }, runtime: chrome.runtime };
   assert.equal(worker.handleInstalled({ reason: 'update', previousVersion: '0.6.0' }, api), false);
   assert.equal(worker.handleInstalled({ reason: 'chrome_update' }, api), false);
   assert.equal(tabs.length, 0);
   assert.equal(worker.handleInstalled({ reason: 'install' }, api), true);
+  // 0.6.9 candidate: the page opens right after the (optional) settings preset
+  // is read, so it can show the preset's name and AIs already ticked.
+  for (let i = 0; i < 50 && !tabs.length; i++) await new Promise((r) => setTimeout(r, 10));
   assert.deepEqual(tabs, [{ url: 'chrome-extension://helmion-guard-test-id/onboarding/onboarding.html' }]);
 });
 

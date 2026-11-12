@@ -395,6 +395,10 @@
 
     bannerElement = make('div', PREFIX + '-health-alert' + (opts.tone === 'danger' ? ' ' + PREFIX + '-health-danger' : ''));
     bannerElement.setAttribute('role', 'status');
+    // Marks a chip drawn by this generation of Guard. guard.css hides any
+    // health box WITHOUT it: that is a stale copy's old red box in a tab
+    // that was open across an update.
+    bannerElement.setAttribute('data-helmian-chip', '1');
     bannerElement.appendChild(make(
       'strong',
       PREFIX + '-health-alert-title',
