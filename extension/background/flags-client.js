@@ -100,7 +100,7 @@ export function toReportBody(flag, { version = '0.0.0', browser } = {}) {
   if (!flag || !FLAG_KINDS.includes(flag.kind)) return null;
   const { category, severity } = classify(flag);
   let reason = clean(flag.label, 1000);
-  if (reason.length < 3) reason = `Helmion Guard flag: ${flag.kind}`;
+  if (reason.length < 3) reason = `Helmian Guard flag: ${flag.kind}`;
   const body = {
     severity,
     category,

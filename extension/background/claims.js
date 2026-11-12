@@ -1,4 +1,4 @@
-// Runs the Helmion unsourced-claim detector over prose pulled off the page.
+// Runs the Helmian unsourced-claim detector over prose pulled off the page.
 //
 // This is the second lane. background/scan.js is the first, and the two are
 // deliberately opposite in almost every way:

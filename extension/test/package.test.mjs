@@ -297,3 +297,27 @@ test('there is a README telling Troy how to load it', async () => {
   assert.match(readme, /chrome:\/\/extensions/);
   assert.match(readme, /Load unpacked/i);
 });
+
+// Brand: the product is "Helmian". Internal ids (helmion: message types,
+// helmion.* storage keys, helmion-guard CSS classes, the HelmionUI globals)
+// deliberately keep the old spelling so stored data and messaging keep working;
+// everything a person reads must say Helmian.
+test('everything a person reads says "Helmian", not "Helmion"', async () => {
+  const firefox = JSON.parse(await readFile(path.join(EXTENSION_ROOT, 'manifest.firefox.json'), 'utf8'));
+  for (const m of [manifest, firefox]) {
+    assert.equal(m.name, 'Helmian Guard');
+    assert.equal(m.action.default_title, 'Helmian Guard');
+    assert.doesNotMatch(m.description, /Helmion/);
+  }
+  for (const file of ['popup/popup.html', 'onboarding/onboarding.html']) {
+    const html = await readFile(path.join(EXTENSION_ROOT, file), 'utf8');
+    assert.doesNotMatch(html, /Helmion\b/, file);
+    assert.match(html, /Helmian Guard/, file);
+  }
+  for (const file of ['content/ui.js', 'content/guard.js', 'content/nudge.js', 'background/worker.js', 'popup/popup.js', 'onboarding/onboarding.js']) {
+    const src = await readFile(path.join(EXTENSION_ROOT, file), 'utf8');
+    // Any quoted/template string containing the standalone word "Helmion".
+    const visible = src.match(/(['"`])(?:(?!\1)[^\\\n]|\\.)*\bHelmion\b(?:(?!\1)[^\\\n]|\\.)*\1/g) || [];
+    assert.deepEqual(visible, [], `${file} still shows "Helmion"`);
+  }
+});

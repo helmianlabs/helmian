@@ -96,3 +96,12 @@ test('PARITY: whatever the twin redacts as a secret, redact.js also redacts', ()
 test('the redacted text keeps the assignment name so the message still reads', () => {
   assert.equal(S.scan('password: hunter2xyz').redacted, 'password: [REDACTED:secret_assignment]');
 });
+
+test('summarize: plain "Type (count)" lines for the approval box, never the values', () => {
+  const result = S.scan('mail a@gmail.com and b@gmail.com, call (208) 644-1690, password: hunter2xyz');
+  const lines = Array.from(S.summarize(result));
+  assert.deepEqual(lines.slice().sort(), ['Email address (2)', 'Password or secret (1)', 'Phone number (1)']);
+  const joined = lines.join(' ');
+  for (const value of ['a@gmail.com', 'b@gmail.com', '644-1690', 'hunter2xyz']) assert.ok(!joined.includes(value), value);
+  assert.equal(S.summarize(S.scan('nothing private here')).length, 0);
+});

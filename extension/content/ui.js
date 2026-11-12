@@ -110,8 +110,8 @@
       'span',
       PREFIX + '-unchecked-title',
       lines.length === 1
-        ? 'Helmion Guard did not check line ' + lines[0].lineNumber + ' of this block.'
-        : 'Helmion Guard did not check ' + lines.length + ' lines of this block.',
+        ? 'Helmian Guard did not check line ' + lines[0].lineNumber + ' of this block.'
+        : 'Helmian Guard did not check ' + lines.length + ' lines of this block.',
     ));
     notice.appendChild(make('span', PREFIX + '-unchecked-detail', lines[0].reason));
 
@@ -252,7 +252,7 @@
     note.appendChild(make(
       'span',
       PREFIX + '-claims-footer',
-      'Helmion checked whether this was sourced, not whether it is true.',
+      'Helmian checked whether this was sourced, not whether it is true.',
     ));
 
     var anchor = element.parentNode;
@@ -324,7 +324,7 @@
     promptAlertElement.appendChild(make(
       'strong',
       PREFIX + '-prompt-alert-title',
-      'Helmion Guard blocked this request',
+      'Helmian Guard blocked this request',
     ));
     promptAlertElement.appendChild(make(
       'span',
@@ -361,6 +361,7 @@
   // -------------------------------------------------------- protection alert
 
   var bannerElement = null;
+  var bannerDismissedHere = false;
 
   function hideBanner() {
     if (bannerElement && bannerElement.parentNode) {
@@ -369,31 +370,41 @@
     bannerElement = null;
   }
 
-  // A real protection failure must remain visible, but it must not cover the
-  // site or expose implementation diagnostics. Technical detail is logged by
-  // guard.js and summarized in the toolbar popup instead.
-  function showBanner(message, detail) {
+  // A real protection problem is shown as a SMALL chip in the bottom-left
+  // corner: never over the chat, no implementation diagnostics on the page
+  // (those go to the console and the toolbar popup). It can be dismissed, and
+  // stays dismissed for this site for the rest of the browser session.
+  var HEALTH_DISMISS_KEY = 'helmian-guard:health-dismissed';
+
+  function healthDismissed() {
+    try { return Boolean(root.sessionStorage && root.sessionStorage.getItem(HEALTH_DISMISS_KEY) === '1'); }
+    catch (error) { return false; }
+  }
+
+  function rememberHealthDismissed() {
+    try { if (root.sessionStorage) root.sessionStorage.setItem(HEALTH_DISMISS_KEY, '1'); }
+    catch (error) { /* the chip still closes for this page */ }
+  }
+
+  function showBanner(message, detail, options) {
+    var opts = options || {};
     var parent = host();
     if (!parent) return null;
+    if (healthDismissed() || bannerDismissedHere) return null;
     hideBanner();
 
-    bannerElement = make('div', PREFIX + '-health-alert');
-    bannerElement.setAttribute('role', 'alert');
+    bannerElement = make('div', PREFIX + '-health-alert' + (opts.tone === 'danger' ? ' ' + PREFIX + '-health-danger' : ''));
+    bannerElement.setAttribute('role', 'status');
     bannerElement.appendChild(make(
       'strong',
       PREFIX + '-health-alert-title',
-      'Helmion Guard needs attention',
-    ));
-    bannerElement.appendChild(make(
-      'span',
-      PREFIX + '-health-alert-message',
-      'Safety checks may be incomplete on this page.',
+      opts.title || 'Guard: some checks are off here',
     ));
 
     var help = make(
       'span',
       PREFIX + '-health-alert-detail',
-      'Reload this page. If the alert returns, open the Helmion Guard extension for status.',
+      opts.help || 'Reload this page. If this comes back, open the Helmian Guard toolbar button for status.',
     );
     help.hidden = true;
     var details = make('button', PREFIX + '-health-alert-details', 'Details');
@@ -402,9 +413,20 @@
     details.addEventListener('click', function toggleHealthDetails() {
       help.hidden = !help.hidden;
       details.setAttribute('aria-expanded', help.hidden ? 'false' : 'true');
-      details.textContent = help.hidden ? 'Details' : 'Hide details';
+      bannerElement.setAttribute('data-open', help.hidden ? 'false' : 'true');
+      details.textContent = help.hidden ? 'Details' : 'Hide';
+    });
+    var close = make('button', PREFIX + '-health-alert-close', '\u00d7');
+    close.type = 'button';
+    close.setAttribute('aria-label', 'Dismiss');
+    close.setAttribute('data-helmion-action', 'dismiss-health');
+    close.addEventListener('click', function dismissHealth() {
+      bannerDismissedHere = true;
+      rememberHealthDismissed();
+      hideBanner();
     });
     bannerElement.appendChild(details);
+    bannerElement.appendChild(close);
     bannerElement.appendChild(help);
 
     parent.appendChild(bannerElement);
@@ -440,6 +462,17 @@
   // Executive Guard loop (waiting for, then showing, an approver's answer).
   // Same size limits as the prompt alert; never stretches across the page.
 
+  // A short plain list ("Email address (2)") under a heading. Types and
+  // counts only; callers never pass the private values themselves.
+  function itemList(className, title, items) {
+    var box = make('div', PREFIX + '-' + className + '-items');
+    if (title) box.appendChild(make('span', PREFIX + '-' + className + '-items-title', title));
+    var list = make('ul', PREFIX + '-' + className + '-list');
+    for (var i = 0; i < items.length; i += 1) list.appendChild(make('li', PREFIX + '-' + className + '-item', items[i]));
+    box.appendChild(list);
+    return box;
+  }
+
   var askAlertElement = null;
 
   function hideAskAlert() {
@@ -456,8 +489,9 @@
     hideAskAlert();
     askAlertElement = make('div', PREFIX + '-ask-alert ' + PREFIX + '-tone-' + (opts.tone || 'warn'));
     askAlertElement.setAttribute('role', 'alertdialog');
-    askAlertElement.appendChild(make('strong', PREFIX + '-ask-alert-title', opts.title || 'Helmion Guard'));
+    askAlertElement.appendChild(make('strong', PREFIX + '-ask-alert-title', opts.title || 'Helmian Guard'));
     if (opts.message) askAlertElement.appendChild(make('span', PREFIX + '-ask-alert-message', opts.message));
+    if (opts.items && opts.items.length) askAlertElement.appendChild(itemList('ask-alert', opts.itemsTitle, opts.items));
     if (opts.status) askAlertElement.appendChild(make('span', PREFIX + '-ask-alert-status', opts.status));
     var actions = (opts.actions || []).slice(0, 3);
     for (var i = 0; i < actions.length; i += 1) {
@@ -477,26 +511,54 @@
 
   // ---------------------------------------------------------- approval pill
   //
-  // The allow/deny decision as a compact pill in the bottom-right corner, so it
-  // never covers the chat. Click the pill to expand the details and the two
-  // buttons. It NEVER decides by itself: only an explicit Allow click calls
-  // onAllow. Deny, Escape-like dismissal, being replaced, and the timeout all
-  // call onDeny (timeout = deny). Default timeout 60 s.
+  // The allow/deny decision for "send this as written?". A large approval box
+  // sits directly above a pill in the bottom-right corner (both fixed, so the
+  // box is always right next to the pill). It opens expanded and STAYS OPEN
+  // until the person answers:
+  //   - only an explicit, trusted Allow (click, or Enter while focus is in
+  //     the box) calls onAllow;
+  //   - Cancel (click, or Escape) calls onDeny('cancelled');
+  //   - there is no auto-dismiss timer unless a caller passes timeoutMs > 0
+  //     (then timeout = deny, never allow), no outside-click close, and the
+  //     same question asked again (same `key`) leaves the open box untouched
+  //     instead of tearing it down and redrawing it.
+  // The pill toggle only hides/shows the box; it never answers it.
 
   var pillElement = null;
   var pillTimer = null;
+  var pillKey = null;
+  var pillKeyHandler = null;
 
   function closePill() {
     if (pillTimer) clearTimeout(pillTimer);
     pillTimer = null;
+    if (pillKeyHandler && typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+      document.removeEventListener('keydown', pillKeyHandler, true);
+    }
+    pillKeyHandler = null;
     if (pillElement && pillElement.parentNode) pillElement.parentNode.removeChild(pillElement);
     pillElement = null;
+    pillKey = null;
+  }
+
+  function isApprovalPillOpen() {
+    return Boolean(pillElement && pillElement.parentNode);
+  }
+
+  function inside(node, container) {
+    while (node) {
+      if (node === container) return true;
+      node = node.parentNode;
+    }
+    return false;
   }
 
   function showApprovalPill(options) {
     var opts = options || {};
     var parent = host();
     if (!parent) { if (typeof opts.onDeny === 'function') opts.onDeny('no-page'); return null; }
+    // The same question is already on screen: never redraw or reset it.
+    if (isApprovalPillOpen() && opts.key !== undefined && opts.key !== null && pillKey === opts.key) return pillElement;
     if (pillElement && pillElement._deny) pillElement._deny('replaced');
     var settled = false;
     function settle(allow, why) {
@@ -506,35 +568,67 @@
       if (allow) { if (typeof opts.onAllow === 'function') opts.onAllow(); }
       else if (typeof opts.onDeny === 'function') opts.onDeny(why || 'denied');
     }
+    var expanded = opts.collapsed !== true;
     var el = make('div', PREFIX + '-approval-pill ' + PREFIX + '-tone-' + (opts.tone || 'warn'));
     el.setAttribute('role', 'alertdialog');
-    el.setAttribute('aria-expanded', 'false');
+    el.setAttribute('aria-modal', 'false');
+    el.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     el._deny = function (why) { settle(false, why); };
-    var toggle = make('button', PREFIX + '-approval-pill-toggle', opts.title || 'Helmion Guard: approve?');
-    toggle.type = 'button';
-    toggle.setAttribute('data-helmion-action', 'expand');
+
     var details = make('div', PREFIX + '-approval-pill-details');
-    details.hidden = true;
+    details.hidden = !expanded;
+    details.appendChild(make('strong', PREFIX + '-approval-pill-question', opts.question || opts.title || 'Helmian Guard: approve?'));
     if (opts.message) details.appendChild(make('span', PREFIX + '-approval-pill-message', opts.message));
+    if (opts.items && opts.items.length) details.appendChild(itemList('approval-pill', opts.itemsTitle, opts.items));
     if (opts.status) details.appendChild(make('span', PREFIX + '-approval-pill-status', opts.status));
+    var row = make('div', PREFIX + '-approval-pill-actions');
     var allow = make('button', PREFIX + '-approval-pill-allow', opts.allowLabel || 'Allow');
     allow.type = 'button'; allow.setAttribute('data-helmion-action', 'allow');
     allow.addEventListener('click', function (e) { if (e && e.isTrusted === false) return; settle(true); });
-    var deny = make('button', PREFIX + '-approval-pill-deny', opts.denyLabel || 'Deny');
+    var deny = make('button', PREFIX + '-approval-pill-deny', opts.denyLabel || 'Cancel');
     deny.type = 'button'; deny.setAttribute('data-helmion-action', 'deny');
-    deny.addEventListener('click', function () { settle(false, 'denied'); });
-    details.appendChild(allow);
-    details.appendChild(deny);
+    deny.addEventListener('click', function () { settle(false, 'cancelled'); });
+    row.appendChild(allow);
+    row.appendChild(deny);
+    details.appendChild(row);
+
+    var toggle = make('button', PREFIX + '-approval-pill-toggle', opts.title || 'Helmian Guard: approve?');
+    toggle.type = 'button';
+    toggle.setAttribute('data-helmion-action', 'expand');
     toggle.addEventListener('click', function () {
       details.hidden = !details.hidden;
       el.setAttribute('aria-expanded', details.hidden ? 'false' : 'true');
     });
-    el.appendChild(toggle);
+
+    // Box first, pill under it: the box opens directly above the pill.
     el.appendChild(details);
+    el.appendChild(toggle);
     parent.appendChild(el);
     pillElement = el;
-    var ms = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 60000;
-    pillTimer = setTimeout(function () { settle(false, 'timeout'); }, ms);
+    pillKey = opts.key === undefined ? null : opts.key;
+
+    pillKeyHandler = function (e) {
+      if (!e || e.isTrusted === false || settled) return;
+      if (e.key === 'Escape') {
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
+        settle(false, 'cancelled');
+        return;
+      }
+      // Enter answers Allow only while focus is inside the box, and never
+      // from the Cancel/toggle buttons (their own click handles those).
+      if (e.key === 'Enter' && !details.hidden && inside(e.target, details) && e.target !== deny) {
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
+        settle(true);
+      }
+    };
+    if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+      document.addEventListener('keydown', pillKeyHandler, true);
+    }
+
+    var ms = Number(opts.timeoutMs);
+    if (ms > 0) pillTimer = setTimeout(function () { settle(false, 'timeout'); }, ms);
     return el;
   }
 
@@ -607,6 +701,8 @@
     hidePromptAlert: hidePromptAlert,
     showAskAlert: showAskAlert,
     showApprovalPill: showApprovalPill,
+    isApprovalPillOpen: isApprovalPillOpen,
+    isAskAlertOpen: function () { return Boolean(askAlertElement && askAlertElement.parentNode); },
     hideApprovalPill: function () { if (pillElement && pillElement._deny) pillElement._deny('dismissed'); },
     hideAskAlert: hideAskAlert,
     showFlagAlert: showFlagAlert,

@@ -2,7 +2,7 @@
 //
 // It exists because the checking has to happen somewhere that can load ES
 // modules, and a Chrome content script cannot. The worker imports the copied
-// Helmion modules and answers three messages:
+// Helmian modules and answers three messages:
 //
 //   helmion:scan    code blocks in, per-block destructive-command verdicts out
 //   helmion:claims  prose in, per-passage unsourced-claim findings out
@@ -136,7 +136,7 @@ function setBadge(tabId, info) {
     if (info.broken) {
       chrome.action.setBadgeText({ tabId, text: '!' });
       chrome.action.setBadgeBackgroundColor({ tabId, color: AMBER });
-      chrome.action.setTitle({ tabId, title: 'Helmion Guard needs attention — open for details' });
+      chrome.action.setTitle({ tabId, title: 'Helmian Guard needs attention — open for details' });
       return;
     }
     const dangerous = Number(info.dangerous) || 0;
@@ -145,21 +145,21 @@ function setBadge(tabId, info) {
       chrome.action.setBadgeBackgroundColor({ tabId, color: RED });
       chrome.action.setTitle({
         tabId,
-        title: `Helmion Guard flagged ${dangerous} destructive code block(s) on this page`,
+        title: `Helmian Guard flagged ${dangerous} destructive code block(s) on this page`,
       });
       return;
     }
     if (info.degraded) {
       chrome.action.setBadgeText({ tabId, text: '•' });
       chrome.action.setBadgeBackgroundColor({ tabId, color: BLUE });
-      chrome.action.setTitle({ tabId, title: 'Helmion Guard is active — open for status' });
+      chrome.action.setTitle({ tabId, title: 'Helmian Guard is active — open for status' });
       return;
     }
     chrome.action.setBadgeText({ tabId, text: '' });
-    chrome.action.setTitle({ tabId, title: 'Helmion Guard is watching this page' });
+    chrome.action.setTitle({ tabId, title: 'Helmian Guard is watching this page' });
   } catch (error) {
     // A tab that closed mid-flight is not a failure worth surfacing.
-    console.warn('[Helmion Guard] badge update failed:', error.message);
+    console.warn('[Helmian Guard] badge update failed:', error.message);
   }
 }
 
@@ -225,14 +225,14 @@ async function syncScribeAlarm() {
     if (!chrome.alarms) return;
     if (scribeConfigured(s)) chrome.alarms.create(SCRIBE_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
     else { chrome.alarms.clear(SCRIBE_ALARM); setScribeBadge(0); }
-  } catch (error) { console.warn('[Helmion Guard] scribe alarm sync failed:', error.message); }
+  } catch (error) { console.warn('[Helmian Guard] scribe alarm sync failed:', error.message); }
 }
 function setScribeBadge(unread) {
   try {
     chrome.action.setBadgeText({ text: badgeFor(unread) });
     if (unread > 0) {
       chrome.action.setBadgeBackgroundColor({ color: SCRIBE_BADGE });
-      chrome.action.setTitle({ title: `Helmion Guard: ${unread} unread Scribe letter(s)` });
+      chrome.action.setTitle({ title: `Helmian Guard: ${unread} unread Scribe letter(s)` });
     }
   } catch { /* badge is best effort */ }
 }
@@ -264,7 +264,7 @@ export async function runScribePoll(opts = {}) {
   // 0.6.0: the badge and notices are off by default (Troy: no doorbell to click).
   if (typeof result.unread === 'number') setScribeBadge(result.showBadge ? result.unread : 0);
   if (result.fresh) await notifyFresh(result.fresh);
-  await runAutoNudge(result).catch((error) => console.warn('[Helmion Guard] auto-nudge pass failed:', error && error.message));
+  await runAutoNudge(result).catch((error) => console.warn('[Helmian Guard] auto-nudge pass failed:', error && error.message));
   return result;
 }
 // ─── SCRIBE AUTO-NUDGE (0.6.0, off by default) ─────────────────────────────
@@ -338,9 +338,9 @@ export const ONBOARDING_PAGE = 'onboarding/onboarding.html';
 export function handleInstalled(details, api = chrome) {
   syncScribeAlarm();
   // 0.6.2: first install opens the welcome page. Updates and browser updates do not.
-  if (details && details.reason === 'update') migrateNudgeSites(ledger).catch((e) => console.warn('[Helmion Guard] nudge-site migration failed:', e && e.message));
+  if (details && details.reason === 'update') migrateNudgeSites(ledger).catch((e) => console.warn('[Helmian Guard] nudge-site migration failed:', e && e.message));
   if (details && details.reason === 'install') {
-    try { api.tabs.create({ url: api.runtime.getURL(ONBOARDING_PAGE) }); } catch (error) { console.warn('[Helmion Guard] could not open the welcome page:', error && error.message); }
+    try { api.tabs.create({ url: api.runtime.getURL(ONBOARDING_PAGE) }); } catch (error) { console.warn('[Helmian Guard] could not open the welcome page:', error && error.message); }
     return true;
   }
   return false;
@@ -389,7 +389,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const type = message && message.type;
 
     if (PRIVILEGED_TYPES.has(type) && !isOwnExtensionPage(sender)) {
-      console.warn('[Helmion Guard] refused a privileged ledger message from an unexpected sender:', type);
+      console.warn('[Helmian Guard] refused a privileged ledger message from an unexpected sender:', type);
       sendResponse({ ok: false, error: 'this message is only accepted from Guard\'s own pages (popup, options, welcome)' });
       return false;
     }
