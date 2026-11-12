@@ -89,3 +89,9 @@ fuck-claude/
 # sweep would have published them.
 .team-oauth-provisioning/
 
+
+# Executive Guard local runner data (signing key + audit log)
+.executive-guard/
+
+# A person's Guard settings preset (tools/package-guard.mjs --preset); never committed.
+extension/preset.json

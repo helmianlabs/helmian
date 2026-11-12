@@ -110,7 +110,11 @@ test('it asks for exactly the permissions 0.7.0 declares, and the list cannot qu
   // manifest declares them, so any future addition fails this test and has
   // to be argued for on purpose. Every extra permission asked for is trust
   // spent, and this test is what stops the list quietly growing.
-  assert.deepEqual(manifest.permissions, ['storage', 'alarms', 'idle']);
+  // PR 182 port: + 'scripting' (Chrome/Edge only, no install warning, grants no
+  // new sites). Used only on install/update to put a working copy of Guard into
+  // AI tabs that were already open, so an old copy cannot keep drawing a stale
+  // warning. See worker.js reinjectOpenTabs.
+  assert.deepEqual(manifest.permissions, ['storage', 'alarms', 'idle', 'scripting']);
   // Optional permissions are not granted at install; the extension must ask
   // for them at the moment the feature is used (notifications for fresh-mail
   // alerts, identity for the Scribe sign-in).
@@ -118,9 +122,13 @@ test('it asks for exactly the permissions 0.7.0 declares, and the list cannot qu
   // Host permissions: the findings upload's helmian.cloud, plus
   // connect.helmian.cloud, the door the Executive Guard approvals and
   // Scribe clients talk to. Pinned to exactly these two hosts.
+  // PR 182 port: + the SAME AI sites the content scripts already run on
+  // (chrome.scripting needs real host permissions; content-script matches
+  // alone are refused). Pinned: helmian.cloud, the door, and those sites only.
   assert.deepEqual(manifest.host_permissions, [
     'https://helmian.cloud/*',
     'https://connect.helmian.cloud/*',
+    ...manifest.content_scripts[0].matches,
   ]);
   // Optional host permissions, requested only when a feature needs them:
   // https for user-approved local policy endpoints, http for localhost
