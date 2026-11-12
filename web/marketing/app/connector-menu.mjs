@@ -94,7 +94,7 @@
 // plugins) or deleted (the vendor skills mirror, Mistral's agents;
 // M7 re-points Mistral's at Helmian's custom agents). A feed-bound
 // group names no connector, so it can never invent one.
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=c15fa8551413f59b';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=e8509813a8bc9fe7';
 
 export const MENU_ITEM_TYPES = Object.freeze([
   'attach', 'capability', 'action', 'projects', 'live-toggle-group', 'mirror-group', 'submenu', 'manage-link',

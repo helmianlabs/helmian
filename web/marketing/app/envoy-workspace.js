@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=c15fa8551413f59b';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=c15fa8551413f59b';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=c15fa8551413f59b';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=c15fa8551413f59b';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=c15fa8551413f59b';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=c15fa8551413f59b';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=c15fa8551413f59b';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=c15fa8551413f59b';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=c15fa8551413f59b';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=c15fa8551413f59b';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=c15fa8551413f59b';
-import { createConnectFields } from './connect-fields.mjs?v=c15fa8551413f59b';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=c15fa8551413f59b';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=c15fa8551413f59b';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=e8509813a8bc9fe7';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=e8509813a8bc9fe7';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=e8509813a8bc9fe7';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=e8509813a8bc9fe7';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=e8509813a8bc9fe7';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=e8509813a8bc9fe7';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=e8509813a8bc9fe7';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=e8509813a8bc9fe7';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=e8509813a8bc9fe7';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=e8509813a8bc9fe7';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=e8509813a8bc9fe7';
+import { createConnectFields } from './connect-fields.mjs?v=e8509813a8bc9fe7';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=e8509813a8bc9fe7';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=e8509813a8bc9fe7';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -945,7 +945,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configChannelId: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -1841,7 +1841,7 @@ async function loadConfig() {
   try {
     const body = await ws.ctx.api(`/api/admin/envoy/channel-config?channel_id=${encodeURIComponent(id)}`);
     if (id !== ws.channelId) return;
-    ws.config = body.config ?? { agents: [] }; ws.configured = Boolean(body.configured); ws.discordBot = body.discordBot ?? null; ws.slackBot = body.slackBot ?? null;
+    ws.config = body.config ?? { agents: [] }; ws.configChannelId = id; ws.configured = Boolean(body.configured); ws.discordBot = body.discordBot ?? null; ws.slackBot = body.slackBot ?? null;
     // The channel's standing armed set (bite A2) hydrates from the
     // config that carries it: the toggle store is re-seeded from
     // the stored pairs on every load, so a reload, a second device,
@@ -1857,7 +1857,7 @@ async function loadConfig() {
     // in { agents: [] } on any error, and the renderers below turned
     // that into "none in this channel", '+' add-pills, a vanished
     // debate badge, and a modal turn field reading the fallback 12.
-    if (!ws.config) { ws.config = { agents: [], discord: null, slack: null }; ws.configured = false; }
+    if (!ws.config) { ws.config = { agents: [], discord: null, slack: null }; ws.configChannelId = id; ws.configured = false; }
   }
   const ch = ws.channels.find((c) => c.id === id);
   if (ch) { ch._agents = ws.config.agents.length; ch._discord = Boolean(ws.config.discord); ch._slack = Boolean(ws.config.slack); ch._github = Boolean(ws.config.github?.repo); if ('avatar' in (ws.config ?? {})) ch.avatar = ws.config.avatar; const seen = ls.get('chanMeta', {}); seen[ch.id] = { a: ch._agents, d: ch._discord, s: ch._slack, g: ch._github }; ls.set('chanMeta', seen); }
@@ -2265,6 +2265,15 @@ export function addRenderKeepsPeek({ railRest = false, peeking = false, focusIns
 }
 
 function renderAgents() {
+  // The rail is the open channel's config truth (optimization
+  // bite 4): until a config FOR THIS channel has landed there is
+  // no roster to derive — at boot the rail holds its loading note,
+  // on a switch it holds the room it is leaving — and a render
+  // derived from no config (or another channel's) would paint a
+  // fabricated "no agents in this channel" over both. loadConfig
+  // renders again the moment this channel's config lands, so the
+  // skip is never the final state.
+  if (!ws.config || ws.configChannelId !== ws.channelId) return;
   const desk = inMaestroMode();
   const raw = (ws.config?.agents ?? []).map((a) => a.provider);
   const customList = ws.config?.customAgents ?? [];
@@ -5478,7 +5487,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=c15fa8551413f59b');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=e8509813a8bc9fe7');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -5772,6 +5781,55 @@ async function loadAgentState() {
   renderFirstRunCard();
 }
 
+// ---------- boot: the first paint carries the room (optimization bite 4) ----------
+// The staged load, as measured on the live desk: the shell and
+// left nav painted first, then the channel list — with the crew
+// rail and the message list sitting at their empty static markup —
+// and only then the faces and the messages, together, last. The
+// mechanism was sequencing, not slowness in any one read: mount
+// awaited loadChannels ALONE, and the batch that carries the room
+// (channel-config for the crew, messages for the list) started
+// only when that fetch landed — a full extra round trip before
+// the two reads that fill the room even began. And while they
+// flew, the two areas showed their shipped-empty markup, which
+// reads as an empty room rather than a loading one (a channel
+// switch, by contrast, paints its 'Loading…' card at once).
+//
+// The boot now fires the remembered channel's loads WITH the
+// channels fetch, off the id the last session stored, and the
+// rail and the message list hold the room's loading look until
+// the first answers land — never an empty room, never guessed
+// data. loadChannels keeps the last word on which channel is
+// open: if the remembered id is not the channel it settles on,
+// the early loads stand down (their own id checks discard their
+// answers) and the batch runs again for the settled channel.
+
+// The channel the boot loads fire for: the one the last session
+// left open, read from the same stores loadChannels restores
+// from. The URL's channel param is deliberately NOT resolved
+// here — it can name a slug, and only the channels list can tell
+// an id from a slug; a mount carrying one keeps the serialized
+// boot rather than firing loads for a guess.
+function bootChannelId() {
+  try { if (new URLSearchParams(location.search).get('channel')) return null; } catch { /* no readable URL — the stored id stands */ }
+  return ls.get(`netChannel.${ws.mode}`, null) ?? (ws.mode === 'envoy' ? ls.get('channel', null) : null);
+}
+
+// The room's loading look, painted before the first boot fetch:
+// the same 'Loading…' card a channel switch paints, in the
+// message list, and a matching note in the crew rail (the first
+// keyed renderCrew reconcile evicts it — reconcileChildren drops
+// foreign children). An area that already holds content (a
+// remount, where the room's rows persist) is never clobbered;
+// `force` is only for the boot correction below, where the
+// message list may hold a stood-down channel's rows.
+function paintBootLoading(force = false) {
+  const box = $('ew-messages');
+  if (box && (force || !box.childNodes.length)) box.replaceChildren(h('div', { class: 'ew-empty' }, 'Loading…'));
+  const list = $('ew-crew-list');
+  if (list && !list.childNodes.length) list.append(h('p', { class: 'ew-note' }, 'Loading…'));
+}
+
 export async function mountWorkspace(ctx) {
   ws.ctx = ctx;
   if (!ws.wired) wire();
@@ -5779,8 +5837,29 @@ export async function mountWorkspace(ctx) {
   selectTab(ls.get('tab', 'browser'));
   if (ctx.benchTab) { openBench(ctx.benchTab); ctx.benchTab = null; }
   ws.ctx.renderFeed?.();
-  await loadChannels().catch(() => { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
-  await Promise.allSettled([loadPresence(), loadAgentState(), loadConfig(), loadMessages(), loadFaces(), loadProfile()]);
+  paintBootLoading();
+  const roomLoads = () => Promise.allSettled([loadPresence(), loadAgentState(), loadConfig(), loadMessages(), loadFaces(), loadProfile()]);
+  const bootId = bootChannelId();
+  let bootLoads = null;
+  if (bootId) { ws.channelId = bootId; bootLoads = roomLoads(); }
+  // A failed channels read no longer overwrites a room the early
+  // loads already painted — the reconnecting note is only honest
+  // when nothing has loaded.
+  await loadChannels().catch(() => { if (!ws.messages.length) $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, 'Envoy is reconnecting…')); });
+  if (bootLoads && ws.channelId === bootId) {
+    await bootLoads;
+  } else {
+    if (bootLoads) {
+      // The remembered channel stood down: clear anything its
+      // loads painted (selectChannel's reset, minus the composer
+      // and focus handling a boot does not need) and show the
+      // loading look again before the settled channel's batch.
+      ws.sig = null; ws.messages = [];
+      ws.reactions = { channelId: null, byId: {}, mine: {} }; ws.reactionsStamp = 0;
+      paintBootLoading(true);
+    }
+    await roomLoads();
+  }
   // Warm the plus menu's library caches while the workspace settles,
   // so a first open paints from memory instead of "Loading
   // libraries…" (the mount preload — see preloadLibrarySession).
