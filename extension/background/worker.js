@@ -2,7 +2,7 @@
 //
 // It exists because the checking has to happen somewhere that can load ES
 // modules, and a Chrome content script cannot. The worker imports the copied
-// Helmion modules and answers three messages:
+// Helmian modules and answers three messages:
 //
 //   helmion:scan    code blocks in, per-block destructive-command verdicts out
 //   helmion:claims  prose in, per-passage unsourced-claim findings out
@@ -155,7 +155,7 @@ function setBadge(tabId, info) {
     if (info.broken) {
       chrome.action.setBadgeText({ tabId, text: '!' });
       chrome.action.setBadgeBackgroundColor({ tabId, color: AMBER });
-      chrome.action.setTitle({ tabId, title: 'Helmion Guard needs attention — open for details' });
+      chrome.action.setTitle({ tabId, title: 'Helmian Guard needs attention — open for details' });
       return;
     }
     const dangerous = Number(info.dangerous) || 0;
@@ -164,21 +164,21 @@ function setBadge(tabId, info) {
       chrome.action.setBadgeBackgroundColor({ tabId, color: RED });
       chrome.action.setTitle({
         tabId,
-        title: `Helmion Guard flagged ${dangerous} destructive code block(s) on this page`,
+        title: `Helmian Guard flagged ${dangerous} destructive code block(s) on this page`,
       });
       return;
     }
     if (info.degraded) {
       chrome.action.setBadgeText({ tabId, text: '•' });
       chrome.action.setBadgeBackgroundColor({ tabId, color: BLUE });
-      chrome.action.setTitle({ tabId, title: 'Helmion Guard is active — open for status' });
+      chrome.action.setTitle({ tabId, title: 'Helmian Guard is active — open for status' });
       return;
     }
     chrome.action.setBadgeText({ tabId, text: '' });
-    chrome.action.setTitle({ tabId, title: 'Helmion Guard is watching this page' });
+    chrome.action.setTitle({ tabId, title: 'Helmian Guard is watching this page' });
   } catch (error) {
     // A tab that closed mid-flight is not a failure worth surfacing.
-    console.warn('[Helmion Guard] badge update failed:', error.message);
+    console.warn('[Helmian Guard] badge update failed:', error.message);
   }
 }
 
@@ -300,7 +300,7 @@ async function syncScribeAlarm() {
     if (!chrome.alarms) return;
     if (scribeConfigured(s)) chrome.alarms.create(SCRIBE_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
     else { chrome.alarms.clear(SCRIBE_ALARM); await refreshGlobalBadge(); }
-  } catch (error) { console.warn('[Helmion Guard] scribe alarm sync failed:', error.message); }
+  } catch (error) { console.warn('[Helmian Guard] scribe alarm sync failed:', error.message); }
 }
 async function notifyFresh(fresh) {
   if (!fresh || !fresh.length || !chrome.notifications) return;
@@ -332,7 +332,7 @@ export async function runScribePoll(opts = {}) {
   // honours the same showBadge switch when it reaches the mail tier.
   if (typeof result.unread === 'number') await refreshGlobalBadge();
   if (result.fresh) await notifyFresh(result.fresh);
-  await runAutoNudge(result).catch((error) => console.warn('[Helmion Guard] auto-nudge pass failed:', error && error.message));
+  await runAutoNudge(result).catch((error) => console.warn('[Helmian Guard] auto-nudge pass failed:', error && error.message));
   return result;
 }
 // ─── SCRIBE APPROVALS POP-UP (0.7.0) ───────────────────────────────────────
@@ -349,7 +349,7 @@ async function syncApprovalsAlarm() {
     const s = await getApprovalsState(ledger);
     if (s.session === 'in') chrome.alarms.create(APPROVALS_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
     else chrome.alarms.clear(APPROVALS_ALARM);
-  } catch (error) { console.warn('[Helmion Guard] approvals alarm sync failed:', error.message); }
+  } catch (error) { console.warn('[Helmian Guard] approvals alarm sync failed:', error.message); }
 }
 // ─── THE GLOBAL BADGE: ONE ARBITER ─────────────────────────────────────────
 // Three features want the icon's global (tab-less) badge text: PC approvals,
@@ -400,7 +400,7 @@ async function refreshGlobalBadge() {
     chrome.action.setBadgeText({ text: mailText });
     if (mailText) {
       chrome.action.setBadgeBackgroundColor({ color: SCRIBE_BADGE });
-      chrome.action.setTitle({ title: `Helmion Guard: ${inbox.unread} unread Scribe letter(s)` });
+      chrome.action.setTitle({ title: `Helmian Guard: ${inbox.unread} unread Scribe letter(s)` });
     }
   } catch { /* badge is best effort */ }
 }
@@ -428,7 +428,7 @@ async function syncPcApprovalsAlarm() {
   try {
     if (!chrome.alarms) return;
     chrome.alarms.create(PC_APPROVALS_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
-  } catch (error) { console.warn('[Helmion Guard] pc approvals alarm sync failed:', error.message); }
+  } catch (error) { console.warn('[Helmian Guard] pc approvals alarm sync failed:', error.message); }
 }
 export async function runPcApprovalsPoll(opts = {}) {
   const before = await getPcApprovalsState(ledger);
@@ -651,9 +651,9 @@ export const ONBOARDING_PAGE = 'onboarding/onboarding.html';
 export function handleInstalled(details, api = chrome) {
   syncScribeAlarm(); syncApprovalsAlarm(); syncPcApprovalsAlarm();
   // 0.6.2: first install opens the welcome page. Updates and browser updates do not.
-  if (details && details.reason === 'update') migrateNudgeSites(ledger).catch((e) => console.warn('[Helmion Guard] nudge-site migration failed:', e && e.message));
+  if (details && details.reason === 'update') migrateNudgeSites(ledger).catch((e) => console.warn('[Helmian Guard] nudge-site migration failed:', e && e.message));
   if (details && details.reason === 'install') {
-    try { api.tabs.create({ url: api.runtime.getURL(ONBOARDING_PAGE) }); } catch (error) { console.warn('[Helmion Guard] could not open the welcome page:', error && error.message); }
+    try { api.tabs.create({ url: api.runtime.getURL(ONBOARDING_PAGE) }); } catch (error) { console.warn('[Helmian Guard] could not open the welcome page:', error && error.message); }
     return true;
   }
   return false;
@@ -702,7 +702,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const type = message && message.type;
 
     if (PRIVILEGED_TYPES.has(type) && !senderAllowedFor(type, sender)) {
-      console.warn('[Helmion Guard] refused a privileged ledger message from an unexpected sender:', type);
+      console.warn('[Helmian Guard] refused a privileged ledger message from an unexpected sender:', type);
       sendResponse({ ok: false, error: 'this message is only accepted from Guard\'s own pages (popup, options, welcome); approvals only from the extension popup' });
       return false;
     }
@@ -811,7 +811,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         outcome: 'denied-unverified',
       });
       try { await appendEntry(ledger, entry); }
-      catch (error) { console.warn('[Helmion Guard] could not file an unverified decision in the ledger:', error?.message || error); }
+      catch (error) { console.warn('[Helmian Guard] could not file an unverified decision in the ledger:', error?.message || error); }
     };
     if (type === 'helmion:decide') {
       let action;
