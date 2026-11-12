@@ -1,0 +1,6 @@
+{
+  "name": "Your name or email",
+  "ais": ["chatgpt", "claude", "grok", "gemini", "muse"],
+  "scribe": { "enabled": true },
+  "nudge": { "enabled": true }
+}
