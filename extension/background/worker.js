@@ -270,25 +270,37 @@ export async function runScribePoll(opts = {}) {
 // ─── SCRIBE AUTO-NUDGE (0.6.0, off by default) ─────────────────────────────
 // Queue fresh letters (ids only), then let the policy decide per open chat tab.
 // The text is fixed (nudge-policy.js nudgeText); letter content never leaves here.
-function tabUrl(tabId) {
+function tabUrl(tabId, api = chrome) {
   return new Promise((resolve) => {
-    try { chrome.tabs.get(tabId, (tab) => { void chrome.runtime.lastError; resolve(tab && tab.url ? tab.url : ''); }); }
+    try { api.tabs.get(tabId, (tab) => { void api.runtime.lastError; resolve(tab && tab.url ? tab.url : ''); }); }
     catch { resolve(''); }
   });
 }
-function sendToTab(tabId, message) {
+// 0.6.7 re-checks the tab's CURRENT url just before typing, so a tab that moved
+// to a non-chat page (or a lookalike app) is refused, never typed into.
+// Chrome only tells an extension a tab's url when it has the "tabs" permission
+// or HOST permission for that site; content-script matches do not count. Guard
+// 0.6.7-0.6.8 had neither for the AI sites, so the url always came back empty,
+// every nudge was refused as "not a chat page" and the tab was forgotten: the
+// auto-nudge never typed anything. An EMPTY url therefore means "unknown", not
+// "wrong page": the content script's own check inside the tab (nudge.js probe:
+// exact host + chat path + real composer, from the page's own location) decides.
+// A KNOWN url that is not a chat page is still refused here.
+export function nudgeUrlRefusal(url) {
+  return url && !siteForUrl(url) ? 'not a chat page' : null;
+}
+export function sendNudgeToTab(tabId, message, api = chrome) {
   return new Promise(async (resolve) => {
-    // 0.6.7: re-check the tab's CURRENT url just before typing. A tab that moved
-    // to any non-chat page (or a lookalike app) is refused, never typed into.
-    if (message && message.type === 'helmion:nudge-try' && chrome.tabs && typeof chrome.tabs.get === 'function') {
-      const url = await tabUrl(tabId);
-      if (!siteForUrl(url)) { resolve({ ok: false, reason: 'refused', detail: 'not a chat page' }); return; }
+    if (message && message.type === 'helmion:nudge-try' && api.tabs && typeof api.tabs.get === 'function') {
+      const refusal = nudgeUrlRefusal(await tabUrl(tabId, api));
+      if (refusal) { resolve({ ok: false, reason: 'refused', detail: refusal }); return; }
     }
     try {
-      chrome.tabs.sendMessage(tabId, message, (answer) => { void chrome.runtime.lastError; resolve(answer || null); });
+      api.tabs.sendMessage(tabId, message, (answer) => { void api.runtime.lastError; resolve(answer || null); });
     } catch { resolve(null); }
   });
 }
+const sendToTab = (tabId, message) => sendNudgeToTab(tabId, message);
 export async function runAutoNudge(result = {}, { now = Date.now() } = {}) {
   for (const { mailbox, items } of (result && result.mail) || []) await queuePending(ledger, mailbox, items, now);
   // 0.6.8: always pass the last known unread counts, so letters that stay unread get re-nudged.
