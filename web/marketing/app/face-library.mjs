@@ -32,6 +32,17 @@
 // file far under the web-upload cap. A missing file never leaves an
 // empty slot — the renderers keep the same fallback discipline as the
 // crew faces (still -> emoji face -> initial).
+// The art URLs minted here ride the shell stamp (optimization
+// bite 2, 2026-11-12): the import graph loads this module under
+// `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
+// read back off this module's own URL and lent to the art — a
+// face, clip or emoji is then served under the same immutable
+// cache rule as the code, and can never drift from it. Loaded
+// without a stamp (the test suite, tooling), the builders
+// return the bare URLs they return today.
+const ASSET_STAMP = new URL(import.meta.url).searchParams.get('v');
+const assetUrl = (url) => (ASSET_STAMP ? `${url}?v=${ASSET_STAMP}` : url);
+
 export const LIBRARY_PACK = 'glossy';
 export const LIBRARY_ASSET_BASE = '/app/assets/library/';
 export const LIBRARY_REACTION_PACK = 'maestro-library';
@@ -179,12 +190,12 @@ export function isLibraryFaceToken(value) {
 /** Still URL for a library face (128 or 256 px), or null. */
 export function libraryFaceStillUrl(slug, size = 128) {
   if (!libraryFace(slug)) return null;
-  return `${LIBRARY_ASSET_BASE}faces/${slug}-${size === 256 ? 256 : 128}.png`;
+  return assetUrl(`${LIBRARY_ASSET_BASE}faces/${slug}-${size === 256 ? 256 : 128}.png`);
 }
 
 /** Idle clip URL for a library face (the picker's motion preview). */
 export function libraryFaceClipUrl(slug) {
-  return libraryFace(slug) ? `${LIBRARY_ASSET_BASE}faces/${slug}-idle.webm` : null;
+  return libraryFace(slug) ? assetUrl(`${LIBRARY_ASSET_BASE}faces/${slug}-idle.webm`) : null;
 }
 
 /** The library reaction piece for a manifest name, or null. */
@@ -219,5 +230,5 @@ export function libraryReactionForSlug(slug) {
 /** Still URL for a library reaction piece (by name or slug), or null. */
 export function libraryReactionStillUrl(nameOrSlug) {
   const name = libraryReactionName(nameOrSlug) ?? (libraryReaction(nameOrSlug) ? String(nameOrSlug) : null);
-  return name ? `${LIBRARY_ASSET_BASE}reactions/${name}-128.png` : null;
+  return name ? assetUrl(`${LIBRARY_ASSET_BASE}reactions/${name}-128.png`) : null;
 }

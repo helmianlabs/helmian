@@ -1,8 +1,18 @@
 // Integrations page: small cards, plain words. Nothing internal is shown here:
 // no setting names, ids, addresses of services, or keys. The model is pure (tested);
 // renderIntegrations draws it.
-import { integrationsModel, profileSyncResultModel, usageModel } from './app-model.mjs?v=60b377f31d4d798f';
-import { avatarFor } from './avatars.mjs?v=60b377f31d4d798f';
+import { integrationsModel, profileSyncResultModel, usageModel } from './app-model.mjs?v=94caa8deac8b08b8';
+import { avatarFor } from './avatars.mjs?v=94caa8deac8b08b8';
+// The art URLs minted here ride the shell stamp (optimization
+// bite 2, 2026-11-12): the import graph loads this module under
+// `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
+// read back off this module's own URL and lent to the art — a
+// face, clip or emoji is then served under the same immutable
+// cache rule as the code, and can never drift from it. Loaded
+// without a stamp (the test suite, tooling), the builders
+// return the bare URLs they return today.
+const ASSET_STAMP = new URL(import.meta.url).searchParams.get('v');
+const assetUrl = (url) => (ASSET_STAMP ? `${url}?v=${ASSET_STAMP}` : url);
 
 export const PHONE_URL = 'https://helmian.cloud/app';
 // The AI providers of the owner's one connect road (2026-11-01):
@@ -97,7 +107,7 @@ export function integrationSections({ presence = null, connectors = {}, provider
     // in the same construction — no AI card in this row renders an
     // emoji glyph any more.
     const icon = ['claude', 'openai', 'gemini', 'grok'].includes(key)
-      ? { img: `/assets/agents/${key === 'openai' ? 'chatgpt' : key}.png` }
+      ? { img: assetUrl(`/assets/agents/${key === 'openai' ? 'chatgpt' : key}.png`) }
       : { tile: avatarFor(null, name) };
     const connect = !connected && CONNECT_FIELD_PROVIDERS.has(key) ? { provider: key } : null;
     const apiKeyConnect = !connected && API_KEY_CONNECT_FIELDS[key] ? { provider: key, fields: API_KEY_CONNECT_FIELDS[key] } : null;
