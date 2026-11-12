@@ -2,7 +2,7 @@
 // shell; cache-first for content-stamped asset URLs (?v=…, see
 // scripts/shell-stamp.mjs); never touches /api/.
 const CACHE_NAME = 'helmian-app-shell-v5';
-const SHELL = ['/app/', '/app/app.css?v=2373ccb8c45e367b', '/app/app.js?v=2373ccb8c45e367b', '/app/app-model.mjs?v=2373ccb8c45e367b', '/app/envoy.css?v=2373ccb8c45e367b', '/app/envoy-workspace.js?v=2373ccb8c45e367b', '/app/avatars.mjs?v=2373ccb8c45e367b', '/app/manifest.webmanifest', '/assets/helmian-logo.png'];
+const SHELL = ['/app/', '/app/app.css?v=60b377f31d4d798f', '/app/app.js?v=60b377f31d4d798f', '/app/app-model.mjs?v=60b377f31d4d798f', '/app/envoy.css?v=60b377f31d4d798f', '/app/envoy-workspace.js?v=60b377f31d4d798f', '/app/avatars.mjs?v=60b377f31d4d798f', '/app/manifest.webmanifest', '/assets/helmian-logo.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(SHELL)).catch(() => {})); self.skipWaiting(); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((n) => Promise.all(n.filter((k) => k.startsWith('helmian-app-shell-') && k !== CACHE_NAME).map((k) => caches.delete(k))))); self.clients.claim(); });
 self.addEventListener('fetch', (e) => {
