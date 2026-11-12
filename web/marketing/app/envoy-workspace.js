@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=777d1fbb14bdc0ea';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=777d1fbb14bdc0ea';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=777d1fbb14bdc0ea';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=777d1fbb14bdc0ea';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=777d1fbb14bdc0ea';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=777d1fbb14bdc0ea';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=777d1fbb14bdc0ea';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=777d1fbb14bdc0ea';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=777d1fbb14bdc0ea';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=777d1fbb14bdc0ea';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=777d1fbb14bdc0ea';
-import { createConnectFields } from './connect-fields.mjs?v=777d1fbb14bdc0ea';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=777d1fbb14bdc0ea';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=777d1fbb14bdc0ea';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=b0a3cf3a10e7af8b';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=b0a3cf3a10e7af8b';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=b0a3cf3a10e7af8b';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=b0a3cf3a10e7af8b';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=b0a3cf3a10e7af8b';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=b0a3cf3a10e7af8b';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=b0a3cf3a10e7af8b';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=b0a3cf3a10e7af8b';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=b0a3cf3a10e7af8b';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=b0a3cf3a10e7af8b';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=b0a3cf3a10e7af8b';
+import { createConnectFields } from './connect-fields.mjs?v=b0a3cf3a10e7af8b';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=b0a3cf3a10e7af8b';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=b0a3cf3a10e7af8b';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -378,32 +378,50 @@ function activityRow(provider, event, customAgents = [], now = Date.now()) {
   const custom = (customAgents ?? []).find((a) => a.handle === provider);
   const motion = activityMotionClass(event.stage);
   const avatar = custom
-    ? h('div', { class: `ew-avatar emoji-ava${motion ? ` ${motion}` : ''}` }, emojiNode(custom.emoji || '🤖'))
-    : seatAvatar(provider, event.stage);
-  return h('div', { class: 'ew-msg ew-answering', role: 'status' },
+    ? h('div', { class: `ew-avatar emoji-ava${motion ? ` ${motion}` : ''}`, 'data-provider': provider }, emojiNode(custom.emoji || '🤖'))
+    : msgSeatAvatar(provider, event.stage);
+  return h('div', { class: 'ew-msg ew-answering', role: 'status', 'data-activity-provider': provider },
     avatar,
     h('div', {}, h('div', { class: 'ew-body ew-activity-body' },
       h('span', { class: 'ew-working-dot', 'aria-hidden': 'true' }),
-      activityCueText(activityName(provider, customAgents), event, now))));
+      h('span', { class: 'ew-activity-cue' }, activityCueText(activityName(provider, customAgents), event, now)))));
 }
 
-// The rendered-activity signature: provider + stage + elapsed second
-// per visible cue, for the open channel. When it
-// changes — a stage moved, a cue appeared or cleared, or a live clock
-// ticked into a new second — the message view re-renders; when it
-// doesn't, polls leave the DOM alone.
+// The rendered-activity signature: provider + stage per visible cue,
+// for the open channel. The elapsed second is NOT part of it — a live
+// clock ticking into a new second must not re-render the message
+// view (the clock text updates in place, see syncActivityClocks).
+// When the signature changes — a stage moved, a cue appeared or
+// cleared — the message view re-renders; when it doesn't, polls
+// leave the DOM alone.
 let activityViewSig = '';
 function activityViewSignature(now = Date.now()) {
   const parts = [];
-  for (const c of activityCues(ws.activity, ws.channelId, ws.config?.customAgents, now)) parts.push(`ch:${c.provider}:${c.event.stage}:${activityElapsed(c.event, now)}`);
+  for (const c of activityCues(ws.activity, ws.channelId, ws.config?.customAgents, now)) parts.push(`ch:${c.provider}:${c.event.stage}`);
   return parts.join(',');
+}
+// The cue clocks tick in place: only the .ew-activity-cue text of a
+// standing activity row is rewritten, so a working seat's m:ss never
+// tears down the row (or restarts its face clip) once a second.
+function syncActivityClocks(now = Date.now()) {
+  if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+  for (const row of document.querySelectorAll('#ew-messages .ew-msg.ew-answering[data-activity-provider]')) {
+    const provider = row.getAttribute('data-activity-provider');
+    const event = activityCue(ws.activity, provider, ws.channelId, now);
+    const cue = row.querySelector('.ew-activity-cue');
+    if (!event || !cue) continue;
+    cue.textContent = activityCueText(activityName(provider, ws.config?.customAgents), event, now);
+  }
 }
 function syncActivityViews() {
   const sig = activityViewSignature();
-  if (sig === activityViewSig) return;
-  activityViewSig = sig;
-  renderMessages();
-  syncCrewMotion();
+  if (sig !== activityViewSig) {
+    activityViewSig = sig;
+    renderMessages();
+    syncCrewMotion();
+    syncMsgMotion();
+  }
+  syncActivityClocks();
 }
 
 // The CREW rail rows are rebuilt by renderAgents() on the message poll
@@ -425,6 +443,25 @@ function syncCrewMotion() {
     face.classList.toggle('ew-ava-roll', cls === 'ew-ava-roll');
     face.classList.toggle('ew-ava-talk', cls === 'ew-ava-talk');
     const video = face.querySelector('video.ew-crew-face-video');
+    if (video) crewClipApply(video, stage);
+  }
+}
+
+// Message-row faces ride the same in-place discipline as the crew
+// rail: on a signature change (and on the tab becoming visible
+// again) their motion classes toggle and their clips re-point,
+// without a rebuild — a kept row's clip never restarts just because
+// its seat's stage moved. The owner's rows carry data-provider
+// "owner" and always hold the idle clip, so they never roll or talk.
+function syncMsgMotion() {
+  if (typeof document === 'undefined' || typeof document.querySelectorAll !== 'function') return;
+  for (const shell of document.querySelectorAll('#ew-messages .ew-avatar[data-provider]')) {
+    const provider = shell.getAttribute('data-provider');
+    const stage = provider === 'owner' ? null : activityMotionStage(ws.activity, provider, ws.channelId);
+    const cls = activityMotionClass(stage);
+    shell.classList.toggle('ew-ava-roll', cls === 'ew-ava-roll');
+    shell.classList.toggle('ew-ava-talk', cls === 'ew-ava-talk');
+    const video = shell.querySelector('video.ew-crew-face-video');
     if (video) crewClipApply(video, stage);
   }
 }
@@ -504,8 +541,12 @@ function seatFaceImg(provider) {
 // file never leaves an empty slot.
 const CREW_FACE_SLUG = { openai: 'chatgpt' };
 const crewFaceSlug = (provider) => CREW_FACE_SLUG[provider] ?? provider;
+// The still that masks a slug's clips (envoy.css --face-mask): the
+// pack still at the same slug is real RGBA; the clips are not.
+const faceMaskStyle = (slug) => `--face-mask:url("/app/assets/crew/${slug}-256.png")`;
 function crewFaceImg(slug, fallback) {
   const img = h('img', { class: 'ew-crew-face-img', src: `/app/assets/crew/${slug}-56.png`, srcset: `/app/assets/crew/${slug}-128.png 2x, /app/assets/crew/${slug}-256.png 3x`, alt: '', width: 36, height: 36, loading: 'lazy' });
+  img.dataset.slug = slug;
   img.addEventListener('error', () => {
     if (img.dataset.fbk) return;
     img.dataset.fbk = '1';
@@ -515,13 +556,19 @@ function crewFaceImg(slug, fallback) {
 }
 const crewSeatFaceImg = (provider) => crewFaceImg(crewFaceSlug(provider), () => seatFaceImg(provider));
 const crewOwnerFaceImg = () => crewFaceImg('owner', () => ownerFaceFallback());
-// The rail's face slot: 36px rounded square (radius 8 — never a
-// circle) on the soft backing, with the status dot pinned at its
-// bottom-right over a surface ring, and the seat's live activity
-// motion riding the shell exactly as it did on the agent cards.
+// The rail's face slot: a 36px boxless shell with no backing at
+// all, the status dot pinned at its bottom-right over a surface
+// ring, and the seat's live activity motion riding the shell
+// exactly as it did on the agent cards. The shell carries
+// --face-mask (the seat's own still, read off the face node's
+// dataset.slug — the clip and the still both carry it) so
+// envoy.css can mask the clip's opaque black stage away.
 function crewFaceNode(faceImg, statusKind, motionStage) {
   const motion = activityMotionClass(motionStage);
-  return h('span', { class: `ew-crew-face${motion ? ` ${motion}` : ''}` },
+  const slug = faceImg?.dataset?.slug;
+  const attrs = { class: `ew-crew-face${motion ? ` ${motion}` : ''}` };
+  if (slug) attrs.style = faceMaskStyle(slug);
+  return h('span', attrs,
     faceImg,
     h('span', { class: `ew-crew-dot ${statusKind}`, 'aria-hidden': 'true' }));
 }
@@ -530,10 +577,11 @@ function crewFaceNode(faceImg, statusKind, motionStage) {
 // The rail face can carry the library pack's per-seat state clips
 // (bite 4a uploads them next to the stills as
 // /app/assets/crew/<slug>-<kind>.webm): a muted, looping <video>
-// inside the same 36px dark-tile shell, the 56px still as its poster.
-// The clips are dark-stage renders with no alpha channel — the
-// shell's dark tile is what contains them, and envoy.css fits the
-// video to the tile edge to edge so no letterbox shows.
+// inside the same 36px boxless shell, the 56px still as its poster.
+// The clips are dark-stage renders with no alpha channel —
+// envoy.css masks the video with the seat's own still (real RGBA,
+// via --face-mask on the shell) so the black stage never shows
+// as a square.
 // The clip is a RENDERING of the same activity feed the motion
 // classes read, never a state of its own. The mapping: no live
 // stage → idle; a working stage (started / working / file-placed)
@@ -586,7 +634,9 @@ function crewFaceClip(slug, stage, stillFallback) {
 const crewSeatFaceClip = (provider, stage) => crewFaceClip(crewFaceSlug(provider), stage, () => seatFaceImg(provider));
 const crewOwnerFaceClip = (stage) => crewFaceClip('owner', stage, () => ownerFaceFallback());
 // Tab hidden → every crew clip pauses; visible again → each one
-// resumes at the clip its seat's current stage calls for.
+// resumes at the clip its seat's current stage calls for. Message-
+// row clips pause and resume on the same beat (via syncMsgMotion,
+// which re-points each one at its seat's current stage).
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   document.addEventListener('visibilitychange', () => {
     if (typeof document.querySelectorAll !== 'function') return;
@@ -596,25 +646,43 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
       if (document.hidden) video.pause();
       else crewClipApply(video, activityMotionStage(ws.activity, row.getAttribute('data-provider'), ws.channelId));
     }
+    if (document.hidden) {
+      for (const video of document.querySelectorAll('#ew-messages video.ew-crew-face-video')) video.pause();
+    } else {
+      syncMsgMotion();
+    }
   });
 }
 
-// ---------- message-row faces (UI polish bite 2) ----------
-// A message row's face is the library still in the row's rounded-
-// square slot (28px, radius 8 — envoy.css .ew-msg .ew-avatar), with
-// bite 1's fallback chain behind it: if the pack file is missing,
-// the seat's existing avatar art (its workspace emoji face, else
-// the stock picture) takes the slot, so a row never renders empty.
+// ---------- message-row faces (UI polish bite 2 + boxless fix) ----------
+// A message row's face is the same clip/still stack the crew rail
+// carries (crewSeatFaceClip: the seat's state clip over the pack
+// still, the still alone in still mode), in a boxless 36px slot —
+// envoy.css .ew-msg .ew-avatar.face-ava — with bite 1's fallback
+// chain behind it: if the pack file is missing, the seat's existing
+// avatar art (its workspace emoji face, else the stock picture)
+// takes the slot, so a row never renders empty. The shell carries
+// data-provider (syncMsgMotion re-points the clip in place) and
+// --face-mask (the seat's own still masks the clip's black stage).
 // The owner's own rows carry the owner face the same way. A seat
 // with no provider (the PC bridge) keeps the old avatar path —
 // there is no pack slug to ask for.
 function msgSeatAvatar(provider, motionStage = null) {
   if (!provider) return seatAvatar(provider, motionStage);
   const motion = activityMotionClass(motionStage);
-  return h('div', { class: `ew-avatar${motion ? ` ${motion}` : ''}` }, crewSeatFaceImg(provider));
+  const slug = crewFaceSlug(provider);
+  return h('div', {
+    class: `ew-avatar face-ava${motion ? ` ${motion}` : ''}`,
+    'data-provider': provider,
+    style: faceMaskStyle(slug),
+  }, crewSeatFaceClip(provider, motionStage));
 }
 function msgOwnerAvatar() {
-  return h('div', { class: 'ew-avatar' }, crewOwnerFaceImg());
+  return h('div', {
+    class: 'ew-avatar face-ava',
+    'data-provider': 'owner',
+    style: faceMaskStyle('owner'),
+  }, crewOwnerFaceClip(null));
 }
 
 function renderFaceViews() { renderAgents(); renderMessages(); }
@@ -4681,7 +4749,7 @@ function renderMessages() {
     const sig = JSON.stringify([salt, m.body, m.createdAt, m._pending ? 1 : 0, m.authorKind, m.authorSubject ?? '', m.agentProvider ?? '', m.authorName ?? '', m.authorEmoji ?? '', m.source ?? '', JSON.stringify(m.metadata ?? null), cont ? 1 : 0, showNew ? 1 : 0, motionCls, speakingSig, reactionsSig]);
     keep(`msg:${m.id}`, sig, () => {
       const avatar = who.kind === 'agent'
-        ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${motionCls ? ` ${motionCls}` : ''}` }, emojiNode(who.custom.emoji || '🤖')) : msgSeatAvatar(who.provider, liveMotion.get(who.provider) ?? null))
+        ? (who.custom ? h('div', { class: `ew-avatar emoji-ava${motionCls ? ` ${motionCls}` : ''}`, 'data-provider': who.custom.handle }, emojiNode(who.custom.emoji || '🤖')) : msgSeatAvatar(who.provider, liveMotion.get(who.provider) ?? null))
         : who.kind === 'me'
           ? msgOwnerAvatar()
           : (who.authorEmoji ? (isLibraryFaceToken(who.authorEmoji) ? h('div', { class: 'ew-avatar lib-ava' }, libraryFaceImg(who.authorEmoji)) : h('div', { class: 'ew-avatar emoji-ava' }, emojiNode(who.authorEmoji))) : h('div', { class: `ew-avatar${who.kind === 'discord' ? ' discord' : who.kind === 'slack' ? ' slack' : ''}` }, who.name.slice(0, 1).toUpperCase()));
@@ -4722,7 +4790,11 @@ function renderMessages() {
   // reply will land. Events or nothing — the age-derived "X is
   // answering…" cue that stood here was removed 2026-11-04 on Troy's
   // order; it lit seats from message age alone, job or no job.
-  for (const cue of cues) keep(`act:${cue.provider}`, JSON.stringify([salt, cue.provider, cue.event.stage, activityElapsed(cue.event), activityCueText(activityName(cue.provider, ws.config?.customAgents), cue.event)]), () => activityRow(cue.provider, cue.event, ws.config?.customAgents));
+  // The activity row's signature is salt + provider + stage only:
+  // the elapsed clock is deliberately NOT in it — a second ticking
+  // over must not rebuild the row (its face clip would restart);
+  // syncActivityClocks rewrites the cue text in place instead.
+  for (const cue of cues) keep(`act:${cue.provider}`, JSON.stringify([salt, cue.provider, cue.event.stage]), () => activityRow(cue.provider, cue.event, ws.config?.customAgents));
   if (!ws.messages.length) keep('ew-empty', emptyChannelText({ desk: deskChannel, hasAgents: Boolean(ws.config?.agents?.length) }), () => h('div', { class: 'ew-empty' }, emptyChannelText({ desk: deskChannel, hasAgents: Boolean(ws.config?.agents?.length) })));
   msgRenderCache.entries = nextEntries;
   // Reconcile the box against the desired sequence by node identity.
@@ -5251,7 +5323,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=777d1fbb14bdc0ea');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=b0a3cf3a10e7af8b');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();

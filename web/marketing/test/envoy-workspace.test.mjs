@@ -1078,16 +1078,33 @@ test('motion: the stage comes from the live cue — terminal linger and expiry a
   assert.equal(activityMotionStage([ev('claude', 'working', 5_000, 'c2')], 'claude', 'c1', NOW), null, 'another channel\u2019s work never moves this view');
 });
 
-test('motion wiring: rows, cards and message avatars carry it; css animates the shell only', async () => {
+test('motion wiring: rows, cards and message avatars carry it; css animates the picture, not the shell', async () => {
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
-  for (const needle of ['activityMotionClass', 'activityMotionStage', 'syncAgentCardMotion', 'ew-ava-roll', 'ew-ava-talk', 'data-provider']) {
+  for (const needle of ['activityMotionClass', 'activityMotionStage', 'syncCrewMotion', 'syncMsgMotion', 'msgSeatAvatar', 'crewSeatFaceClip', 'face-ava', 'ew-ava-roll', 'ew-ava-talk', 'data-provider']) {
     assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
   }
-  for (const needle of ['.ew-avatar.ew-ava-roll', '.ew-avatar.ew-ava-talk', '@keyframes ew-ava-roll', '@keyframes ew-ava-talk']) {
+  for (const needle of ['.ew-avatar.ew-ava-roll > img', '.ew-crew-face.ew-ava-roll > img', '.ew-avatar.ew-ava-talk > img', '.ew-crew-face.ew-ava-talk > img', '@keyframes ew-ava-roll', '@keyframes ew-ava-talk']) {
     assert.ok(css.includes(needle), `envoy.css has ${needle}`);
   }
+  assert.ok(!css.includes('.ew-avatar.ew-ava-roll {'), 'the avatar shell itself is never the animated node');
+  assert.ok(!css.includes('.ew-avatar.ew-ava-talk {'), 'the avatar shell itself is never the animated node');
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[^}]*ew-ava-roll[^}]*animation:none/, 'reduced motion turns the avatar animation off in css too');
+});
+
+test('boxless faces: no 28px tile, no dark stage, mask on, clips in message rows, clock out of the signature', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  assert.ok(!css.includes('.ew-msg .ew-avatar { width:28px; height:28px; border-radius:8px;'), 'the 28px message-face box is gone');
+  assert.ok(!css.includes('.ew-msg .ew-avatar:not(.discord):not(.slack) { background:#10151F;'), 'the dark stage tile is gone from message faces');
+  assert.ok(css.includes('.ew-msg .ew-avatar.face-ava'), 'message character faces carry a boxless rule');
+  assert.ok(css.includes('background:transparent'), 'boxless faces sit on transparency');
+  assert.ok(css.includes('mask-image:var(--face-mask)'), 'clips are masked with the still');
+  const msgSeat = js.slice(js.indexOf('function msgSeatAvatar'), js.indexOf('function msgOwnerAvatar'));
+  assert.ok(msgSeat.includes('crewSeatFaceClip'), 'message faces mount the clip stack, not the still alone');
+  assert.ok(!msgSeat.includes('crewSeatFaceImg'), 'message faces no longer mount the still alone');
+  const sig = js.slice(js.indexOf('function activityViewSignature'), js.indexOf('function syncActivityClocks'));
+  assert.ok(!sig.includes('activityElapsed'), 'the elapsed clock is not part of the rebuild signature');
 });
 
 test('bite 5 wiring: faces route, member face, channel face, custom pill art', async () => {
