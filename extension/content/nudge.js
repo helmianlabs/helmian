@@ -26,7 +26,10 @@
   // NOT yet verified against the live sites' current DOM.
   var ADAPTERS = {
     'chatgpt.com': {
-      composer: ['#prompt-textarea[contenteditable="true"]', 'div#prompt-textarea', 'textarea#prompt-textarea'],
+      // 2026-11-12 (chatgpt.com/, signed out, Chromium 156): a plain
+      // textarea[name="prompt"] (#mobile-composer-prompt) inside the composer form;
+      // Send is button[aria-label="Send message"]. Signed-in DOM not re-checked.
+      composer: ['#prompt-textarea[contenteditable="true"]', 'div#prompt-textarea', 'textarea#prompt-textarea', 'form [data-composer-editor-host] textarea[name="prompt"]', 'textarea#mobile-composer-prompt'],
       send: ['button[data-testid="send-button"]', '#composer-submit-button', 'button[aria-label="Send prompt"]', 'button[aria-label*="Send" i]'],
     },
     'claude.ai': {
@@ -38,10 +41,15 @@
     // form[data-composer="true"]; Submit is button[type=submit][aria-label="Submit"] in
     // that form. 0.6.8: this exact signature is REQUIRED. The old 'form textarea'
     // fallback matched any app on grok.com (the Grok Bot app false positive).
+    // 2026-11-12 (grok.com/, signed out, Chromium 156): the form is now
+    // form[data-composer=""] (empty value) and Send is
+    // button[type=submit][aria-label="Send"][data-testid="chat-submit"]. The old
+    // ="true" signature no longer matched, so every Grok nudge was refused. The
+    // signature still needs the composer form AND the chat-input box AND an editor.
     'grok.com': {
-      signature: 'form[data-composer="true"] [data-testid="chat-input"] [contenteditable="true"]',
-      composer: ['form[data-composer="true"] [data-testid="chat-input"] div.ProseMirror[contenteditable="true"]', 'form[data-composer="true"] [data-testid="chat-input"] [contenteditable="true"]'],
-      send: ['form[data-composer="true"] button[type="submit"][aria-label="Submit"]', 'form[data-composer="true"] button[type="submit"]'],
+      signature: 'form[data-composer] [data-testid="chat-input"] [contenteditable="true"]',
+      composer: ['form[data-composer] [data-testid="chat-input"] div.ProseMirror[contenteditable="true"]', 'form[data-composer] [data-testid="chat-input"] [contenteditable="true"]'],
+      send: ['form[data-composer] button[type="submit"][data-testid="chat-submit"]', 'form[data-composer] button[type="submit"][aria-label="Send"]', 'form[data-composer] button[type="submit"][aria-label="Submit"]', 'form[data-composer] button[type="submit"]'],
     },
     // Mistral Le Chat (verified 2026-10-29 on chat.mistral.ai/chat, signed out, Chromium 141):
     // ProseMirror div[contenteditable] (placeholder "Ask anything"); button[type=submit][aria-label="Send"].
