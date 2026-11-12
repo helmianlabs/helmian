@@ -7,8 +7,16 @@
 // catch-up decision (catchUpPick) and its already-voiced rule
 // (runCatchUp) are pure exports of envoy-workspace.js; these tests
 // drive them with message fixtures in the shapes the room renders,
-// plus source pins for the wiring (the scanner's voiced recording,
-// the app.js toggle trigger, the controller's toggle-off cancel).
+// plus source pins for the wiring (voiced is recorded at playback,
+// in noteSpeaking — never at offer time; the app.js toggle
+// trigger; the controller's toggle-off cancel).
+//
+// Voice-hardening note: the original bite marked a message voiced
+// when the speak path TOOK it. That buried answers whose audio
+// never played (the served fetch failed silently for weeks). The
+// mark now lands only when the controller reports the first chunk
+// actually playing, so a taken-but-unplayed answer stays unvoiced
+// and the next switch-on offers it again.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -24,15 +32,19 @@ function recorder(returnValue = true) {
   return { calls, speak: (body, provider, id) => { calls.push({ body, provider, id }); return returnValue; } };
 }
 
-test('catch-up fires once, with the newest seat reply', () => {
+test('catch-up offers the newest seat reply; voiced is marked at playback, not at the offer', () => {
   const voiced = new Set();
   const { calls, speak } = recorder();
   const pick = runCatchUp({ messages: [ownAsk, replyA, replyB], voiced, me: ME, speak });
   assert.equal(pick?.id, 'm3', 'the newest seat reply is the catch-up');
   assert.deepEqual(calls, [{ body: replyB.body, provider: 'grok', id: 'm3' }], 'spoken once, through the speak path, with its seat key and message ref');
-  assert.ok(voiced.has('m3'), 'the spoken catch-up is marked voiced');
+  assert.equal(voiced.has('m3'), false, 'the offer does NOT mark the reply voiced — marking rides actual playback (noteSpeaking)');
+  // The surface marks the message when the controller reports its
+  // first chunk playing: envoy's noteSpeaking adds info.ref to
+  // this same set. From then on the catch-up never fires for it.
+  voiced.add('m3');
   const again = runCatchUp({ messages: [ownAsk, replyA, replyB], voiced, me: ME, speak });
-  assert.equal(again, null, 'a second catch-up in the same voice-on fires nothing');
+  assert.equal(again, null, 'once voiced at playback, a later switch-on fires nothing for it');
   assert.equal(calls.length, 1, 'still exactly one speak');
 });
 
@@ -43,7 +55,7 @@ test('catch-up never replays a backlog: one message, the newest, however many re
   runCatchUp({ messages: [older, replyA, replyB], voiced, me: ME, speak });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].id, 'm3');
-  assert.equal(voiced.size, 1, 'only the caught-up message is marked; the older replies stay unvoiced, unspoken');
+  assert.equal(voiced.size, 0, 'the offer marks nothing, and the older replies were never offered at all');
 });
 
 test('no catch-up when the newest reply was already spoken', () => {
@@ -105,11 +117,36 @@ test('toggle-off before it starts: a declined speak burns nothing, and the next 
   assert.equal(retry?.id, 'm3', 'the same reply is offered again at the next switch-on');
 });
 
-test('wiring pins: scanner records voiced ids, toggle triggers the catch-up, toggle-off cancels queued speech', async () => {
+test('a catch-up whose audio never plays stays unvoiced and is offered again at the next switch-on', () => {
+  // The speak path takes the offer (returns true) but playback
+  // never happens — the served fetch failed and no in-tab road
+  // could speak it either — so noteSpeaking never fires and the
+  // voiced set never gains the message. This is the swallow the
+  // voice-hardening bite removes: the failed answer is not buried.
+  const voiced = new Set();
+  const { calls, speak } = recorder(true);
+  const pick = runCatchUp({ messages: [ownAsk, replyA, replyB], voiced, me: ME, speak });
+  assert.equal(pick?.id, 'm3');
+  assert.equal(voiced.size, 0, 'taken but unplayed: still unvoiced');
+  const again = runCatchUp({ messages: [ownAsk, replyA, replyB], voiced, me: ME, speak });
+  assert.equal(again?.id, 'm3', 'the next switch-on offers it again');
+  assert.equal(calls.length, 2);
+});
+
+test('wiring pins: voiced is recorded at playback, toggle triggers the catch-up, toggle-off cancels queued speech', async () => {
   const envoy = await readFile(new URL('../web/marketing/app/envoy-workspace.js', import.meta.url), 'utf8');
   assert.ok(envoy.includes('if (!spokenPrimed.has(streamId))'), 'the scanner prime is untouched (first sight of a stream still only baselines)');
-  assert.ok(envoy.includes('if (ws.ctx.voiceSpeak(m.body, who.provider ?? null, m.id) !== false) voicedIds.add(m.id);'),
-    'the scanner marks a message voiced only when the speak path takes it');
+  assert.ok(!envoy.includes('voicedIds.add(m.id)'), 'the scanner no longer marks at offer time (the voice-hardening fix)');
+  assert.ok(envoy.includes('ws.ctx.voiceSpeak(m.body, who.provider ?? null, m.id);'),
+    'the scanner still offers every new reply through voiceSpeak with its seat key and message ref');
+  const noteAt = envoy.indexOf('export function noteSpeaking');
+  assert.ok(noteAt !== -1, 'noteSpeaking exists');
+  assert.ok(envoy.slice(noteAt, noteAt + 1400).includes('if (info?.ref) voicedIds.add(info.ref);'),
+    'noteSpeaking — the controller playback report — is where a message becomes voiced');
+  const rcAt = envoy.indexOf('export function runCatchUp');
+  assert.ok(rcAt !== -1, 'runCatchUp exists');
+  assert.ok(!envoy.slice(rcAt, envoy.indexOf('export function speakCatchUp', rcAt)).includes('voiced.add('),
+    'runCatchUp returns its pick without marking it');
   assert.ok(envoy.includes('export function speakCatchUp()'), 'envoy exports the catch-up entry the toggle calls');
   const appJs = await readFile(new URL('../web/marketing/app/app.js', import.meta.url), 'utf8');
   const toggleAt = appJs.indexOf('function toggleMaestroVoice');

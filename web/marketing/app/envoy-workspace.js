@@ -1,19 +1,19 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=e307c7eb47e83650';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=e307c7eb47e83650';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=e307c7eb47e83650';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=e307c7eb47e83650';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=e307c7eb47e83650';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=e307c7eb47e83650';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=e307c7eb47e83650';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=e307c7eb47e83650';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=e307c7eb47e83650';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=e307c7eb47e83650';
-import { createConnectFields } from './connect-fields.mjs?v=e307c7eb47e83650';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=e307c7eb47e83650';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=e307c7eb47e83650';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=30a56f991a6244c2';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=30a56f991a6244c2';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=30a56f991a6244c2';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=30a56f991a6244c2';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=30a56f991a6244c2';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=30a56f991a6244c2';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=30a56f991a6244c2';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=30a56f991a6244c2';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=30a56f991a6244c2';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=30a56f991a6244c2';
+import { createConnectFields } from './connect-fields.mjs?v=30a56f991a6244c2';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=30a56f991a6244c2';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=30a56f991a6244c2';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -4238,9 +4238,16 @@ async function loadMessages() {
 // The seen-set records every message the scanner has looked at —
 // including replies that arrived while voice chat was off, whose
 // speak call the controller declined. voicedIds is the narrower
-// truth: the messages the speak path actually took. It exists for
-// the voice-on catch-up below, which owes the member the newest
-// seat reply that landed before voice chat was switched on.
+// truth: the messages that were actually SPOKEN — a message lands
+// there only when the controller reports its first chunk playing
+// (noteSpeaking, in the speaking-proof section below), never when
+// a speak is merely taken. A taken speak whose audio never plays —
+// the served fetch failed and the in-tab road could not speak it
+// either, or the speech was cancelled before it started — leaves
+// the message unvoiced, so the voice-on catch-up below can still
+// offer it (voice-hardening bite: marking rides playback, not the
+// offer). It exists for the catch-up, which owes the member the
+// newest seat reply that landed before voice chat was switched on.
 const spokenIds = new Set();
 const voicedIds = new Set();
 const spokenPrimed = new Set();
@@ -4259,10 +4266,11 @@ function speakNewMessages(streamId, messages) {
     // The seat key rides along so the controller can speak in that
     // seat's own Kokoro voice (per-seat voice map in the controller).
     // The message id rides too, so the speaking proof can light the
-    // speaker icon on THIS message while it is being spoken. A speak
-    // the controller takes (any return but false) marks the message
-    // voiced; a declined one stays eligible for the catch-up.
-    if (ws.ctx.voiceSpeak(m.body, who.provider ?? null, m.id) !== false) voicedIds.add(m.id);
+    // speaker icon on THIS message while it is being spoken. Taking
+    // the speak does NOT mark the message voiced: the mark lands in
+    // noteSpeaking, when the first chunk actually plays — a speak
+    // that never reaches playback stays eligible for the catch-up.
+    ws.ctx.voiceSpeak(m.body, who.provider ?? null, m.id);
   }
 }
 // ---------- voice-on catch-up (catch-up bite) ----------
@@ -4287,9 +4295,13 @@ function speakNewMessages(streamId, messages) {
 // never reaches back to an older reply in its place. A speak the
 // controller declines (voice chat already off again, the console
 // view gate) does not mark the message voiced, so a later
-// switch-on can still offer it; a speak the controller takes marks
-// it voiced before any later poll can offer it twice, and toggling
-// voice chat off cancels a queued catch-up through the
+// switch-on can still offer it. A speak the controller TAKES does
+// not mark it voiced either: the mark lands in noteSpeaking, when
+// the first chunk actually plays, so a catch-up whose audio never
+// plays is offered again at the next switch-on. It still cannot
+// be offered twice in between: the catch-up fires only at
+// switch-on, and reaching switch-on again means a switch-off
+// happened first, which cancels a queued catch-up through the
 // controller's own cancel path.
 export function catchUpPick(messages, me) {
   const list = Array.isArray(messages) ? messages : [];
@@ -4312,8 +4324,7 @@ export function runCatchUp({ messages, voiced, me, speak }) {
   const pick = catchUpPick(messages, me);
   if (!pick || voiced.has(pick.id)) return null;
   if (speak(pick.body, pick.provider, pick.id) === false) return null;
-  voiced.add(pick.id);
-  return pick;
+  return pick; // no mark here: voiced is written at playback (noteSpeaking), so an unplayed offer stays eligible
 }
 export function speakCatchUp() {
   if (!ws.channelId || typeof ws.ctx?.voiceSpeak !== 'function') return;
@@ -4341,6 +4352,14 @@ export function speakCatchUp() {
 // very node the patch landed on, so the icon is never wiped.
 let speakingNow = null;
 export function noteSpeaking(info) {
+  // Voiced marking (voice-hardening bite): this report — a chunk of
+  // the message actually playing, on whichever road spoke it — is
+  // the one place a message becomes voiced. On the served road it
+  // fires only after the first chunk's fetch succeeded and its
+  // buffer started; on the in-tab roads it fires at generation or
+  // utterance start. A speak that was taken but never played never
+  // reaches here, so its message stays eligible for the catch-up.
+  if (info?.ref) voicedIds.add(info.ref);
   speakingNow = info ?? null;
   patchSpeakingIcon();
 }
@@ -5087,7 +5106,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=e307c7eb47e83650');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=30a56f991a6244c2');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();

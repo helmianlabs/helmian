@@ -257,6 +257,13 @@ export function createVoiceController({
       listening = false;
       recognition = null;
       const hidden = typeof document !== 'undefined' && document.hidden;
+      // Mic-held state (voice-hardening bite): the turn ended while
+      // voice stays on — the mic is held (its restart waits out a
+      // playing or queued voice) or released (hidden tab) until the
+      // next turn starts. Surfaces hear 'held' so the voice chips
+      // can show the held state instead of claiming a live mic; the
+      // next turn's onstart reports 'listening' again.
+      if (voiceMode) handlers.onState?.('held');
       if (voiceMode && !hidden) restartTurn(); // next turn of the loop, held while a voice is playing or committed to play
       else if (!voiceMode) handlers.onState?.('idle');
     };
@@ -818,11 +825,16 @@ export function createVoiceController({
   // stops still clear everything: voice-off, cancelSpeech(), and a
   // new dictation turn (startTurn) all call tts.cancel().
   // Fetch-ahead: a chunk's synthesis request starts when the chunk
-  // reaches the head of the queue (at enqueue for the first chunk,
-  // and for the next chunk the moment the current one starts
-  // playing), so the server synthesizes chunk N+1 on ITS CPU while
-  // chunk N plays in the tab. At most one fetch is ever outstanding
-  // beyond the playing chunk.
+  // reaches the head of the queue (at enqueue for the first chunk),
+  // and the next SERVED_FETCH_AHEAD chunks of the same answer start
+  // the moment the current one is taken up for playback, so the
+  // server synthesizes ahead on ITS CPU while chunk N plays in the
+  // tab. At most SERVED_FETCH_AHEAD fetches are ever outstanding
+  // beyond the playing chunk. Prefetch only starts fetches: it
+  // never marks an answer voiced (marking rides actual playback,
+  // at the surface's speaking report), and a cancel orphans the
+  // prefetched promises with the queue, so audio fetched for a
+  // moved-on answer is simply never played.
   const servedQueue = []; // [{ text, voice, seat, ref, token, audioPromise }]
   let servedPlaying = false;
   let servedToken = 0; // cancel() bumps it; late fetches are ignored
@@ -876,11 +888,24 @@ export function createVoiceController({
     else setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
     synthEngine.enqueue(items.map((item) => ({ text: item.text, seat: item.seat, ref: item.ref })), { interrupt: false });
   }
+  const SERVED_FETCH_AHEAD = 2;
+  // Start fetches for up to SERVED_FETCH_AHEAD queued chunks of the
+  // answer item belongs to (the ref groups an answer's chunks; the
+  // walk stops at the first chunk of a different answer, whose
+  // chunks wait for their own head turn). servedFetch is idempotent
+  // per item and already swallows its own rejection: the pump owns
+  // a failure when that chunk reaches the head.
+  function servedPrefetchAhead(item) {
+    for (let i = 0; i < SERVED_FETCH_AHEAD && i < servedQueue.length; i += 1) {
+      if (servedQueue[i].ref !== item.ref) break;
+      servedFetch(servedQueue[i]);
+    }
+  }
   async function pumpServed() {
     if (servedPlaying || servedQueue.length === 0) return;
     const item = servedQueue.shift();
     servedPlaying = true;
-    if (servedQueue[0]) servedFetch(servedQueue[0]); // synthesize the next chunk while this one plays
+    servedPrefetchAhead(item); // synthesize this answer's next chunks while this one plays
     let out;
     try {
       out = await servedFetch(item);

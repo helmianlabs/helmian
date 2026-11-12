@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=e307c7eb47e83650';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=e307c7eb47e83650';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=e307c7eb47e83650';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=e307c7eb47e83650';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=30a56f991a6244c2';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=30a56f991a6244c2';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=30a56f991a6244c2';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=30a56f991a6244c2';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -622,6 +622,13 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
       listening = false;
       recognition = null;
       const hidden = typeof document !== 'undefined' && document.hidden;
+      // Mic-held state (voice-hardening bite): the turn ended while
+      // voice stays on — the mic is held (its restart waits out a
+      // playing or queued voice) or released (hidden tab) until the
+      // next turn starts. Surfaces hear 'held' so the voice chips
+      // can show the held state instead of claiming a live mic; the
+      // next turn's onstart reports 'listening' again.
+      if (voiceMode) handlers.onState?.('held');
       if (voiceMode && !hidden) restartTurn(); // next turn of the loop, held while a voice is playing or committed to play
       else if (!voiceMode) handlers.onState?.('idle');
     };
@@ -1191,11 +1198,16 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   // stops still clear everything: voice-off, cancelSpeech(), and a
   // new dictation turn (startTurn) all call tts.cancel().
   // Fetch-ahead: a chunk's synthesis request starts when the chunk
-  // reaches the head of the queue (at enqueue for the first chunk,
-  // and for the next chunk the moment the current one starts
-  // playing), so the server synthesizes chunk N+1 on ITS CPU while
-  // chunk N plays in the tab. At most one fetch is ever outstanding
-  // beyond the playing chunk.
+  // reaches the head of the queue (at enqueue for the first chunk),
+  // and the next SERVED_FETCH_AHEAD chunks of the same answer start
+  // the moment the current one is taken up for playback, so the
+  // server synthesizes ahead on ITS CPU while chunk N plays in the
+  // tab. At most SERVED_FETCH_AHEAD fetches are ever outstanding
+  // beyond the playing chunk. Prefetch only starts fetches: it
+  // never marks an answer voiced (marking rides actual playback,
+  // at the surface's speaking report), and a cancel orphans the
+  // prefetched promises with the queue, so audio fetched for a
+  // moved-on answer is simply never played.
   const servedQueue = []; // [{ text, voice, seat, ref, token, audioPromise }]
   let servedPlaying = false;
   let servedToken = 0; // cancel() bumps it; late fetches are ignored
@@ -1249,11 +1261,24 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
     else setVoiceStatus('Backup voice — Kokoro unavailable', 'fallback');
     synthEngine.enqueue(items.map((item) => ({ text: item.text, seat: item.seat, ref: item.ref })), { interrupt: false });
   }
+  const SERVED_FETCH_AHEAD = 2;
+  // Start fetches for up to SERVED_FETCH_AHEAD queued chunks of the
+  // answer item belongs to (the ref groups an answer's chunks; the
+  // walk stops at the first chunk of a different answer, whose
+  // chunks wait for their own head turn). servedFetch is idempotent
+  // per item and already swallows its own rejection: the pump owns
+  // a failure when that chunk reaches the head.
+  function servedPrefetchAhead(item) {
+    for (let i = 0; i < SERVED_FETCH_AHEAD && i < servedQueue.length; i += 1) {
+      if (servedQueue[i].ref !== item.ref) break;
+      servedFetch(servedQueue[i]);
+    }
+  }
   async function pumpServed() {
     if (servedPlaying || servedQueue.length === 0) return;
     const item = servedQueue.shift();
     servedPlaying = true;
-    if (servedQueue[0]) servedFetch(servedQueue[0]); // synthesize the next chunk while this one plays
+    servedPrefetchAhead(item); // synthesize this answer's next chunks while this one plays
     let out;
     try {
       out = await servedFetch(item);
@@ -1525,6 +1550,11 @@ function updateVoiceChips() {
     if (!chip) continue;
     const active = voice.voiceMode && voice.mode === mode;
     chip.classList.toggle('recording', active);
+    // Mic-held (voice-hardening bite): voice is on but the mic is
+    // not live right now — the controller is between turns (a reply
+    // is playing, or the tab hid) — so the chip shows the held
+    // state instead of claiming it is hearing.
+    chip.classList.toggle('held', active && !voice.listening);
     chip.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
 }
@@ -2473,7 +2503,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=e307c7eb47e83650'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=30a56f991a6244c2'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2487,9 +2517,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  integrationsMod ??= await import('./integrations-view.mjs?v=e307c7eb47e83650');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=e307c7eb47e83650');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=e307c7eb47e83650');
+  integrationsMod ??= await import('./integrations-view.mjs?v=30a56f991a6244c2');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=30a56f991a6244c2');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=30a56f991a6244c2');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2686,7 +2716,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=e307c7eb47e83650')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=30a56f991a6244c2')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3562,7 +3592,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=e307c7eb47e83650');
+  workspaceModule ??= await import('./envoy-workspace.js?v=30a56f991a6244c2');
   // The feed load rides along unawaited (boot-load fix, 2026-11-11):
   // it used to be awaited here, so the whole workspace mount — the
   // Desktop view's first paint — waited on the slowest of the events,
@@ -3684,6 +3714,7 @@ function updateMaestroVoiceChips() {
     if (!chip) continue;
     const active = voice.voiceMode && voice.mode === mode;
     chip.classList.toggle('recording', active);
+    chip.classList.toggle('held', active && !voice.listening); // mic-held: see updateVoiceChips
     chip.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
   const toggle = document.getElementById('maestro-voicetoggle');
@@ -3773,6 +3804,7 @@ function updateCliVoiceChips() {
     if (!chip) continue;
     const active = voice.voiceMode && voice.mode === mode;
     chip.classList.toggle('recording', active);
+    chip.classList.toggle('held', active && !voice.listening); // mic-held: see updateVoiceChips
     chip.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
 }
@@ -4118,7 +4150,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=e307c7eb47e83650');
+    const mod = await import('./maestro-activation.mjs?v=30a56f991a6244c2');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }
