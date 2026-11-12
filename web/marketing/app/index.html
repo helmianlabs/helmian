@@ -8,15 +8,15 @@
        the stylesheets land so a light-theme user never gets a dark
        flash. It is an external file because the /app CSP allows
        external scripts only; an inline block here cannot run. -->
-  <script src="/app/theme-init.js?v=f20e3e200baadd1c"></script>
+  <script src="/app/theme-init.js?v=765728ff7cdada1e"></script>
   <title>Helmian</title>
   <link rel="icon" type="image/png" href="/assets/helmian-logo.png">
   <link rel="manifest" href="/app/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/assets/helmian-logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="/app/app.css?v=f20e3e200baadd1c">
-  <link rel="stylesheet" href="/app/envoy.css?v=f20e3e200baadd1c">
-  <script type="module" src="/app/app.js?v=f20e3e200baadd1c"></script>
+  <link rel="stylesheet" href="/app/app.css?v=765728ff7cdada1e">
+  <link rel="stylesheet" href="/app/envoy.css?v=765728ff7cdada1e">
+  <script type="module" src="/app/app.js?v=765728ff7cdada1e"></script>
 </head>
 <body>
 <div id="shell" class="shell" data-view="desktop">
@@ -123,6 +123,16 @@
       <button id="guard-toggle" class="icon-btn only-mobile" type="button" aria-label="Open panels" aria-controls="guard" aria-expanded="false"><span class="ew-shield" aria-hidden="true"></span><span class="guard-lbl">Guard</span><span id="guard-count" class="dot-count" hidden></span></button>
     </header>
 
+    <!-- Boot loading (optimization bite 6, 2026-11-12): the shell
+         stage's own loading state, shipped as static markup so it is
+         on the first paint — before app.js arrives, before the
+         session read answers, before the workspace module loads.
+         Markup + app.css only. app.js hides it the moment the first
+         real content paints (show(), boot()'s signed-out branch,
+         and the Maestro gate each hand off), so it never stacks
+         with a view's own loading state and never comes back. -->
+    <section id="boot-loading" class="boot-loading" role="status"><p>Loading…</p></section>
+
     <section id="signed-out" class="view hero" hidden>
       <div class="hero-card">
         <div class="eyebrow accent">HELMIAN</div>
@@ -180,7 +190,14 @@
           <button id="ew-add-channel" class="ew-icon ew-add-channel" type="button" aria-label="New channel" title="New channel">+</button>
           <section class="ew-crew" id="ew-crew" aria-label="Crew in this channel">
             <div class="ew-crew-head"><span class="ew-crew-title" id="ew-crew-title">CREW</span></div>
-            <div class="ew-crew-list" id="ew-crew-list"></div>
+            <!-- The crew note and the message card below ship in the
+                 markup (bite 6) with the exact shapes mountWorkspace's
+                 paintBootLoading paints, so the room shows its loading
+                 look from the moment this section unhides — the module
+                 fetch in between paints nothing blank. The first real
+                 renders evict both (the keyed reconciles drop foreign
+                 children), exactly as they evict the painted ones. -->
+            <div class="ew-crew-list" id="ew-crew-list"><p class="ew-note">Loading…</p></div>
             <div class="ew-subhead">ADD TO THIS CHANNEL</div>
             <div id="ew-crew-add" class="ew-agent-add"></div>
           </section>
@@ -212,7 +229,7 @@
             </div>
             <button id="ew-debate-stop" class="ew-btn sm danger" type="button" hidden title="Stop multi-agent debate immediately"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg><span class="lbl">Stop</span></button>
           </header>
-          <div id="ew-messages" class="ew-messages" role="log" aria-live="polite"></div>
+          <div id="ew-messages" class="ew-messages" role="log" aria-live="polite"><div class="ew-empty">Loading…</div></div>
           <div id="ew-agent-state" class="ew-agent-state" role="status" hidden></div>
           <div id="ew-first-run" class="ew-first-run" role="status" hidden></div>
           <div id="ew-net-strip" class="ew-net-strip" role="status"></div>

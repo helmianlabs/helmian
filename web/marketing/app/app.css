@@ -234,6 +234,15 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .topbar { display:flex; align-items:center; gap:8px; height:52px; padding:0 16px; border-bottom:1px solid var(--border); background:var(--panel); flex:none; }
 .view-title { flex:1; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .view { padding:20px 24px; overflow-y:auto; flex:1; }
+/* Boot loading (optimization bite 6, 2026-11-12): the shell stage's
+   loading state. The element ships in index.html and is styled here
+   because both are in the head — it paints with the first frame, in
+   the saved theme (theme-init has already run), and app.js hides it
+   as the first real view paints. The explicit [hidden] rule stands
+   because the flex display would otherwise beat the UA's. */
+.boot-loading { flex:1; display:flex; align-items:center; justify-content:center; padding:20px 24px; color:var(--muted); }
+.boot-loading[hidden] { display:none; }
+.boot-loading p { margin:0; }
 .btn { display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--border); background:var(--panel-2); color:var(--text); border-radius:var(--radius); padding:8px 14px; font-weight:600; text-decoration:none; cursor:pointer; min-height:40px; }
 .btn:hover { border-color:var(--muted); } .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; } .btn.primary:hover { background:var(--accent-hover); }
 .btn.ghost { background:transparent; } .btn.sm { padding:5px 10px; font-size:12px; } .btn.full { width:100%; }
