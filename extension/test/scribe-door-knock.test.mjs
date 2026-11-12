@@ -263,9 +263,9 @@ test('without notifications permission, no notification is shown', async () => {
 test('manifests: alarms + idle required, notifications optional, no new install-time hosts', () => {
   for (const f of ['manifest.json', 'manifest.firefox.json']) {
     const m = JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url)));
-    assert.deepEqual(m.permissions, f === 'manifest.json' ? ['storage', 'alarms', 'idle'] : ['storage', 'alarms', 'idle', 'identity']);
+    assert.deepEqual(m.permissions, f === 'manifest.json' ? ['storage', 'alarms', 'idle', 'scripting'] : ['storage', 'alarms', 'idle', 'identity']);
     assert.ok(m.optional_permissions.includes('notifications'));
-    assert.deepEqual(m.host_permissions || [], f === 'manifest.json' ? ['https://helmian.cloud/*'] : []);
+    assert.deepEqual(m.host_permissions || [], f === 'manifest.json' ? ['https://helmian.cloud/*', 'https://claude.ai/*', 'https://chatgpt.com/*', 'https://gemini.google.com/*', 'https://grok.com/*', 'https://chat.mistral.ai/*', 'https://www.perplexity.ai/*', 'https://perplexity.ai/*'] : []);
   }
 });
 

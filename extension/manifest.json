@@ -6,10 +6,18 @@
   "permissions": [
     "storage",
     "alarms",
-    "idle"
+    "idle",
+    "scripting"
   ],
   "host_permissions": [
-    "https://helmian.cloud/*"
+    "https://helmian.cloud/*",
+    "https://claude.ai/*",
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*",
+    "https://grok.com/*",
+    "https://chat.mistral.ai/*",
+    "https://www.perplexity.ai/*",
+    "https://perplexity.ai/*"
   ],
   "background": {
     "service_worker": "background/worker.js",

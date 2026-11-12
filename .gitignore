@@ -92,3 +92,6 @@ fuck-claude/
 
 # Executive Guard local runner data (signing key + audit log)
 .executive-guard/
+
+# A person's Guard settings preset (tools/package-guard.mjs --preset); never committed.
+extension/preset.json

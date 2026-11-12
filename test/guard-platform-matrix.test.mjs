@@ -11,12 +11,12 @@ const OPTIONAL_ORIGINS = ['https://*/*', 'http://localhost/*', 'http://127.0.0.1
 
 test('Chromium and Firefox packages keep the minimal permission boundary', () => {
   for (const manifest of [chromium, firefox]) {
-    assert.deepEqual(manifest.permissions, manifest === firefox ? ['storage', 'alarms', 'idle', 'identity'] : ['storage', 'alarms', 'idle']); // identity: Firefox cannot make it optional (MDN) // alarms: Scribe door-knock (no install warning)
+    assert.deepEqual(manifest.permissions, manifest === firefox ? ['storage', 'alarms', 'idle', 'identity'] : ['storage', 'alarms', 'idle', 'scripting']); // scripting (Chrome/Edge only): put a working copy into AI tabs left open across an update; Firefox does that itself // identity: Firefox cannot make it optional (MDN) // alarms: Scribe door-knock (no install warning)
     assert.deepEqual(manifest.content_scripts[0].matches, ['https://claude.ai/*', 'https://chatgpt.com/*', 'https://gemini.google.com/*', 'https://grok.com/*', 'https://chat.mistral.ai/*', 'https://www.perplexity.ai/*', 'https://perplexity.ai/*']);
     assert.ok(!JSON.stringify(manifest).includes('<all_urls>'));
   }
   // The one install-time host: the opt-in helmian.cloud findings upload (Chromium only).
-  assert.deepEqual(chromium.host_permissions, ['https://helmian.cloud/*']);
+  assert.deepEqual(chromium.host_permissions, ['https://helmian.cloud/*', ...chromium.content_scripts[0].matches]); // 0.6.9 candidate: the content-script AI sites, for re-injecting into tabs left open across an update
   assert.equal(firefox.host_permissions, undefined);
   // Optional origins for Executive Guard / Flags, granted only from a popup click.
   assert.deepEqual(chromium.optional_host_permissions, OPTIONAL_ORIGINS);

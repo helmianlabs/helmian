@@ -104,7 +104,12 @@ test('it asks for exactly ONE permission, and that one is storage', () => {
   // 0.5.0 (Scribe door-knock, 2026-10-29): + 'alarms', which shows no install
   // warning and is needed for MV3 polling. 'notifications' is OPTIONAL and only
   // requested from the popup when the user turns the door-knock on.
-  assert.deepEqual(manifest.permissions, ['storage', 'alarms', 'idle']);
+  // 0.6.9 CANDIDATE (pending Troy's yes): + 'scripting'. Chrome shows no install
+  // warning for it and it grants no new sites: it is used only on update, to put
+  // the new copy of Guard into AI tabs that were already open (the sites the
+  // manifest's content_scripts already cover), so an old copy cannot keep
+  // drawing a stale warning over the chat. See worker.js reinjectOpenTabs.
+  assert.deepEqual(manifest.permissions, ['storage', 'alarms', 'idle', 'scripting']);
   // 0.6.0 (Scribe sign-in): + OPTIONAL 'identity' (Chrome/Edge), requested only
   // from the popup's Sign in click. Chrome lists no install warning for it.
   assert.deepEqual(manifest.optional_permissions, ['notifications', 'identity']);
@@ -118,7 +123,13 @@ test('it asks for exactly ONE permission, and that one is storage', () => {
   // opt-in plus a device token. It needs Troy's manual browser testing before
   // it is treated as verified. This assertion pins the exception to exactly
   // helmian.cloud and nothing broader — it must never quietly grow.
-  assert.deepEqual(manifest.host_permissions, ['https://helmian.cloud/*']);
+  // 0.6.9 CANDIDATE (pending Troy's yes): + the SAME AI sites the content
+  // scripts already run on (Chrome already shows "read and change your data on"
+  // these sites for the content scripts, so no new warning). chrome.scripting
+  // only works with real host permissions; content-script matches alone are
+  // refused ("Cannot access contents of the page"), verified in Chromium.
+  // Pinned: nothing beyond helmian.cloud + the content-script sites.
+  assert.deepEqual(manifest.host_permissions, ['https://helmian.cloud/*', ...manifest.content_scripts[0].matches]);
 });
 
 test('the only thing that uses the storage permission is the ledger', async () => {

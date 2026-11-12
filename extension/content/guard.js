@@ -98,6 +98,7 @@
     broken: false,
     degraded: false,
     orphaned: false,
+    paused: false,
     scanFailures: 0,
     // id -> element, not a bare Set of ids. Pruning needs the element itself so
     // it can ask `isConnected` instead of looking the id up with a selector
@@ -178,12 +179,29 @@
     return texts.some((t) => /did not answer|unreachable|could not reach|answered with nothing/i.test(String(t || '')));
   }
 
+  // Red is reserved for ONE thing: a self-test that actually ran and gave the
+  // wrong answer (a known destructive command not flagged, or a harmless one
+  // flagged). Everything else (a worker that did not answer, a watcher or
+  // start-up error) pauses checking on this page with a small amber chip and
+  // a 'paused' status, never the red "needs attention" state.
+  function confirmedSelfTestFailure(message, detail) {
+    return /failed its own test/i.test(String(message || '')) && !unconfirmed(message, detail);
+  }
+
   function fail(message, detail) {
     if (contextGone(message, detail)) { orphaned(); return; }
     if (state.orphaned) return;
+    if (!confirmedSelfTestFailure(message, detail)) {
+      state.paused = true;
+      console.warn('[Helmian Guard] paused on this page (not a confirmed failure):', message, detail || '');
+      try { HelmionUI.showBanner(message, detail, {}); } catch { /* console already says it */ }
+      sendBadge();
+      sendStatus();
+      return;
+    }
     state.broken = true;
     try {
-      HelmionUI.showBanner(message, detail, unconfirmed(message, detail) ? {} : { tone: 'danger' });
+      HelmionUI.showBanner(message, detail, { tone: 'danger', title: 'Guard self-test failed on this page' });
     } catch (uiError) {
       // Even the banner failed. The console is the last place left to say it.
       console.error('[Helmian Guard] could not draw its own failure banner:', uiError);
@@ -193,9 +211,14 @@
     sendStatus();
   }
 
-  function recover() {
-    if (!state.broken || state.orphaned) return;
+  // A working round trip clears a PAUSE (the checker answered again). Only a
+  // self-test that passes again clears a confirmed self-test failure.
+  function recover(selfTestPassed = false) {
+    if (state.orphaned) return;
+    if (state.broken && !selfTestPassed) return;
+    if (!state.broken && !state.paused) return;
     state.broken = false;
+    state.paused = false;
     state.healthFailures = 0;
     HelmionUI.hideBanner();
     sendBadge();
@@ -249,7 +272,7 @@
       type: 'helmion:badge',
       dangerous: state.dangerousIds.size + (state.promptRiskActive ? 1 : 0),
       broken: state.broken,
-      degraded: state.degraded,
+      degraded: state.degraded || state.paused,
     };
     try {
       chrome.runtime.sendMessage(message, () => {
@@ -266,7 +289,7 @@
   function sendStatus() {
     const message = {
       type: 'helmion:status',
-      protection: state.broken ? 'needs-attention' : (state.degraded ? 'limited' : 'active'),
+      protection: state.broken ? 'needs-attention' : (state.paused ? 'paused' : (state.degraded ? 'limited' : 'active')),
       claims: state.claimsBroken ? 'unavailable' : (state.claimsDegraded ? 'limited' : 'active'),
     };
     try {
@@ -1660,12 +1683,23 @@
     }
 
     state.healthFailures = 0;
-    recover();
+    recover(true);
   }
 
   // -------------------------------------------------------------------- boot
 
+  // A tab that was open across an extension update can still hold the old
+  // copy's box or chip. This copy has drawn nothing yet, so anything already
+  // there belongs to a copy that can no longer check: remove it.
+  function clearStaleCopies() {
+    try {
+      const stale = document.querySelectorAll('.helmion-guard-health-alert, .helmion-guard-banner');
+      for (const node of Array.from(stale)) if (node.parentNode) node.parentNode.removeChild(node);
+    } catch { /* nothing to clear */ }
+  }
+
   function start() {
+    clearStaleCopies();
     // Both callbacks receive { streaming } from the stop-button probe, and both
     // used to discard it — so the "primary" signal stream-watch.js documents at
     // length was computed on every tick and never once acted on. The extension
