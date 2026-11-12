@@ -206,18 +206,23 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-avatar img { width:100%; height:100%; }
 .ew-avatar.discord { background:#5865F2; }
 .ew-avatar.slack { background:#4A154B; }
-/* Message rows (bite 2): the face slot is a 28px rounded square —
-   radius 8, no circle crop, no ring — whatever face the row carries
-   (library still, emoji face, stock picture, initial letter). Other
-   .ew-avatar surfaces keep the 36px round slot. */
-.ew-msg .ew-avatar { width:28px; height:28px; border-radius:8px; font-size:13px; }
-/* Face-sharp (bite 2c): the library faces were made on a dark stage;
-   the theme's panel colour washed them out in the light theme. The
-   face slots carry the stage with them — a fixed deep navy tile in
-   every theme (brand-tinted source avatars keep their own colour). */
-.ew-msg .ew-avatar:not(.discord):not(.slack) { background:#10151F; }
-.ew-msg .ew-avatar img { border-radius:8px; box-shadow:none; }
-.ew-msg .ew-avatar .hx-emoji { width:20px; height:20px; }
+/* Message faces match the crew rail: 36px, boxless for character
+   faces (library stills, clips, emoji, library tokens). No tile,
+   no 8px radius box, no ring. Letter-only and Discord/Slack chips
+   keep a simple circular chip so a lone initial still has a surface. */
+.ew-msg .ew-avatar { width:36px; height:36px; font-size:16px; }
+.ew-msg .ew-avatar.face-ava,
+.ew-msg .ew-avatar.emoji-ava,
+.ew-msg .ew-avatar.lib-ava {
+  background:transparent; border-radius:0; overflow:visible; box-shadow:none;
+}
+.ew-msg .ew-avatar.face-ava img,
+.ew-msg .ew-avatar.face-ava video,
+.ew-msg .ew-avatar.lib-ava img { border-radius:0; box-shadow:none; object-fit:contain; }
+.ew-msg .ew-avatar.emoji-ava .hx-emoji { width:32px; height:32px; }
+.ew-msg .ew-avatar:not(.face-ava):not(.emoji-ava):not(.lib-ava):not(.discord):not(.slack) {
+  background:var(--panel-2); border-radius:50%; overflow:hidden;
+}
 .ew-meta { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
 .ew-meta strong { font-weight:650; }
 .ew-meta .agent { color:var(--accent); }
@@ -352,9 +357,9 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 
 /* CREW rail (UI polish bite 1): the sidebar presence list that
    replaces the composer pill strip and the Agents pane cards. One
-   row per seat: a 36px rounded-square face (radius 8, never a
-   circle), a status dot pinned at the face's bottom-right over a
-   surface ring, the seat's name, and one plain line of current
+   row per seat: a 36px boxless face, a status dot pinned at the
+   face's bottom-right over a surface ring, the seat's name, and
+   one plain line of current
    work. Every colour reads a theme token, so the light and black
    themes (and slate/midnight) style it in the identical shape. */
 .ew-crew { flex:none; border-top:1px solid var(--border); padding:8px 6px 6px; }
@@ -366,12 +371,24 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-crew-row:hover { background:var(--panel-2); }
 .ew-crew-row:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 .ew-crew-row.selected { background:var(--panel-2); border-color:var(--accent); box-shadow:inset 3px 0 0 var(--accent); }
-.ew-crew-face { position:relative; flex:none; width:36px; height:36px; border-radius:8px; background:#10151F; display:grid; place-items:center; font-weight:700; color:var(--text); }
-.ew-crew-face > img { width:36px; height:36px; border-radius:8px; object-fit:cover; display:block; }
-/* Faces bite 4b: the state clip fills the 36px tile edge to edge —
-   the clips are dark-stage renders with no alpha, so cover-fit on
-   the shell's dark tile leaves no letterbox and no seam. */
-.ew-crew-face > video.ew-crew-face-video { width:36px; height:36px; border-radius:8px; object-fit:cover; display:block; }
+.ew-crew-face { position:relative; flex:none; width:36px; height:36px; border-radius:0; background:transparent; display:grid; place-items:center; font-weight:700; color:var(--text); overflow:visible; }
+.ew-crew-face > img { width:36px; height:36px; border-radius:0; object-fit:contain; display:block; }
+.ew-crew-face > video.ew-crew-face-video { width:36px; height:36px; border-radius:0; object-fit:contain; display:block; }
+/* Clips are opaque black-stage VP9. The matching still is real RGBA.
+   Mask the video with that still so a boxless slot does not become
+   a black square. Motion outside the still silhouette is clipped. */
+.ew-crew-face > video.ew-crew-face-video,
+.ew-msg .ew-avatar.face-ava > video.ew-crew-face-video {
+  -webkit-mask-image:var(--face-mask);
+  mask-image:var(--face-mask);
+  -webkit-mask-size:contain;
+  mask-size:contain;
+  -webkit-mask-repeat:no-repeat;
+  mask-repeat:no-repeat;
+  -webkit-mask-position:center;
+  mask-position:center;
+  background:transparent;
+}
 .ew-crew-face > .hx-emoji { width:30px; height:30px; object-fit:contain; }
 .ew-crew-initial { font-size:16px; }
 .ew-crew-dot { position:absolute; right:-3px; bottom:-3px; width:10px; height:10px; border-radius:50%; background:var(--faint); box-shadow:0 0 0 2px var(--panel); z-index:1; }
@@ -380,26 +397,48 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-crew-dot.limit { background:var(--amber); box-shadow:0 0 0 2px var(--panel), 0 0 0 4px var(--red); }
 .ew-crew-dot.offline { background:transparent; border:2px solid var(--faint); width:6px; height:6px; }
 @media (prefers-reduced-motion: reduce) { .ew-crew-dot.working { animation:none; } }
-/* The face shell carries the same activity motion classes the agent
-   cards used (keyframes below); reduced motion never animates.
-   Roll (2026-11-10): while a seat works, its face PICTURE tumbles
-   inside the tile — the tile and the status dot pinned at its corner
-   stay put — one smooth turn with a slight shrink at the halfway
-   point so the square picture's corners stay inside the tile. The
-   selectors outrank the bite-4c idle sway on the same picture, so a
-   working face rolls instead of breathing. */
-.ew-crew-list .ew-crew-face.ew-ava-roll > img, .ew-crew-list .ew-crew-face.ew-ava-roll > video { animation:ew-ava-roll 1.6s ease-in-out infinite; }
-.ew-crew-face.ew-ava-talk { animation:ew-ava-talk .5s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .ew-crew-face.ew-ava-talk { animation:none; } .ew-crew-list .ew-crew-face.ew-ava-roll > img, .ew-crew-list .ew-crew-face.ew-ava-roll > video { animation:none; } }
+/* Face motion (emoji bite 4 + the boxless fix): the activity motion
+   classes ride the face shell — crew rail and message rows alike —
+   but the animation lands on the PICTURE inside it (img / video /
+   .hx-emoji), never on the shell, so the shell and the crew status
+   dot stay put and a still-mode emoji never double-moves with its
+   wrapper. Reduced motion never animates.
+   Roll (2026-11-10): while a seat works, its face picture tumbles —
+   one smooth turn with a slight shrink at the halfway point. The
+   roll/talk selectors outrank the bite-4c idle sway on the same
+   picture, so a working face rolls instead of breathing: the crew
+   selectors keep their .ew-crew-list scope (higher specificity),
+   and the message selectors are scoped to .ew-messages and stand
+   after the idle rule. */
 /* Faces bite 4c — still-mode idle life: a standing-by face whose
    slot holds the pack still (plain mode, reduced motion's still,
    or a clip that failed and fell back) breathes — a slow, small
    swell on the picture itself, transform-only so nothing reflows.
-   This is the fallback polish when no clip is playing; reduced
-   motion turns it off like every other face animation here. */
-.ew-crew-face > img.ew-crew-face-img { animation:ew-ava-idle 3.4s ease-in-out infinite; }
+   Message rows included. Roll/talk outrank this. Reduced motion
+   turns it off like every other face animation here. */
+.ew-crew-face > img.ew-crew-face-img,
+.ew-msg .ew-avatar > img.ew-crew-face-img { animation:ew-ava-idle 3.4s ease-in-out infinite; }
 @keyframes ew-ava-idle { 0%, 100% { transform:scale(1) translateY(0); } 50% { transform:scale(1.05) translateY(-.5px); } }
-@media (prefers-reduced-motion: reduce) { .ew-crew-face > img.ew-crew-face-img { animation:none; } }
+@media (prefers-reduced-motion: reduce) {
+  .ew-crew-face > img.ew-crew-face-img,
+  .ew-msg .ew-avatar > img.ew-crew-face-img { animation:none; }
+}
+.ew-crew-list .ew-crew-face.ew-ava-roll > img,
+.ew-crew-list .ew-crew-face.ew-ava-roll > video,
+.ew-messages .ew-avatar.ew-ava-roll > img,
+.ew-messages .ew-avatar.ew-ava-roll > video,
+.ew-messages .ew-avatar.ew-ava-roll > .hx-emoji { animation:ew-ava-roll 1.6s ease-in-out infinite; }
+.ew-crew-list .ew-crew-face.ew-ava-talk > img,
+.ew-crew-list .ew-crew-face.ew-ava-talk > video,
+.ew-messages .ew-avatar.ew-ava-talk > img,
+.ew-messages .ew-avatar.ew-ava-talk > video,
+.ew-messages .ew-avatar.ew-ava-talk > .hx-emoji { animation:ew-ava-talk .5s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .ew-crew-list .ew-crew-face.ew-ava-roll > img, .ew-crew-list .ew-crew-face.ew-ava-roll > video,
+  .ew-crew-list .ew-crew-face.ew-ava-talk > img, .ew-crew-list .ew-crew-face.ew-ava-talk > video,
+  .ew-messages .ew-avatar.ew-ava-roll > img, .ew-messages .ew-avatar.ew-ava-roll > video, .ew-messages .ew-avatar.ew-ava-roll > .hx-emoji,
+  .ew-messages .ew-avatar.ew-ava-talk > img, .ew-messages .ew-avatar.ew-ava-talk > video, .ew-messages .ew-avatar.ew-ava-talk > .hx-emoji { animation:none; }
+}
 .ew-crew-text { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:1px; }
 .ew-crew-name { font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ew-crew-line { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -407,19 +446,17 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-working-dot { width:8px; height:8px; border-radius:50%; background:var(--amber); flex:none; animation:ew-pulse 1.1s ease-in-out infinite; }
 @keyframes ew-pulse { 0%, 100% { opacity:.35; } 50% { opacity:1; } }
 @media (prefers-reduced-motion: reduce) { .ew-working-dot { animation:none; } }
-/* Seat avatar motion (emoji bite 4): the class is added by
-   activityMotionClass in envoy-workspace.js only while the seat's
-   real activity stage is live — transforms on the avatar shell only,
-   so nothing reflows. Working seats roll (the round avatar turns
-   like a ball — Troy's Grok-companion ask, 2026-11-10); a seat whose
-   reply is publishing gets the talking bobble; reduced motion never
-   animates (the JS gate already withholds the class — this is the
-   second lock). Faces only — no other element uses these keyframes. */
-.ew-avatar.ew-ava-roll { animation:ew-ava-roll 1.6s ease-in-out infinite; }
-.ew-avatar.ew-ava-talk { animation:ew-ava-talk .5s ease-in-out infinite; }
+/* Seat avatar motion keyframes (emoji bite 4): the classes are
+   added by activityMotionClass in envoy-workspace.js only while
+   the seat's real activity stage is live, and the animation rules
+   above (with the crew rail's) land them on the picture inside the
+   shell — working seats roll (Troy's Grok-companion ask,
+   2026-11-10), a seat whose reply is publishing gets the talking
+   bobble, and reduced motion never animates (the JS gate already
+   withholds the class — the CSS lock above is the second lock).
+   Faces only — no other element uses these keyframes. */
 @keyframes ew-ava-roll { 0% { transform:rotate(0deg) scale(1); } 50% { transform:rotate(180deg) scale(.88); } 100% { transform:rotate(360deg) scale(1); } }
 @keyframes ew-ava-talk { 0%, 100% { transform:translateY(0) rotate(0deg) scale(1); } 25% { transform:translateY(-2px) rotate(-7deg) scale(1.05); } 75% { transform:translateY(-2px) rotate(7deg) scale(1.05); } }
-@media (prefers-reduced-motion: reduce) { .ew-avatar.ew-ava-roll, .ew-avatar.ew-ava-talk { animation:none; } }
 .ew-agent-add { display:flex; flex-wrap:wrap; gap:6px; padding:0 12px 6px; }
 
 /* Workbench */
@@ -828,6 +865,9 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-pill img { width:24px; height:24px; box-shadow:0 0 0 2px var(--panel), 0 0 0 3px rgba(56,189,248,.45); }
 .ew-pill:hover { transform:translateY(-1px); box-shadow:0 4px 14px rgba(56,189,248,.18); }
 .ew-avatar img { border-radius:50%; box-shadow:0 0 0 2px rgba(56,189,248,.35); }
+/* Character faces are boxless: the generic circle crop and ring
+   above never reach a crew-pack face or a library face. */
+.ew-avatar.face-ava img, .ew-avatar.face-ava video, .ew-avatar.lib-ava img { border-radius:0; box-shadow:none; }
 /* ADVANCED no longer vanishes when the unpinned rail stops peeking: its
    icons stay on the rail (summary hidden), so it does not "collapse itself". */
 .sidebar.rail .advanced-nav[open] { display:block; }
@@ -1002,9 +1042,11 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
    themes' rules above are untouched. */
 [data-theme="light"] .ew-msg:hover { background:rgba(13,42,67,.05); }
 [data-theme="light"] .ew-msg-tools { box-shadow:0 8px 24px rgba(13,42,67,.14); }
-/* Bite 2: message-row faces stay square and ring-free in light too —
-   this out-specifies the generic light avatar-img ring below. */
-[data-theme="light"] .ew-msg .ew-avatar img { border-radius:8px; box-shadow:none; }
+/* Message-row character faces stay boxless and ring-free in light
+   too — this out-specifies the generic light avatar-img ring below. */
+[data-theme="light"] .ew-msg .ew-avatar.face-ava img,
+[data-theme="light"] .ew-msg .ew-avatar.lib-ava img,
+[data-theme="light"] .ew-msg .ew-avatar.face-ava video { border-radius:0; box-shadow:none; }
 [data-theme="light"] .ew-btn.primary { color:#fff; }
 [data-theme="light"] .ew-net-seg.on { color:#fff; }
 [data-theme="light"] .ew-seg button.on { color:#fff; }
@@ -1034,6 +1076,9 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 [data-theme="light"] .ew-pill img { box-shadow:0 0 0 2px var(--panel), 0 0 0 3px rgba(11,110,153,.45); }
 [data-theme="light"] .ew-pill:hover { box-shadow:0 4px 14px rgba(11,110,153,.18); }
 [data-theme="light"] .ew-avatar img { box-shadow:0 0 0 2px rgba(11,110,153,.35); }
+/* Character faces stay boxless in light on every surface, not only
+   message rows: the generic light ring above never reaches them. */
+[data-theme="light"] .ew-avatar.face-ava img, [data-theme="light"] .ew-avatar.face-ava video, [data-theme="light"] .ew-avatar.lib-ava img { border-radius:0; box-shadow:none; }
 [data-theme="light"] .ew-custom-ava, [data-theme="light"] .ew-avatar.custom { border-color:rgba(11,110,153,.4); }
 [data-theme="light"] .ew-emoji-btn.on { background:rgba(11,110,153,.14); box-shadow:0 0 0 2px rgba(11,110,153,.3); }
 [data-theme="light"] .ew-rchip.mine { background:rgba(11,110,153,.12); }
