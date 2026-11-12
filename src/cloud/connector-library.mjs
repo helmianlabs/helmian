@@ -1061,6 +1061,51 @@ export function createConnectorLibraryStore(pool) {
               out.push({ ...entryOf(entryRow, seat), workspaceSet: true, provenanceSeatId: winner.seat_id });
               seen.add(id);
             }
+            // The same projection, widened for a CONNECTION
+            // FAMILY (the Microsoft four): the connection side
+            // already carries a connected family onto this seat
+            // as a whole — listConnections projects the family's
+            // one connection onto every member the seat carries,
+            // and its widening adds the whole family to that
+            // seat's carried bound — but the row read joins
+            // connections onto ENTRY rows, and the loop above
+            // only ever brings the recorded member's own row.
+            // The sibling members' rows never join this list, so
+            // on a seat that stocks none of them (Gemini) the
+            // family shows as the one member that was connected
+            // and the other three stay invisible, against the
+            // family's one-connection design. When the set's
+            // winner for any member is a brokered catalog /
+            // helmian-native entry, every member's entry row
+            // joins the list the same way — read from the seat
+            // that stocks it (the winner's seat first: the
+            // catalog stocks a family together), carrying the
+            // same workspaceSet / provenanceSeatId marking.
+            // An unconnected family projects nothing: the
+            // winners map only holds entries the set holds a
+            // connection for, exactly as above — the projection
+            // stays connection-driven and invents no rows.
+            for (const [id, winner] of setWinners) {
+              const members = familyEntryIds(id);
+              if (!members || members.every((memberId) => seen.has(memberId))) continue;
+              const anchor = await readEntry(client, winner.seat_id, id);
+              if (!anchor || (anchor.kind !== 'catalog' && anchor.kind !== 'helmian-native')) continue;
+              for (const memberId of members) {
+                if (seen.has(memberId)) continue;
+                let memberRow = await readEntry(client, winner.seat_id, memberId);
+                let memberSeat = winner.seat_id;
+                if (!memberRow) {
+                  for (const otherSeat of LIVE_SEATS) {
+                    if (otherSeat === winner.seat_id || otherSeat === seat) continue;
+                    memberRow = await readEntry(client, otherSeat, memberId);
+                    if (memberRow) { memberSeat = otherSeat; break; }
+                  }
+                }
+                if (!memberRow || (memberRow.kind !== 'catalog' && memberRow.kind !== 'helmian-native')) continue;
+                out.push({ ...entryOf(memberRow, seat), workspaceSet: true, provenanceSeatId: memberSeat });
+                seen.add(memberId);
+              }
+            }
           }
           out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
           return out;
