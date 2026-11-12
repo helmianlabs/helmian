@@ -125,7 +125,7 @@ export async function packageGuard({ target = 'chromium', out, zip, scribeUrl = 
   const spec = TARGETS[target];
   if (!spec) throw new Error(`Unknown target ${target}; use ${Object.keys(TARGETS).join(', ')}`);
   const manifest = JSON.parse(await readFile(join(EXTENSION, spec.manifest), 'utf8'));
-  const output = resolve(out || join(ROOT, 'artifacts', `helmion-guard-${target}`));
+  const output = resolve(out || join(ROOT, 'artifacts', `helmian-guard-${target}`));
   await rm(output, { recursive: true, force: true });
   await mkdir(output, { recursive: true });
   for (const entry of SHIPPED_DIRS) await cp(join(EXTENSION, entry), join(output, entry), { recursive: true });
@@ -136,7 +136,7 @@ export async function packageGuard({ target = 'chromium', out, zip, scribeUrl = 
     target, version: manifest.version, manifest: spec.manifest, signed: false, public: false, signing: spec.store, files,
   }, null, 2)}\n`);
 
-  const zipPath = resolve(zip || join(ROOT, 'artifacts', `helmion-guard-${target}-${manifest.version}.zip`));
+  const zipPath = resolve(zip || join(ROOT, 'artifacts', `helmian-guard-${target}-${manifest.version}.zip`));
   const allFiles = await filesUnder(output);
   const entries = [];
   for (const name of allFiles) entries.push({ name, data: await readFile(join(output, name)) });

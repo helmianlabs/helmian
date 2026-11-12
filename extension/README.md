@@ -1,4 +1,4 @@
-# Helmion Guard — browser extension, phase 1
+# Helmian Guard — browser extension, phase 1
 
 It watches the AI's reply as it types, and it reads that reply twice.
 
@@ -6,7 +6,7 @@ It also checks the chat composer at send time. An explicit request to erase an
 entire computer, drive or data set is stopped before the site can submit it and
 gets a bounded corner warning with a **Return to editing** action.
 
-**The code blocks** are checked against Helmion's 15 destructive-command
+**The code blocks** are checked against Helmian's 15 destructive-command
 patterns. If one matches, the block is hidden behind a red warning that names the
 exact line. That is the safety half.
 
@@ -148,9 +148,9 @@ Do these in order. It takes about a minute.
 3. Top right of that page, turn ON the switch that says **Developer mode**.
 4. Three buttons appear top left. Click **Load unpacked**.
 5. A folder picker opens. Choose this folder:
-   `E:\Helmion\extension`
+   `E:\Helmian\extension`
 6. Click **Select Folder**.
-7. A card appears saying **Helmion Guard**. That means Chrome knows the unpacked
+7. A card appears saying **Helmian Guard**. That means Chrome knows the unpacked
    folder. After any source update, click the card's reload button and reload
    every already-open AI chat tab so its content scripts are replaced.
 
@@ -180,7 +180,7 @@ To test the prompt lane, type this into a chat composer and press Send:
 
 > Permanently erase all computer files.
 
-The send event should be cancelled. A small warning says **Helmion Guard blocked
+The send event should be cancelled. A small warning says **Helmian Guard blocked
 this request**, the text stays in the composer for editing, and the site receives
 nothing. A defensive question such as "How can I prevent someone from erasing
 all computer files?" is allowed.
@@ -201,7 +201,7 @@ copyable. Above it sits a small slate-blue note:
 
 underneath it, what to go and check, and then the line that matters:
 
-> Helmion checked whether this was sourced, not whether it is true.
+> Helmian checked whether this was sourced, not whether it is true.
 
 The paragraph gets a dotted underline. Nothing is hidden, no red panel appears,
 no corner box appears, and the toolbar badge does not move. That separation is
@@ -234,15 +234,15 @@ check sentences.
 
 Two ways.
 
-**The toolbar.** Hover the extension's icon. It says "Helmion Guard is watching
+**The toolbar.** Hover the extension's icon. It says "Helmian Guard is watching
 this page."
 
 **The console.** Press `F12` on one of the three sites, click the **Console**
 tab, and look for this line:
 
 ```
-[Helmion Guard] self-test passed — watching this page.
-[Helmion Guard] claim self-test passed — reading this page for unsourced claims.
+[Helmian Guard] self-test passed — watching this page.
+[Helmian Guard] claim self-test passed — reading this page for unsourced claims.
 ```
 
 Those lines mean more than they look like. On every page load, and again every
@@ -280,7 +280,7 @@ status and do not rely on Guard on that page until it is fixed.
 
 When checking still works through a compatibility path, the page stays clear and
 the toolbar uses only a small dot. Claim-checking health also stays off the page.
-Open the Helmion Guard toolbar popup to see both lanes' current status.
+Open the Helmian Guard toolbar popup to see both lanes' current status.
 
 ---
 
@@ -376,14 +376,14 @@ inserts its warning and bounded corner alert into the page.
 | `generated/helmion-governance.generated.js` | The copied kernel. Do not edit |
 | `generated/helmion-unverified-claims.generated.js` | The copied claim detector. Do not edit |
 | `tools/sync-kernel.mjs` | Makes both copies |
-| `test/` | 134 tests. Run them with `npm test` from `E:\Helmion` |
+| `test/` | 134 tests. Run them with `npm test` from `E:\Helmian` |
 | `test-support/` | A tiny fake DOM and a fake `chrome` API, so the tests run the real files |
 
 ---
 
 ## Run the tests
 
-From `E:\Helmion`:
+From `E:\Helmian`:
 
 ```
 npm test

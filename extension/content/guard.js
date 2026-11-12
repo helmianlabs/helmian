@@ -5,7 +5,7 @@
 //
 //   THE CODE LANE, and it is the one that matters. Pulls the code blocks out of
 //   the conversation, sends them to the background worker, and draws a red
-//   warning on any block whose lines match Helmion's destructive-command
+//   warning on any block whose lines match Helmian's destructive-command
 //   patterns. Prose is never sent to it.
 //
 //   THE CLAIM LANE, which is a reading aid. Pulls the PROSE out — never the code
@@ -97,6 +97,8 @@
   const state = {
     broken: false,
     degraded: false,
+    orphaned: false,
+    scanFailures: 0,
     // id -> element, not a bare Set of ids. Pruning needs the element itself so
     // it can ask `isConnected` instead of looking the id up with a selector
     // built by string concatenation — see pruneDetached.
@@ -147,21 +149,52 @@
 
   // ------------------------------------------------------------------- fatal
 
+  // This tab still runs a copy of Guard whose extension was reloaded or
+  // updated (e.g. a new build was loaded). Chrome does not re-inject content
+  // scripts into open tabs, so this orphaned copy can no longer reach its
+  // background worker and every check fails with "Extension context
+  // invalidated". That is not a broken page: it needs a reload, and saying
+  // "safety checks may be incomplete" in a big red box over the chat is wrong.
+  function contextGone(...texts) {
+    return texts.some((t) => /extension context invalidated/i.test(String(t || '')));
+  }
+
+  function orphaned() {
+    if (state.orphaned) return;
+    state.orphaned = true;
+    state.broken = true;
+    console.warn('[Helmian Guard] this tab is running an old copy of Guard (the extension was reloaded or updated). Reload the page.');
+    try {
+      HelmionUI.showBanner('', '', {
+        title: 'Guard was updated: reload this page',
+        help: 'A new version of Helmian Guard was installed. This tab is still running the old copy. Reload the page to turn the new one on.',
+      });
+    } catch { /* console already says it */ }
+  }
+
+  // A worker that did not answer, or a page heuristic, is not a confirmed
+  // failure. Only a check that RAN and gave the wrong answer is (red chip).
+  function unconfirmed(...texts) {
+    return texts.some((t) => /did not answer|unreachable|could not reach|answered with nothing/i.test(String(t || '')));
+  }
+
   function fail(message, detail) {
+    if (contextGone(message, detail)) { orphaned(); return; }
+    if (state.orphaned) return;
     state.broken = true;
     try {
-      HelmionUI.showBanner(message, detail);
+      HelmionUI.showBanner(message, detail, unconfirmed(message, detail) ? {} : { tone: 'danger' });
     } catch (uiError) {
       // Even the banner failed. The console is the last place left to say it.
-      console.error('[Helmion Guard] could not draw its own failure banner:', uiError);
+      console.error('[Helmian Guard] could not draw its own failure banner:', uiError);
     }
-    console.error('[Helmion Guard] NOT WATCHING:', message, detail || '');
+    console.error('[Helmian Guard] NOT WATCHING:', message, detail || '');
     sendBadge();
     sendStatus();
   }
 
   function recover() {
-    if (!state.broken) return;
+    if (!state.broken || state.orphaned) return;
     state.broken = false;
     state.healthFailures = 0;
     HelmionUI.hideBanner();
@@ -224,7 +257,7 @@
         void chrome.runtime.lastError;
       });
     } catch (error) {
-      console.warn('[Helmion Guard] badge update failed:', error.message);
+      console.warn('[Helmian Guard] badge update failed:', error.message);
     }
   }
 
@@ -239,7 +272,7 @@
     try {
       chrome.runtime.sendMessage(message, () => { void chrome.runtime.lastError; });
     } catch (error) {
-      console.warn('[Helmion Guard] status update failed:', error.message);
+      console.warn('[Helmian Guard] status update failed:', error.message);
     }
   }
 
@@ -407,10 +440,15 @@
       // Undo the seen markers so these blocks are retried on the next pass
       // rather than being skipped forever because of one failed round trip.
       pending.forEach((block) => forgetSeen(block.element));
-      fail('the checks are not running.', error.message);
+      // One slow round trip (an MV3 worker waking up) is not a failure.
+      // Two in a row, or an orphaned tab, is.
+      state.scanFailures = (state.scanFailures || 0) + 1;
+      if (state.scanFailures >= 2 || contextGone(error.message)) fail('the checks are not running.', error.message);
+      else console.warn('[Helmian Guard] a scan round trip failed; retrying on the next pass:', error.message);
       return;
     }
 
+    state.scanFailures = 0;
     recover();
     applyResults(pending, response.results || []);
   }
@@ -433,11 +471,11 @@
       chrome.runtime.sendMessage({ type: 'helmion:log', entry }, (response) => {
         void chrome.runtime.lastError;
         if (response && response.ok !== true) {
-          console.warn('[Helmion Guard] ledger write failed:', response.error);
+          console.warn('[Helmian Guard] ledger write failed:', response.error);
         }
       });
     } catch (error) {
-      console.warn('[Helmion Guard] could not reach the ledger:', error.message);
+      console.warn('[Helmian Guard] could not reach the ledger:', error.message);
     }
   }
 
@@ -661,7 +699,7 @@
   function crossCheckWithFlags(event, composer, text, fp) {
     stopEvent(event);
     const now = Date.now();
-    if (state.scanActiveFp === fp && now - state.scanShownAt < 1500) return;
+    if (state.scanActiveFp === fp && (now - state.scanShownAt < 1500 || HelmionUI.isAskAlertOpen())) return;
     state.scanActiveFp = fp;
     state.scanShownAt = now;
     const cancel = { id: 'cancel', label: 'Cancel', onClick: () => { state.scanActiveFp = null; HelmionUI.hideAskAlert(); } };
@@ -874,8 +912,8 @@
   // re-asking, so there is no loop. If the text changed, or the site did not
   // take the send, fall back to "Press Send again".
   function sendAsWritten(composer, fp, onFallback) {
-    const fallback = () => { if (typeof onFallback === 'function') onFallback(); };
-    if (!composer || fingerprint(composerText(composer)) !== fp) { fallback(); return 'changed'; }
+    const fallback = (why) => { if (typeof onFallback === 'function') onFallback(why); };
+    if (!composer || fingerprint(composerText(composer)) !== fp) { fallback('changed'); return 'changed'; }
     if (state.allowOnce && state.allowOnce.fp === fp) state.allowOnce.usedAt = 0;
     try { if (typeof composer.focus === 'function') composer.focus(); } catch { /* best effort */ }
     let how = 'none';
@@ -895,7 +933,7 @@
     HelmionUI.hideAskAlert();
     setTimeout(() => {
       // Still sitting in the composer, unchanged: the site did not take it.
-      if (composer.isConnected !== false && fingerprint(composerText(composer)) === fp && composerText(composer)) fallback();
+      if (composer.isConnected !== false && fingerprint(composerText(composer)) === fp && composerText(composer)) fallback('not-taken');
     }, 600);
     return how;
   }
@@ -946,11 +984,22 @@
     stopEvent(event);
     // One send gesture fires several events; answer the first, swallow the rest.
     const now = Date.now();
-    if (state.privacyActiveFp === fp && now - state.privacyShownAt < 1500) return;
+    // While Guard's question about this message is still on screen (the
+    // approval box, or a card waiting on policy / an approver), a repeat send
+    // is held and the open box is left exactly as it is: no re-check, no
+    // teardown and redraw. 0.6.8 re-ran the check after 1.5 s, which hid the
+    // card and replaced the pill under the person's cursor.
+    if (state.privacyActiveFp === fp && (now - state.privacyShownAt < 1500
+      || HelmionUI.isApprovalPillOpen() || HelmionUI.isAskAlertOpen())) return;
+    // A different text while the approval box is open: hold this send too;
+    // the open box keeps its own question (Allow re-checks the text).
+    if (HelmionUI.isApprovalPillOpen()) return;
     state.privacyActiveFp = fp;
     state.privacyShownAt = now;
 
     const what = HelmionSanitize.describe(privacy);
+    // Type and count only ("Email address (2)"), never the values.
+    const found = HelmionSanitize.summarize(privacy);
     const redactAction = {
       id: 'redact',
       label: 'Redact and keep editing',
@@ -969,13 +1018,23 @@
       onClick: () => { state.privacyActiveFp = null; stopApprovalPolling(); HelmionUI.hideAskAlert(); },
     };
 
-    HelmionUI.showAskAlert({
-      tone: privacy.hasSecrets ? 'danger' : 'warn',
-      title: 'Helmion Guard paused this message',
-      message: `It contains ${what}. Nothing has been sent.`,
-      status: 'Checking policy…',
-      actions: [redactAction, cancelAction],
-    });
+    // The "checking policy" card only appears if the policy answer is slow.
+    // Shown at once, it flashed for a few milliseconds and vanished when the
+    // answer (usually the approval box) replaced it.
+    let checkingTimer = setTimeout(() => {
+      checkingTimer = null;
+      if (state.privacyActiveFp !== fp || HelmionUI.isApprovalPillOpen()) return;
+      HelmionUI.showAskAlert({
+        tone: privacy.hasSecrets ? 'danger' : 'warn',
+        title: 'Helmian Guard paused this message',
+        message: `It contains ${what}. Nothing has been sent.`,
+        items: found,
+        itemsTitle: 'Found in this message:',
+        status: 'Checking policy…',
+        actions: [redactAction, cancelAction],
+      });
+    }, 500);
+    const stopChecking = () => { if (checkingTimer) clearTimeout(checkingTimer); checkingTimer = null; };
 
     logToLedger({
       kind: 'ai-flag',
@@ -995,6 +1054,7 @@
         summary: privacy.redacted.slice(0, 500),
       }))
       .then((decision) => {
+        stopChecking();
         if (state.privacyActiveFp !== fp) return; // the person already moved on
         const where = decision.source === 'executive-guard' ? 'Executive Guard' : 'Guard policy on this computer';
         if (decision.verdict === 'allow') {
@@ -1010,8 +1070,10 @@
         if (decision.verdict === 'deny') {
           HelmionUI.showAskAlert({
             tone: 'danger',
-            title: 'Helmion Guard stopped this message',
+            title: 'Helmian Guard stopped this message',
             message: `It contains ${what}. ${decision.reason || ''}`.trim(),
+            items: found,
+            itemsTitle: 'Found in this message:',
             status: `Decided by ${where}${decision.serverUnavailable ? ' (Executive Guard could not be reached)' : ''}.`,
             actions: [redactAction, cancelAction],
           });
@@ -1023,27 +1085,39 @@
             tone: 'warn',
             title: 'Waiting for approval',
             message: `It contains ${what}. An approver must allow it in Executive Guard.`,
+            items: found,
+            itemsTitle: 'Found in this message:',
             status: 'Waiting for an approver…',
             actions: [redactAction, cancelAction],
           });
           pollApproval(decision.approvalId, fp, { denied: 'The approver did not allow this message.', actions: [redactAction, cancelAction] });
           return;
         }
-        // Compact corner pill: explicit Allow or Deny; timeout = deny; never auto-allows.
+        // Approval box above the bottom-right pill: stays open until the
+        // person clicks Allow or Cancel (or Enter / Escape). No timer, never
+        // auto-allows, never redrawn while open.
         HelmionUI.hideAskAlert();
         HelmionUI.showApprovalPill({
+          key: fp,
           tone: 'warn',
           title: 'Guard: send this as written?',
-          message: `It contains ${what}. ${decision.reason || ''}`.trim(),
-          status: decision.serverUnavailable ? 'Executive Guard could not be reached; you decide. No answer in 60 s = Deny.' : 'No answer in 60 s = Deny.',
-          allowLabel: 'Allow once',
-          denyLabel: 'Deny',
-          timeoutMs: 60000,
+          question: 'Send this message to the AI as written?',
+          message: `Sending it as written shares these with the AI. ${decision.reason || ''}`.trim(),
+          items: found,
+          itemsTitle: 'Found in this message:',
+          status: decision.serverUnavailable ? 'Executive Guard could not be reached, so you decide.' : 'Nothing is sent until you choose.',
+          allowLabel: 'Allow and send',
+          denyLabel: 'Cancel',
           onAllow: () => {
             if (state.privacyActiveFp !== fp) return;
             grantOnce(fp, 'person-at-keyboard');
             state.privacyActiveFp = null;
-            sendAsWritten(composer, fp, () => HelmionUI.showAskAlert({
+            sendAsWritten(composer, fp, (why) => HelmionUI.showAskAlert(why === 'changed' ? {
+              tone: 'warn',
+              title: 'The message changed',
+              message: 'It is not the text you approved, so Guard did not send it. Press Send to check it again.',
+              actions: [cancelAction],
+            } : {
               tone: 'ok',
               title: 'Allowed once',
               message: 'Press Send again to send it as written.',
@@ -1051,18 +1125,34 @@
             }));
           },
           onDeny: (why) => {
+            if (state.privacyActiveFp === fp) state.privacyActiveFp = null;
             logToLedger({ kind: 'ai-flag', site: SOURCE, matched: `approval-pill-${why}`, text: '', outcome: 'blocked-before-send' });
           },
         });
       })
       .catch((error) => {
         // Fail closed: no decision means the message stays unsent.
-        console.warn('[Helmion Guard] privacy decision failed:', error && error.message);
+        stopChecking();
+        console.warn('[Helmian Guard] privacy decision failed:', error && error.message);
         if (state.privacyActiveFp !== fp) return;
+        if (contextGone(error && error.message)) {
+          orphaned();
+          HelmionUI.showAskAlert({
+            tone: 'warn',
+            title: 'Guard was updated: reload this page',
+            message: 'This tab is running the old copy of Guard, which can no longer check messages. Reload the page, then send again.',
+            items: found,
+            itemsTitle: 'Found in this message:',
+            actions: [redactAction, cancelAction],
+          });
+          return;
+        }
         HelmionUI.showAskAlert({
           tone: 'danger',
-          title: 'Helmion Guard paused this message',
+          title: 'Helmian Guard paused this message',
           message: `It contains ${what}. The policy check did not answer, so it was not sent.`,
+          items: found,
+          itemsTitle: 'Found in this message:',
           actions: [redactAction, cancelAction],
         });
       });
@@ -1113,8 +1203,10 @@
     insertIntoComposer(composer, privacy.redacted);
     HelmionUI.showAskAlert({
       tone: 'warn',
-      title: 'Helmion Guard redacted your paste',
+      title: 'Helmian Guard redacted your paste',
       message: `It removed ${HelmionSanitize.describe(privacy)} before it reached the AI.`,
+      items: HelmionSanitize.summarize(privacy),
+      itemsTitle: 'Removed from your paste:',
       actions: [{ id: 'dismiss', label: 'OK', onClick: () => HelmionUI.hideAskAlert() }],
     });
     logToLedger({
@@ -1183,7 +1275,7 @@
     if (!audit) {
       state.auditUnrecorded += 1;
       console.warn(
-        '[Helmion Guard] a blocked code block came back with no audit field at all — '
+        '[Helmian Guard] a blocked code block came back with no audit field at all — '
         + 'background/scan.js is older than content/guard.js.',
       );
       return;
@@ -1191,7 +1283,7 @@
     state.auditRecorded += Number(audit.recorded) || 0;
     if (audit.reason) {
       state.auditUnrecorded += 1;
-      console.warn('[Helmion Guard] block ledger:', audit.reason);
+      console.warn('[Helmian Guard] block ledger:', audit.reason);
     }
   }
 
@@ -1246,8 +1338,8 @@
       const first = (newlyDangerous.findings || [])[0];
       HelmionUI.showToast(
         state.dangerousIds.size === 1
-          ? 'Helmion Guard blocked a destructive command in this reply.'
-          : `Helmion Guard blocked ${state.dangerousIds.size} destructive code blocks in this conversation.`,
+          ? 'Helmian Guard blocked a destructive command in this reply.'
+          : `Helmian Guard blocked ${state.dangerousIds.size} destructive code blocks in this conversation.`,
         first ? first.text : (newlyDangerous.hits || []).join(', '),
       );
     } else if (state.dangerousIds.size === 0) {
@@ -1267,7 +1359,7 @@
 
   function claimsFail(message, detail) {
     state.claimsBroken = true;
-    console.error('[Helmion Guard] claim checking is not running:', message, detail || '');
+    console.error('[Helmian Guard] claim checking is not running:', message, detail || '');
     sendStatus();
   }
 
@@ -1366,7 +1458,7 @@
       // characters long is not a paragraph — so it is a console line rather
       // than page furniture, but it is never nothing.
       if (result && result.skipped) {
-        console.warn('[Helmion Guard] a passage was not checked for claims:', result.skipped);
+        console.warn('[Helmian Guard] a passage was not checked for claims:', result.skipped);
         continue;
       }
 
@@ -1378,7 +1470,7 @@
       // quietly acting on it.
       if (result.blocked === true) {
         console.error(
-          '[Helmion Guard] the claim lane answered blocked:true — it is advisory and must never block. '
+          '[Helmian Guard] the claim lane answered blocked:true — it is advisory and must never block. '
           + 'Ignoring the flag and showing the note only.',
         );
       }
@@ -1413,7 +1505,7 @@
     // to mean something.
     if (state.claimIds.size !== before) {
       console.info(
-        `[Helmion Guard] paragraphs carrying an unsourced claim on this page: ${state.claimIds.size}`,
+        `[Helmian Guard] paragraphs carrying an unsourced claim on this page: ${state.claimIds.size}`,
       );
     }
   }
@@ -1436,7 +1528,7 @@
         void chrome.runtime.lastError;
       });
     } catch (error) {
-      console.warn('[Helmion Guard] could not record a flag:', error.message);
+      console.warn('[Helmian Guard] could not record a flag:', error.message);
     }
   }
 
@@ -1447,7 +1539,7 @@
       prose = HelmionExtract.collectProse(document).passages;
       code = HelmionExtract.collectCodeBlocks(document).blocks;
     } catch (error) {
-      console.warn('[Helmion Guard] flags lane could not read the page:', error.message);
+      console.warn('[Helmian Guard] flags lane could not read the page:', error.message);
       return;
     }
     for (const passage of prose) {
@@ -1550,14 +1642,17 @@
     }
 
     if (!problem) {
+      // A long, finished conversation that nobody is touching legitimately
+      // does not change. That is a heuristic, not a confirmed failure, so it
+      // is logged and never put on the page.
       const stats = watch.stats();
       const pageText = (document.body && document.body.innerText) || '';
       if (stats.mutationCount === 0 && pageText.length > MIN_PAGE_TEXT_FOR_HEALTH) {
-        problem = 'this page is full of content but the extension has not seen it change once. '
-          + 'It may not be able to watch this page.';
+        console.info('[Helmian Guard] no page changes seen yet on a long page (not treated as a failure).');
       }
     }
 
+    if (problem && contextGone(problem)) { orphaned(); return; }
     if (problem) {
       state.healthFailures += 1;
       if (state.healthFailures >= FAILURES_BEFORE_BANNER) fail(problem);
@@ -1594,7 +1689,7 @@
       // Flags read the reply once it has stopped streaming, so a half-typed
       // sentence is not judged. Advisory: nothing waits on it.
       if (!streaming) {
-        try { runFlagsPass(); } catch (error) { console.warn('[Helmion Guard] flags lane error:', error.message); }
+        try { runFlagsPass(); } catch (error) { console.warn('[Helmian Guard] flags lane error:', error.message); }
       }
     };
 
@@ -1607,9 +1702,14 @@
     });
 
     // Prove the chain works before claiming to guard anything.
-    selfTest().then(
+    const selfTestOnLoad = () => selfTest().catch((error) => {
+      if (!unconfirmed(error.message) || contextGone(error.message)) throw error;
+      // The MV3 worker may still be waking up: ask once more before alarming anyone.
+      return new Promise((resolve) => setTimeout(resolve, 3000)).then(selfTest);
+    });
+    selfTestOnLoad().then(
       () => {
-        console.info('[Helmion Guard] self-test passed — watching this page.');
+        console.info('[Helmian Guard] self-test passed — watching this page.');
         sendBadge();
         sendStatus();
       },
@@ -1620,7 +1720,7 @@
     // never reported as a failure in the other.
     claimsSelfTest().then(
       () => {
-        console.info('[Helmion Guard] claim self-test passed — reading this page for unsourced claims.');
+        console.info('[Helmian Guard] claim self-test passed — reading this page for unsourced claims.');
         sendStatus();
       },
       (error) => claimsFail('the claim check failed its own test on load.', error.message),
@@ -1645,7 +1745,7 @@
     window.addEventListener('unhandledrejection', (event) => {
       const reason = event && event.reason;
       const message = reason && reason.message ? reason.message : String(reason);
-      console.error('[Helmion Guard] unhandled rejection:', message);
+      console.error('[Helmian Guard] unhandled rejection:', message);
     });
   }
 

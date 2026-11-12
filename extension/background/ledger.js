@@ -134,7 +134,7 @@ async function readRaw(storage) {
   } catch (error) {
     // A ledger that cannot be read must not take the guard down with it. The
     // caller still gets a working extension; it just cannot show history.
-    console.warn('[Helmion Guard] ledger unreadable:', error?.message ?? error);
+    console.warn('[Helmian Guard] ledger unreadable:', error?.message ?? error);
     return [];
   }
 }

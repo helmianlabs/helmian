@@ -26,7 +26,7 @@ export async function plan(target, env = process.env) {
   if (!need) throw new Error(`Unknown target ${target}; use firefox, chrome or edge`);
   const missing = need.filter((k) => !env[k]);
   const blockers = [...missing.map((k) => `missing ${k}`)];
-  const stage = join(ROOT, 'artifacts', `helmion-guard-${target}`);
+  const stage = join(ROOT, 'artifacts', `helmian-guard-${target}`);
   let command = null;
   if (target === 'firefox') {
     const m = JSON.parse(await readFile(join(ROOT, 'extension', 'manifest.firefox.json'), 'utf8'));
