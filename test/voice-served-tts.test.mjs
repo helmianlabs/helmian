@@ -5,7 +5,8 @@
 // served audio is unavailable or fails. These tests pin: ordered,
 // non-interrupting playback across replies; the per-seat voice and
 // message ref riding each chunk (speaker icon proof, engine
-// 'served'); fetch-ahead of the next chunk while one plays; failure
+// 'served'); fetch-ahead of the next two chunks of the same answer
+// while one plays (voice-hardening bite; it was one chunk); failure
 // handing the reply to the in-tab Kokoro road in order and latching
 // the served road broken for the session; cancel orphaning an
 // in-flight fetch; and the app.js inline copy carrying the same
@@ -13,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { createVoiceController } from '../web/shared/voice-dictation.mjs';
+import { createVoiceController, chunkForSpeech } from '../web/shared/voice-dictation.mjs';
 
 function makeFakes() {
   const instances = [];
@@ -142,11 +143,80 @@ test('served road unavailable (nothing injected, no deploy token): the legacy ro
   f.sources[0].onended();
 });
 
+test('fetch-ahead: while the first chunk is in flight, the next TWO chunks of the same answer are fetched too', async () => {
+  const f = makeFakes();
+  const requested = [];
+  const gates = new Map();
+  const servedTts = (text) => { requested.push(text); return new Promise((r) => gates.set(text, r)); };
+  const v = voiceOn(f, { servedTts });
+  const heard = [];
+  v.setSpeakingListener((info) => { if (info) heard.push(info.ref); });
+  const sentence = (n) => `Sentence ${n} ${'word '.repeat(20).trim()}.`;
+  const chunks = chunkForSpeech([1, 2, 3, 4, 5].map(sentence).join(' '));
+  assert.ok(chunks.length >= 4, `the fixture splits into ${chunks.length} chunks`);
+  assert.equal(v.speak(chunks.join(' '), 'grok', 'msg-ahead'), true);
+  // Chunk 1's fetch has not resolved — nothing is playing yet —
+  // and already chunks 2 AND 3 are requested. The pre-hardening
+  // code fetched only chunk 2 ahead, so this wait timed out there.
+  await until(() => requested.length >= 3);
+  assert.deepEqual(requested, chunks.slice(0, 3), 'fetches run in chunk order, two ahead of need — no further');
+  assert.deepEqual(heard, [], 'prefetch plays nothing and reports nothing: it never marks an answer voiced');
+  // Playback drains in order; the fetch window slides with it and
+  // every chunk is fetched exactly once.
+  for (let i = 0; i < chunks.length; i += 1) {
+    await until(() => gates.has(chunks[i]), `chunk ${i + 1} fetch issued`);
+    gates.get(chunks[i])(okAudio);
+    await until(() => f.sources.length === i + 1 && f.sources[i].started);
+    f.sources[i].onended();
+  }
+  assert.deepEqual(requested, chunks, 'each chunk fetched exactly once, in order');
+  assert.deepEqual(heard, chunks.map(() => 'msg-ahead'), 'playback was reported per chunk, only as chunks actually played');
+});
+
+test('fetch-ahead stops at the answer boundary: a queued second answer is not fetched early', async () => {
+  const f = makeFakes();
+  const requested = [];
+  const gates = new Map();
+  const servedTts = (text) => { requested.push(text); return new Promise((r) => gates.set(text, r)); };
+  const v = voiceOn(f, { servedTts });
+  const sentence = (tag, n) => `${tag} sentence ${n} ${'word '.repeat(20).trim()}.`;
+  const aText = [1, 2, 3].map((n) => sentence('Alpha', n)).join(' ');
+  const bText = [1, 2].map((n) => sentence('Bravo', n)).join(' ');
+  const a = chunkForSpeech(aText);
+  const b = chunkForSpeech(bText);
+  assert.equal(a.length, 3);
+  assert.equal(b.length, 2);
+  assert.equal(v.speak(aText, 'claude', 'msg-a'), true);
+  assert.equal(v.speak(bText, 'grok', 'msg-b'), true);
+  await until(() => requested.length >= 3);
+  assert.deepEqual(requested, a, 'only the first answer’s chunks are in flight; the second answer waits for its own head turn');
+  for (let i = 0; i < a.length; i += 1) {
+    gates.get(a[i])(okAudio);
+    await until(() => f.sources.length === i + 1 && f.sources[i].started);
+    f.sources[i].onended();
+  }
+  // The second answer's chunks are issued when it reaches the head
+  // — both of them in that same turn (the pump invokes the
+  // fetch-ahead before its own await, so their invocation order
+  // between themselves is not part of the contract; playback order
+  // is, and it follows the queue).
+  await until(() => requested.length >= a.length + b.length);
+  assert.deepEqual(requested.slice(0, a.length), a, 'the first answer fetched whole, in chunk order');
+  assert.deepEqual(requested.slice(a.length).sort(), [...b].sort(), 'the second answer fetched whole at its head turn — and not a moment before');
+  for (let i = 0; i < b.length; i += 1) {
+    gates.get(b[i])(okAudio);
+    await until(() => f.sources.length === a.length + i + 1 && f.sources[a.length + i].started);
+    f.sources[a.length + i].onended();
+  }
+});
+
 test('lockstep: the app.js inline copy carries the same served-TTS machinery as the shared module', async () => {
   const needles = [
     "const SERVED_TTS_URL = 'https://voice.5-78-222-178.sslip.io'",
     'const SERVED_TTS_TIMEOUT_MS = 30000',
     'const servedQueue = []',
+    'const SERVED_FETCH_AHEAD = 2',
+    'function servedPrefetchAhead(item)',
     'async function pumpServed()',
     'function servedFallback(failedItem)',
     'function servedCancel()',

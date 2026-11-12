@@ -3,6 +3,7 @@
 // web/shared/voice-dictation.mjs (inlined into the /app bundle).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createVoiceController, stripSpeechMarkup, chunkForSpeech } from '../web/shared/voice-dictation.mjs';
 
 function makeFakes() {
@@ -293,4 +294,44 @@ test('a new speak() replaces the queued reply in progress', () => {
   f.spoken[0].onend(); // old queue was cleared; nothing more pumps
   assert.equal(f.spoken.length, 2);
   assert.equal(f.spoken[1].text, 'Brand new reply.');
+});
+
+test('mic-held state: a turn that ends while voice mode is on reports held before the next turn listens', () => {
+  const f = makeFakes();
+  const { v, states } = voiceOn(f, { mode: 'voice' });
+  f.instances[0].onstart();
+  assert.equal(v.listening, true);
+  assert.equal(states.at(-1), 'listening');
+  f.instances[0].onend(); // turn ends; nothing is playing, so the loop restarts at once
+  assert.equal(states.filter((s) => s === 'held').length, 1, 'the surface hears the mic is held between turns');
+  assert.equal(f.instances.length, 2, 'the loop still restarts the next turn');
+  f.instances[1].onstart();
+  assert.equal(states.at(-1), 'listening', 'the next turn reports listening again');
+  v.setVoiceMode(false, {});
+});
+
+test('mic-held state: while a reply is playing, the ended turn reports held and the restart waits', () => {
+  const f = makeFakes();
+  const { v, states } = voiceOn(f, { mode: 'voice' });
+  f.instances[0].onstart();
+  f.synthesis.speaking = true; // a reply is coming out of the speakers
+  f.instances[0].onend();
+  assert.ok(states.includes('held'), 'the held state reached the surface');
+  assert.equal(f.instances.length, 1, 'no new turn starts while the voice plays — the mic stays held');
+  f.synthesis.speaking = false;
+  v.setVoiceMode(false, {});
+});
+
+test('mic-held wiring: both controller copies report held, and the chips carry the held state', async () => {
+  const appJs = await readFile(new URL('../web/marketing/app/app.js', import.meta.url), 'utf8');
+  const shared = await readFile(new URL('../web/shared/voice-dictation.mjs', import.meta.url), 'utf8');
+  assert.ok(appJs.includes("if (voiceMode) handlers.onState?.('held');"), 'app.js inline copy reports the held state at turn end');
+  assert.ok(shared.includes("if (voiceMode) handlers.onState?.('held');"), 'shared module reports the held state at turn end');
+  assert.equal(appJs.split("chip.classList.toggle('held', active && !voice.listening);").length - 1, 3,
+    'all three chip updaters (console, maestro, agent-CLI) toggle the held class from the live mic truth');
+  const appCss = await readFile(new URL('../web/marketing/app/app.css', import.meta.url), 'utf8');
+  assert.ok(appCss.includes('.voice-orb.recording.held'), 'the voice orb has a held style');
+  assert.ok(appCss.includes('.icon-btn.recording.held'), 'the dictate button has a held style');
+  const envoyCss = await readFile(new URL('../web/marketing/app/envoy.css', import.meta.url), 'utf8');
+  assert.ok(envoyCss.includes('.ew-icon.recording.held'), 'the envoy icon buttons have a held style');
 });

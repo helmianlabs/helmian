@@ -138,6 +138,8 @@ html[data-theme="light"] .ew-head-pill { border-color:color-mix(in srgb, var(--a
 .ew-icon:hover:not(:disabled) { background:var(--panel-2); color:var(--text); }
 .ew-icon:disabled { opacity:.35; cursor:default; }
 .ew-icon.recording { color:var(--red); }
+/* Mic held (voice-hardening bite): voice on, mic between turns — dimmed, see app.css. */
+.ew-icon.recording.held { opacity:.55; }
 .ew-reveal { display:none; }
 .ew-check { display:flex; gap:6px; align-items:center; color:var(--muted); font-size:12px; }
 input, textarea { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:7px 10px; color:var(--text); outline:none; }

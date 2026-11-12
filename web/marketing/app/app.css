@@ -283,6 +283,16 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .chip.tool.recording::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; background:currentColor; margin-right:6px; animation:dictate-pulse 1.2s ease-in-out infinite; }
 @keyframes dictate-pulse { 0%, 100% { opacity:1; } 50% { opacity:.25; } }
 @media (prefers-reduced-motion: reduce) { .chip.tool.recording::before { animation:none; } }
+/* Mic held (voice-hardening bite): voice mode is on but the mic is
+   not hearing right now — a reply is playing (the next turn's
+   restart is held) or the tab is hidden — so the armed signal
+   quiets instead of claiming a live mic: pulse off, bars still,
+   ring thinned, everything dimmed. State only; no new words. */
+.icon-btn.recording.held { animation:none; opacity:.6; }
+.voice-orb.recording.held { box-shadow:0 0 0 2px color-mix(in srgb, var(--red) 26%, transparent); }
+.voice-orb.recording.held .orb-bars i { animation:none; opacity:.45; }
+.chip.tool.recording.held::before { animation:none; opacity:.45; }
+@media (prefers-reduced-motion: reduce) { .voice-orb.recording.held .orb-bars i { animation:none; } }
 .chip:disabled { opacity:.45; cursor:default; }
 .new-session { display:flex; flex-direction:column; gap:8px; }
 .session-form { display:flex; gap:6px; flex-wrap:wrap; } .session-form input { flex:1; min-width:140px; }
