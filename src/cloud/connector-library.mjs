@@ -90,6 +90,37 @@ export const CONNECTOR_TOOL_ANNOTATIONS = Object.freeze(['read', 'write', 'undec
 // would refuse is a pointer at nothing.
 const VAULT_REFERENCE = /^vault:\/\/tenant\/[a-z0-9][a-z0-9._:-]{0,127}\/[a-z0-9._:-]{1,96}(?:\/[a-z0-9._:-]{1,96})?$/u;
 
+// CONNECTION FAMILIES — entries that are ONE connection
+// underneath (Troy's Microsoft ruling, 2026-11-10): OneDrive,
+// Outlook, Microsoft Teams and SharePoint keep their separate
+// names, and a connection recorded under any one of them IS the
+// Microsoft connection for all four. The store resolves a
+// family's set across all its member entries: one winner row
+// for the family, projected onto every member the seat carries.
+// Kept in step by hand with the catalog's own declarations (the
+// connectionFamily field on the brokered definitions in
+// connector-catalog.mjs) — the VAULT_REFERENCE discipline above:
+// this module deliberately imports no catalog, and the family
+// test pins the two tables equal so they cannot drift silently.
+export const CONNECTOR_CONNECTION_FAMILIES = Object.freeze({
+  microsoft: Object.freeze(['helmian-onedrive', 'helmian-outlook', 'helmian-microsoft-teams', 'helmian-sharepoint']),
+});
+
+/** The connection family an entry belongs to, or null. */
+export function connectionFamilyForEntry(entryId) {
+  const id = String(entryId ?? '');
+  for (const [family, members] of Object.entries(CONNECTOR_CONNECTION_FAMILIES)) {
+    if (members.includes(id)) return family;
+  }
+  return null;
+}
+
+/** The member entry ids of an entry's connection family, or null. */
+export function familyEntryIds(entryId) {
+  const family = connectionFamilyForEntry(entryId);
+  return family ? CONNECTOR_CONNECTION_FAMILIES[family] : null;
+}
+
 // Field names that would mean the caller is handing us a credential VALUE
 // instead of a reference. Refused by name wherever connection-shaped
 // input is accepted — the same discipline as tool-connections.mjs.
@@ -787,7 +818,21 @@ export function createConnectorLibraryStore(pool) {
   // ($2) for shape consistency with the other connection queries;
   // the set read deliberately does NOT filter on it — filtering by
   // seat is exactly the per-seat ownership this design removes.
+  // A CONNECTION FAMILY member widens the read to the whole
+  // family: the family's rows are one connection's rows, whichever
+  // member name each was recorded under, and the same collapse
+  // picks the family's winner.
   async function readSetRows(client, key) {
+    const family = familyEntryIds(key.entryId);
+    if (family) {
+      const r = await client.query(
+        `select * from helmion.connector_connections
+          where tenant_id = current_setting('helmion.tenant_id', true) and person_id = $1 and entry_id = any($3::text[])
+          order by updated_at desc, id desc`,
+        [key.personId, key.seatId, family],
+      );
+      return r.rows ?? [];
+    }
     const r = await client.query(
       `select * from helmion.connector_connections
         where tenant_id = current_setting('helmion.tenant_id', true) and person_id = $1 and entry_id = $3
@@ -821,10 +866,12 @@ export function createConnectorLibraryStore(pool) {
   }
 
   // The exact-row WHERE for a resolved set row: writes land on the
-  // winner's physical row, addressed by ITS OWN seat (provenance),
-  // never by the seat the write happened to arrive on.
+  // winner's physical row, addressed by ITS OWN seat AND entry
+  // (provenance), never by the seat or entry the write happened
+  // to arrive on — for a family connection the physical row can
+  // sit under a sibling member's entry id.
   function setKeyOf(row, key) {
-    return { personId: key.personId, seatId: row.seat_id, entryId: key.entryId };
+    return { personId: key.personId, seatId: row.seat_id, entryId: row.entry_id };
   }
 
   return {
@@ -1212,10 +1259,20 @@ export function createConnectorLibraryStore(pool) {
      * row per entry (the set winner), for exactly the entries this
      * seat's library carries — stocked entries, the person's own
      * custom entries, and (2026-11-10 defect fix) the brokered
-     * entries the set itself holds for the person. Person and
-     * seat are both mandatory — the seat names the library whose
-     * entries bound the answer, never which physical rows may
-     * answer.
+     * entries the set itself holds for the person. A connection
+     * family's winner is projected onto EVERY member entry this
+     * seat carries — the projection names the member it answers
+     * for and, when the physical row sits under a different
+     * member, carries provenanceEntryId naming the member it was
+     * recorded under, so a surface can say the connection is
+     * shared and where it was made. The defect-fix widening feeds
+     * that projection: a family whose set winner's physical
+     * record is a brokered catalog / helmian-native entry is
+     * carried by a live seat as a whole family, so every member
+     * projects there even where the catalog stocks none of them.
+     * Person and seat are both mandatory — the seat names the
+     * library whose entries bound the answer, never which
+     * physical rows may answer.
      */
     async listConnections(tenantId, filter = {}) {
       const personId = requireString(filter.personId ?? '', 'personId');
@@ -1235,8 +1292,18 @@ export function createConnectorLibraryStore(pool) {
           for (const row of await readCustomEntryRowsForPerson(client, personId)) carriedIds.add(row.id);
           // Every physical row this person holds for ANY entry, in
           // this tenant: the candidate set the collapse rules over.
+          // A family entry's rows collapse into ONE winner for the
+          // whole family — the family's connection is a single set
+          // row whichever member it was recorded under.
           const byEntry = new Map();
+          const familyWinners = new Map();
           for (const row of await readConnectionRowsForPerson(client, personId, seatId)) {
+            const family = connectionFamilyForEntry(row.entry_id);
+            if (family) {
+              const prev = familyWinners.get(family);
+              if (!prev || setWinner([prev, row]) === row) familyWinners.set(family, row);
+              continue;
+            }
             const prev = byEntry.get(row.entry_id);
             if (!prev || setWinner([prev, row]) === row) byEntry.set(row.entry_id, row);
           }
@@ -1257,11 +1324,33 @@ export function createConnectorLibraryStore(pool) {
               const entryRow = await readEntry(client, winner.seat_id, entryId);
               if (entryRow && (entryRow.kind === 'catalog' || entryRow.kind === 'helmian-native')) carriedIds.add(entryId);
             }
+            // The same widening, for a family: the set holds the
+            // family's ONE connection, so a brokered family winner
+            // carries the WHOLE family onto the live seat — every
+            // member joins the bound, and the projection below
+            // answers for each of them.
+            for (const [family, winner] of familyWinners) {
+              const members = CONNECTOR_CONNECTION_FAMILIES[family];
+              if (members.every((id) => carriedIds.has(id))) continue;
+              const entryRow = await readEntry(client, winner.seat_id, winner.entry_id);
+              if (entryRow && (entryRow.kind === 'catalog' || entryRow.kind === 'helmian-native')) {
+                for (const id of members) carriedIds.add(id);
+              }
+            }
           }
-          return [...byEntry.values()]
+          const out = [...byEntry.values()]
             .filter((row) => carriedIds.has(row.entry_id))
-            .map(connectionOf)
-            .sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0));
+            .map(connectionOf);
+          for (const [family, row] of familyWinners) {
+            for (const memberId of CONNECTOR_CONNECTION_FAMILIES[family]) {
+              if (!carriedIds.has(memberId)) continue;
+              const projected = connectionOf(row);
+              projected.entryId = memberId;
+              if (memberId !== row.entry_id) projected.provenanceEntryId = row.entry_id;
+              out.push(projected);
+            }
+          }
+          return out.sort((a, b) => (a.entryId < b.entryId ? -1 : a.entryId > b.entryId ? 1 : 0));
         });
       } catch (error) {
         if (isMissingTable(error)) return [];

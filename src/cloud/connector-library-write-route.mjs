@@ -139,11 +139,18 @@ import { createCredentialConnectClient } from './credential-connect.mjs';
 import {
   createConnectorOAuthClient,
   createConnectorOAuthPendingStore,
+  createTenantPairOAuthClient,
   hashOAuthState,
   newOAuthState,
   newPkceVerifier,
   pkceChallenge,
 } from './connector-oauth-pending.mjs';
+import {
+  isTenantPairProvider,
+  resolveTenantPair,
+  storeTenantPair,
+  tenantPairProviderForEntry,
+} from './connector-tenant-pair.mjs';
 import {
   ConnectorOAuthDcrError,
   connectorOAuthKindForEntry,
@@ -416,7 +423,51 @@ export async function consentBoundary(entry, fetchImpl) {
   };
 }
 
+// The needs-tenant-pair note (tenant-pair providers — Box,
+// Salesforce): the honest boundary for a provider whose
+// registration IS the customer's own pair. It names the provider,
+// the console the pair is minted in, and the one step that clears
+// it — deliberately NOT the consent boundary's wording, which
+// would claim a Helmian registration is missing when for these
+// providers no Helmian registration exists to place.
+const TENANT_PAIR_PROVIDER_FACTS = Object.freeze({
+  box: Object.freeze({ displayName: 'Box', consoleName: 'Box Admin Console', mintSteps: 'in the Box Admin Console, your Box admin enables the Box MCP server and creates its integration credentials with Helmian\u2019s callback as the redirect' }),
+  salesforce: Object.freeze({ displayName: 'Salesforce', consoleName: 'Salesforce Setup', mintSteps: 'in Salesforce Setup, your Salesforce admin creates an External Client App with Helmian\u2019s callback as its callback URL' }),
+});
+
+// The Salesforce pair's endpoint completion: Salesforce's MCP
+// endpoint is per org — a fixed host template plus the org's
+// server path (Salesforce's own example shape is
+// 'platform/sobject-reads'). The path is validated as a plain
+// path (no scheme, no host, no dots, no trailing slash) and
+// composed here, at the store, so the pair record carries the
+// COMPLETE endpoint and no later road re-derives it. Returns
+// null when the path is absent or not a path.
+const SALESFORCE_MCP_BASE = 'https://api.salesforce.com/platform/mcp/v1/';
+function salesforceEndpointFromBody(body) {
+  const raw = typeof body.serverPath === 'string' ? body.serverPath.trim() : '';
+  if (!raw) return null;
+  if (!/^[a-z0-9][a-z0-9/_-]*$/i.test(raw) || raw.includes('..') || raw.endsWith('/')) return null;
+  return `${SALESFORCE_MCP_BASE}${raw}`;
+}
+
+function tenantPairNeededNote(entry, provider) {
+  const facts = TENANT_PAIR_PROVIDER_FACTS[provider] ?? { displayName: provider, consoleName: 'provider console', mintSteps: 'your admin creates the client pair there with Helmian\u2019s callback' };
+  return `${entry.name} connects under your own ${facts.displayName} client pair, and no pair is stored for this workspace yet: ${facts.mintSteps}, and the workspace owner or an admin adds the pair in Helmian with the Client pair action on this row. Nothing was connected.`;
+}
+
 const callbackPage = (title, line) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title}</title><meta http-equiv="refresh" content="2;url=/app/#integrations"></head><body style="font-family:system-ui,sans-serif;background:#0B1120;color:#F8FAFC;display:grid;place-items:center;min-height:100vh;margin:0"><main style="text-align:center;max-width:34rem;padding:2rem"><h1 style="font-size:1.25rem">${title}</h1><p style="color:#94A3B8">${line}</p><p><a href="/app/#integrations" style="color:#38BDF8">Back to Helmian</a></p></main></body></html>`;
+
+// The Microsoft admin-consent page (REGISTRATION-PACK §6): when
+// the organization's Microsoft admin has not approved Helmian,
+// the sign-in answers with a consent error and NO ONE in that
+// organization can connect until the admin approves — the honest
+// page names that plainly and carries the approval road itself:
+// Microsoft's own admin-consent link for Helmian's registration,
+// with Helmian's callback as its return address (the redirect
+// the registration carries). No auto-refresh here — the reader
+// needs the link, not a timer.
+const microsoftConsentPage = (adminConsentUrl) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Microsoft needs your admin\u2019s approval</title></head><body style="font-family:system-ui,sans-serif;background:#0B1120;color:#F8FAFC;display:grid;place-items:center;min-height:100vh;margin:0"><main style="text-align:center;max-width:34rem;padding:2rem"><h1 style="font-size:1.25rem">Microsoft needs your admin\u2019s approval</h1><p style="color:#94A3B8">Your organization\u2019s Microsoft admin has to approve Helmian before anyone there can connect OneDrive, Outlook, Microsoft Teams or SharePoint. A normal sign-in cannot finish this step, and nothing was connected.</p><p style="color:#94A3B8">Send your Microsoft admin this link — it opens Microsoft\u2019s own approval page for Helmian:</p><p><a href="${adminConsentUrl}" style="color:#38BDF8">Approve Helmian for your organization</a></p><p style="color:#94A3B8">Once your admin has approved Helmian, start the connect again from Helmian.</p><p><a href="/app/#integrations" style="color:#38BDF8">Back to Helmian</a></p></main></body></html>`;
 
 export function createConnectorLibraryWriteHandler({
   store: injectedStore,
@@ -511,7 +562,30 @@ export function createConnectorLibraryWriteHandler({
         const code = requestUrl.searchParams.get('code');
         const state = requestUrl.searchParams.get('state');
         const providerError = requestUrl.searchParams.get('error');
-        if (providerError) return fail('The sign-in answered with an error, so nothing was connected. Start the connect again from Helmian.');
+        if (providerError) {
+          // MICROSOFT ADMIN CONSENT (REGISTRATION-PACK §6): a
+          // consent error on a Microsoft handshake means the
+          // organization's admin has not approved Helmian yet —
+          // the answer is the approval road itself, not the
+          // generic failure. The pending row is PEEKED, never
+          // taken, to learn the provider: only this road consumes
+          // it (the handshake is dead either way); every other
+          // provider error keeps the standing behaviour exactly —
+          // the generic page below, the row untouched.
+          const errorState = requestUrl.searchParams.get('state');
+          const errorPendingStore = errorState ? resolvePending() : null;
+          const peeked = errorPendingStore && typeof errorPendingStore.peek === 'function'
+            ? await errorPendingStore.peek(tenantId, hashOAuthState(errorState)).catch(() => null)
+            : null;
+          const errorText = `${providerError} ${requestUrl.searchParams.get('error_description') ?? ''}`;
+          if (peeked?.provider === 'microsoft' && /consent|AADSTS65001/i.test(errorText)) {
+            await errorPendingStore.take(tenantId, hashOAuthState(errorState)).catch(() => null);
+            const adminConsentUrl = `https://login.microsoftonline.com/organizations/adminconsent?client_id=${encodeURIComponent(String(peeked.clientId ?? ''))}&redirect_uri=${encodeURIComponent(`https://helmian.cloud${CONNECTOR_OAUTH_CALLBACK_PATH}`)}`;
+            send(response, 200, microsoftConsentPage(adminConsentUrl), 'text/html; charset=utf-8');
+            return true;
+          }
+          return fail('The sign-in answered with an error, so nothing was connected. Start the connect again from Helmian.');
+        }
         if (!code || !state) return fail('The sign-in sent back no code, so nothing was connected. Start the connect again from Helmian.');
         const pendingStore = resolvePending();
         const pending = pendingStore ? await pendingStore.take(tenantId, hashOAuthState(state)) : null;
@@ -523,7 +597,22 @@ export function createConnectorLibraryWriteHandler({
         // A row no client answers for gets the same honest answer
         // as an expired link: Helmian cannot finish what it holds
         // no client for.
-        const oauthClient = resolveCallbackOAuthClient(pending);
+        let oauthClient = resolveCallbackOAuthClient(pending);
+        if (!oauthClient && pending && isTenantPairProvider(pending.provider)) {
+          // TENANT PAIR: the registry holds no client for this
+          // provider by design — the exchange client is built
+          // from the tenant's stored pair, and it must be the
+          // pair the handshake STARTED under (the pending row's
+          // client id): a pair replaced mid-handshake fails
+          // honestly here rather than exchanging a code under a
+          // different client than the one that asked for it.
+          const pairCredentials = resolveCredentials();
+          const pair = pairCredentials
+            ? await resolveTenantPair(pairCredentials, { tenantId, actorContext, provider: pending.provider, reasonClass: 'browser_sign_in' })
+            : null;
+          const pairClient = pair ? createTenantPairOAuthClient(pending.provider, pair, { fetchImpl }) : null;
+          if (pairClient && String(pairClient.clientId) === String(pending.clientId ?? '')) oauthClient = pairClient;
+        }
         if (!oauthClient) return fail('This sign-in link has expired or was never started here. Start the connect again from Helmian.');
         const providerName = oauthClient.displayName || pending.provider;
         const credentials = resolveCredentials();
@@ -630,7 +719,7 @@ export function createConnectorLibraryWriteHandler({
         if (connection.state !== 'connected') {
           throw failure(409, 'this connector needs reconnecting before its starters can be listed', { code: 'NOT_CONNECTED' });
         }
-        if (effectiveAuthMode(entry) === 'none') return { connection, accessToken: null };
+        if (effectiveAuthMode(entry) === 'none') return { connection, accessToken: null, endpointUrl: entry.mcpEndpointUrl ?? null };
         if (!connection.accessTokenRef) {
           throw failure(409, 'Helmian does not hold a sign-in token for this connector, so its starter prompts cannot be listed here yet', { code: 'PROMPTS_NOT_HELD' });
         }
@@ -648,7 +737,23 @@ export function createConnectorLibraryWriteHandler({
           ? (typeof cred.accessToken === 'string' && cred.accessToken ? cred.accessToken : (typeof cred.apiKey === 'string' && cred.apiKey ? cred.apiKey : null))
           : (typeof cred === 'string' && cred ? cred : null);
         if (!accessToken) throw failure(502, 'the stored sign-in could not be read, so the starters could not be listed', { code: 'CREDENTIAL_NOT_RESOLVABLE' });
-        return { connection, accessToken };
+        // TENANT PAIR endpoint (connector-tenant-pair.mjs): for a
+        // tenant-pair entry the pair carries the per-customer
+        // endpoint (Salesforce: the org's own MCP server address);
+        // the catalog names only the provider's template, so the
+        // prompts call must run against the pair's address. Only
+        // the endpoint is read from the pair here — the pair's
+        // values never leave this handler — and the resolve rides
+        // the browser-session reason class, the same class as the
+        // pair-status read: a person's own road, with the full
+        // actor context and the vault's membership check.
+        let endpointUrl = entry.mcpEndpointUrl ?? null;
+        const pairProvider = tenantPairProviderForEntry(entry);
+        if (pairProvider) {
+          const pair = await resolveTenantPair(credentials, { tenantId, actorContext, provider: pairProvider, reasonClass: 'browser_sign_in' });
+          if (pair?.mcpEndpointUrl) endpointUrl = pair.mcpEndpointUrl;
+        }
+        return { connection, accessToken, endpointUrl };
       };
 
       // ------------------------------------------- the custom gate
@@ -848,7 +953,32 @@ export function createConnectorLibraryWriteHandler({
           }
         }
         if (oauthKind?.kind === 'fixed') {
-          const client = resolveOAuthClient(oauthKind.provider);
+          let client = resolveOAuthClient(oauthKind.provider);
+          if (!client && isTenantPairProvider(oauthKind.provider)) {
+            // TENANT PAIR (connector-tenant-pair.mjs): this
+            // provider's client is built from the TENANT's stored
+            // pair, never env — the registry answers null for it
+            // by design. No pair stored → the needs-tenant-pair
+            // answer (NOT the consent boundary: for these
+            // providers the registration IS the pair, so the
+            // boundary's missing-registration wording would be
+            // the wrong truth). Pair present → the pair-built
+            // client runs the normal fixed start below, and the
+            // pending row names the pair's client id, which the
+            // callback holds the exchange to.
+            const pairCredentials = resolveCredentials();
+            const pair = pairCredentials
+              ? await resolveTenantPair(pairCredentials, { tenantId, actorContext, provider: oauthKind.provider, reasonClass: 'browser_sign_in' })
+              : null;
+            client = pair ? createTenantPairOAuthClient(oauthKind.provider, pair, { fetchImpl }) : null;
+            if (!client) {
+              sendJson(200, {
+                status: 'needs-tenant-pair', seatId, entryId, provider: oauthKind.provider,
+                note: tenantPairNeededNote(entry, oauthKind.provider),
+              });
+              return true;
+            }
+          }
           if (client) {
             const pendingStore = resolvePending();
             const state = newOAuthState();
@@ -885,6 +1015,72 @@ export function createConnectorLibraryWriteHandler({
           }
         }
         sendJson(200, await consentBoundary(entry, fetchImpl));
+        return true;
+      }
+
+      // ------------------------------------------ tenant pairs
+      // The pair actions (tenant-pair providers — Box,
+      // Salesforce). The pair is the TENANT's: these actions name
+      // a provider, never a seat, an entry, or a person, and both
+      // take the workspace owner or an admin (the pair is a
+      // workspace-level credential). 'tenant-pair' is the ONE
+      // action that receives pair values — like connect/header's
+      // key, the values go straight to the credential service and
+      // are never written to a library record, never echoed in an
+      // answer. A replacement store routes through the vault's
+      // Guard replacement gate; a refusal answers honestly with
+      // the gate's own standing, in plain words.
+      if (action === 'tenant-pair/status') {
+        refuseCredentialValues(body);
+        ownerAct();
+        const provider = String(body.provider ?? '').trim().toLowerCase();
+        if (!isTenantPairProvider(provider)) throw failure(400, 'that provider does not take a tenant client pair');
+        const credentials = resolveCredentials();
+        if (!credentials) throw failure(503, 'Helmian\u2019s credential storage is not switched on, so the pair cannot be checked', { code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' });
+        // The resolve happens server-side only: the answer is a
+        // boolean. The pair's values never leave this hop.
+        const pair = await resolveTenantPair(credentials, { tenantId, actorContext, provider, reasonClass: 'browser_sign_in' });
+        sendJson(200, { status: 'pair-status', provider, pairConfigured: Boolean(pair) });
+        return true;
+      }
+
+      if (action === 'tenant-pair') {
+        refuseCredentialValues(body);
+        ownerAct();
+        const provider = String(body.provider ?? '').trim().toLowerCase();
+        if (!isTenantPairProvider(provider)) throw failure(400, 'that provider does not take a tenant client pair');
+        const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+        const clientSecret = typeof body.clientSecret === 'string' ? body.clientSecret : '';
+        if (!clientId || !clientSecret) throw failure(400, 'the client pair itself is required on this one action — it is stored in the credential service and never written to the library record');
+        if (clientId.length > 512 || clientSecret.length > 8192) throw failure(400, 'the client pair is longer than a provider pair can be');
+        // The pair's endpoint completion (Salesforce): the org's
+        // MCP server path, composed here into the complete
+        // endpoint the pair record carries. Box pairs carry none.
+        let mcpEndpointUrl = null;
+        if (provider === 'salesforce') {
+          mcpEndpointUrl = salesforceEndpointFromBody(body);
+          if (!mcpEndpointUrl) throw failure(400, 'the Salesforce MCP server path is part of this pair — it names which of the org\u2019s MCP servers the connection runs against (Salesforce Setup shows it under MCP Servers)');
+        } else if (body.serverPath != null && String(body.serverPath).trim() !== '') {
+          throw failure(400, 'this provider\u2019s pair carries no server path — its endpoint is the provider\u2019s own');
+        }
+        const credentials = resolveCredentials();
+        if (!credentials) throw failure(503, 'Helmian\u2019s credential storage is not switched on, so the pair cannot be kept', { code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' });
+        const stored = await storeTenantPair(credentials, {
+          tenantId, actorContext, provider, clientId, clientSecret, mcpEndpointUrl,
+        });
+        if (!stored?.accepted) {
+          // The vault refused — most often the Guard replacement
+          // gate on a pair that already exists. Say which, in
+          // plain words; the stored pair (if any) is untouched.
+          if (stored?.status === 'guard_approval_required') {
+            throw failure(409, 'a client pair is already stored for this workspace, and replacing it needs a Guard approval first — the new pair was not stored', { code: 'GUARD_APPROVAL_REQUIRED' });
+          }
+          if (stored?.status === 'guard_gate_not_configured') {
+            throw failure(409, 'a client pair is already stored for this workspace, and replacing it needs the Guard approval road, which is not configured — the new pair was not stored', { code: 'GUARD_GATE_NOT_CONFIGURED' });
+          }
+          throw failure(502, 'the credential service would not keep the pair, so nothing was stored', { code: 'PAIR_NOT_STORED' });
+        }
+        sendJson(200, { status: 'pair-stored', provider, pairConfigured: true });
         return true;
       }
 
@@ -1009,10 +1205,10 @@ export function createConnectorLibraryWriteHandler({
         refuseCredentialValues(body);
         const entry = await store.getEntry(tenantId, seatId, entryId, { personId });
         if (!entry) throw failure(404, 'connector entry not found in this seat\u2019s library');
-        const { accessToken } = await brokeredToken(entry);
+        const { accessToken, endpointUrl } = await brokeredToken(entry);
         const client = resolvePrompts();
         if (action === 'prompts') {
-          const listed = await client.listPrompts({ endpoint: entry.mcpEndpointUrl, accessToken });
+          const listed = await client.listPrompts({ endpoint: endpointUrl, accessToken });
           if (!listed.supported) {
             sendJson(200, { status: 'ok', supported: false, prompts: [], note: 'This connector\u2019s server publishes no starter prompts.' });
             return true;
@@ -1029,7 +1225,7 @@ export function createConnectorLibraryWriteHandler({
           if (typeof v !== 'string') throw failure(400, 'prompt arguments are text — they seed a draft, nothing more');
           args[k] = v.slice(0, 2000);
         }
-        const rendered = await client.getPrompt({ endpoint: entry.mcpEndpointUrl, accessToken, name, args });
+        const rendered = await client.getPrompt({ endpoint: endpointUrl, accessToken, name, args });
         sendJson(200, { status: 'ok', name, text: renderPromptText(rendered) });
         return true;
       }

@@ -166,7 +166,7 @@ test('catalog: the long tail is stocked brokered on claude, chatgpt, grok — an
       assert.equal(ids.filter((id) => id === fam.entryId).length, 1, `${seatId}: exactly one ${fam.entryId}`);
     }
   }
-  assert.equal(CONNECTOR_CATALOG.length, 116, '98 + the four long-tail entries on three seats each (+12) + the fixed-tail bite: Canva/Dropbox on three seats each (+6)');
+  assert.equal(CONNECTOR_CATALOG.length, 134, '98 + the four long-tail entries on three seats each (+12) + the fixed-tail bite: Canva/Dropbox on three seats each (+6) + the Microsoft bite: OneDrive/Outlook/Microsoft Teams/SharePoint on three seats each (+12) + the Box bite: Box on three seats (+3) + the Salesforce bite: Salesforce on three seats (+3)');
 });
 
 test('catalog: the vendor mirrors stay as data beside the brokered rows', () => {

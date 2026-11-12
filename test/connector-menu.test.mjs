@@ -91,7 +91,7 @@ const SHELF = 'registry-weather';
 // Google Drive, and the DCR long-tail bite added Meltwater, S&P
 // Global, Idiolect and Gamma — each in the order the catalog lists
 // them.
-const BROKERED = 'helmian-vercel,helmian-slack,helmian-asana,helmian-hubspot,helmian-gmail,helmian-google-calendar,helmian-google-drive,helmian-meltwater,helmian-sp-global,helmian-idiolect,helmian-gamma,helmian-canva,helmian-dropbox';
+const BROKERED = 'helmian-vercel,helmian-slack,helmian-asana,helmian-hubspot,helmian-gmail,helmian-google-calendar,helmian-google-drive,helmian-meltwater,helmian-sp-global,helmian-idiolect,helmian-gamma,helmian-canva,helmian-dropbox,helmian-onedrive,helmian-outlook,helmian-microsoft-teams,helmian-sharepoint,helmian-box,helmian-salesforce';
 const PLAIN_LIST = [`attach:Add files`, `live:Connectors:${NATIVES},${SHELF}`, 'manage:Manage connectors:integrations'];
 
 const EXPECTED = {

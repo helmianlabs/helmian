@@ -94,7 +94,7 @@
 // plugins) or deleted (the vendor skills mirror, Mistral's agents;
 // M7 re-points Mistral's at Helmian's custom agents). A feed-bound
 // group names no connector, so it can never invent one.
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=30a56f991a6244c2';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=777d1fbb14bdc0ea';
 
 export const MENU_ITEM_TYPES = Object.freeze([
   'attach', 'capability', 'action', 'projects', 'live-toggle-group', 'mirror-group', 'submenu', 'manage-link',
@@ -140,7 +140,7 @@ const REGISTRY_SHELF = ['registry-weather'];
 // fixed tail (Canva, Dropbox) — riding
 // the live groups of the seats their catalog entries stock
 // (claude, chatgpt, grok).
-const BROKERED_SERVERS = ['helmian-vercel', 'helmian-slack', 'helmian-asana', 'helmian-hubspot', 'helmian-gmail', 'helmian-google-calendar', 'helmian-google-drive', 'helmian-meltwater', 'helmian-sp-global', 'helmian-idiolect', 'helmian-gamma', 'helmian-canva', 'helmian-dropbox'];
+const BROKERED_SERVERS = ['helmian-vercel', 'helmian-slack', 'helmian-asana', 'helmian-hubspot', 'helmian-gmail', 'helmian-google-calendar', 'helmian-google-drive', 'helmian-meltwater', 'helmian-sp-global', 'helmian-idiolect', 'helmian-gamma', 'helmian-canva', 'helmian-dropbox', 'helmian-onedrive', 'helmian-outlook', 'helmian-microsoft-teams', 'helmian-sharepoint', 'helmian-box', 'helmian-salesforce'];
 const manageInHelmian = () => manageLink({ label: 'Manage connectors', target: 'integrations' });
 // The plain Helmian list (REPORT §3.6–§3.10 + §3.11): seats with no
 // vendor furniture get attach, the live toggles, and the manager —

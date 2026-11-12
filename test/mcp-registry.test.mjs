@@ -306,8 +306,17 @@ test('catalog: the picks stock the seats the placement law names, as community H
   // connector-dcr-longtail.test.mjs. The fixed-tail bite adds
   // Canva and Dropbox to Source 4, one brokered entry on each of
   // claude, chatgpt, grok (+6): 116 in all. Those entries are
-  // pinned in connector-fixed-tail.test.mjs.
-  assert.equal(CONNECTOR_CATALOG.length, 116);
+  // pinned in connector-fixed-tail.test.mjs. The Microsoft bite
+  // adds OneDrive, Outlook, Microsoft Teams and SharePoint to
+  // Source 4, one brokered entry on each of claude, chatgpt,
+  // grok (+12): 128 in all. Those entries are pinned in
+  // connector-microsoft-family.test.mjs. The Box bite adds Box
+  // to Source 4, one brokered entry on each of claude, chatgpt,
+  // grok (+3): 131 in all. That entry is pinned in
+  // connector-box-tenant-pair.test.mjs. The Salesforce bite adds
+  // Salesforce to Source 4 the same way (+3): 134 in all. That
+  // entry is pinned in connector-salesforce-tenant-pair.test.mjs.
+  assert.equal(CONNECTOR_CATALOG.length, 134);
   for (const seatId of LIVE_SEATS) {
     const defs = catalogEntriesForSeat(seatId);
     for (const pick of registryPicksForSeat(seatId)) {

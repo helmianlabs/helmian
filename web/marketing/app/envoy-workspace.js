@@ -1,19 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=30a56f991a6244c2';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=30a56f991a6244c2';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=30a56f991a6244c2';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=30a56f991a6244c2';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=30a56f991a6244c2';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=30a56f991a6244c2';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=30a56f991a6244c2';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=30a56f991a6244c2';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=30a56f991a6244c2';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=30a56f991a6244c2';
-import { createConnectFields } from './connect-fields.mjs?v=30a56f991a6244c2';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=30a56f991a6244c2';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=30a56f991a6244c2';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=777d1fbb14bdc0ea';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=777d1fbb14bdc0ea';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=777d1fbb14bdc0ea';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=777d1fbb14bdc0ea';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=777d1fbb14bdc0ea';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=777d1fbb14bdc0ea';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=777d1fbb14bdc0ea';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=777d1fbb14bdc0ea';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=777d1fbb14bdc0ea';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=777d1fbb14bdc0ea';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=777d1fbb14bdc0ea';
+import { createConnectFields } from './connect-fields.mjs?v=777d1fbb14bdc0ea';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=777d1fbb14bdc0ea';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=777d1fbb14bdc0ea';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -866,7 +867,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -2463,6 +2464,7 @@ export function resetLibrarySession(ctx) {
   ws.libraryPreloadStarted = false;
   ws.toolAccess = { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' };
   ws.keyForm = { openFor: null, model: null, saving: false, error: '', known: {} };
+  ws.tenantPairForm = { openFor: null, model: null, row: null, saving: false, error: '', note: '' };
   ws.customForm = { open: false, seatId: null, model: null, saving: false, error: '', created: null };
   ws.customRemove = { confirmFor: null, model: null, removing: false, error: '' };
   ws.skills = { list: null, loaded: false, loading: null };
@@ -2533,16 +2535,27 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     // neither source carries nothing extra: the panel invents no
     // key-kind it was not told.
     const key = keyEntryKey(row.seatId, row.entryId);
-    if (!key || !ws.keyForm.known[key]) return withRemove(toggleRow);
-    const formOpen = ws.keyForm.openFor === key;
-    const replaceRow = h('div', { class: 'ew-picker-row ew-lib-row' },
-      h('span', { class: 'ew-lib-text' },
-        h('span', { class: 'ew-lib-name' }, 'Key or token'),
-        h('span', { class: 'ew-lib-line' }, row.stateLabel)),
-      h('button', { type: 'button', class: 'ew-lib-connect', title: `Replace the key for ${row.name}`, onclick: () => { openKeyForm(which, row, { connected: true }); renderPicker(which); } }, 'Replace key'));
-    return withRemove(formOpen
-      ? h('div', { class: 'ew-picker-group' }, toggleRow, replaceRow, keyFormNode(which, row))
-      : h('div', { class: 'ew-picker-group' }, toggleRow, replaceRow));
+    // Rows that stand under the switch: the key form's Replace
+    // row when the panel knows the entry takes a key, and the
+    // Client pair row when the entry runs on the tenant's pair
+    // (Box, Salesforce — the pair is the workspace's, so the row
+    // stands on every agent's copy of the entry). Each open form
+    // expands under its own action row.
+    const extras = [];
+    if (key && ws.keyForm.known[key]) {
+      extras.push(h('div', { class: 'ew-picker-row ew-lib-row' },
+        h('span', { class: 'ew-lib-text' },
+          h('span', { class: 'ew-lib-name' }, 'Key or token'),
+          h('span', { class: 'ew-lib-line' }, row.stateLabel)),
+        h('button', { type: 'button', class: 'ew-lib-connect', title: `Replace the key for ${row.name}`, onclick: () => { openKeyForm(which, row, { connected: true }); renderPicker(which); } }, 'Replace key')));
+      if (ws.keyForm.openFor === key) extras.push(keyFormNode(which, row));
+    }
+    if (row.tenantPair) {
+      extras.push(pairActionRow(which, row));
+      if (ws.tenantPairForm.openFor === key && ws.tenantPairForm.model) extras.push(pairFormNode(which, row));
+    }
+    if (!extras.length) return withRemove(toggleRow);
+    return withRemove(h('div', { class: 'ew-picker-group' }, toggleRow, ...extras));
   }
   if (row.connectable) {
     // The Connect button the owner ordered on this panel
@@ -2555,6 +2568,17 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     // expands under its own row in the panel (keyFormNode below).
     if (ws.keyForm.openFor === keyEntryKey(row.seatId, row.entryId) && ws.keyForm.model) {
       return withRemove(h('div', { class: 'ew-picker-group' }, connectRow, keyFormNode(which, row)));
+    }
+    // A tenant-pair row carries its Client pair row beside
+    // Connect, and the pair form — opened by the row action or
+    // by the connect start's needs-tenant-pair answer — expands
+    // under the row the same way.
+    if (row.tenantPair) {
+      const nodes = [connectRow, pairActionRow(which, row)];
+      if (ws.tenantPairForm.openFor === keyEntryKey(row.seatId, row.entryId) && ws.tenantPairForm.model) {
+        nodes.push(pairFormNode(which, row));
+      }
+      return withRemove(h('div', { class: 'ew-picker-group' }, ...nodes));
     }
     // A refused connect start's words paint under its own row in
     // the panel's note style (startPanelConnect records them on
@@ -2679,6 +2703,15 @@ async function startPanelConnect(which, row) {
     renderPicker(which);
     return;
   }
+  if (isNeedsTenantPairAnswer(out)) {
+    // No pair is stored for this workspace yet: the pair form
+    // opens under the row, carrying the answer's own boundary
+    // words — the provider, its console, and the step — as its
+    // first line, so the admin reads exactly what the road said.
+    openPairForm(which, row, { note: out.note ?? '' });
+    renderPicker(which);
+    return;
+  }
   ws.ctx.toast(`${row.name}: ${out?.status ?? 'connect started'}.`);
 }
 
@@ -2789,6 +2822,118 @@ function keyFormNode(which, row) {
     }, 'Disconnect'));
   }
   children.push(h('div', { class: 'ew-gh-bar' }, ...buttons));
+  return h('div', { class: 'ew-picker-group ew-key-form' }, ...children);
+}
+
+// The tenant-pair form (Box, Salesforce): an entry whose OAuth
+// road runs on the TENANT's stored client pair carries a Client
+// pair row (pairActionRow); the form it opens — and the form the
+// connect start's needs-tenant-pair answer opens — is rendered
+// from connector-tenant-pair-form.mjs's model, the same expand-
+// in-place pattern as the key form. The pair is the workspace's:
+// the form names the provider, never a seat or a person, and the
+// workspace owner or an admin is the only hand the server's pair
+// roads accept — a person without that standing reads the
+// server's refusal in the form, which is the gate working, not a
+// panel rule. The secret field is write-only: it starts empty
+// every time the form is drawn and no stored value is ever read
+// back into it; whether a pair is stored comes from the status
+// road's answer when the form opens. After a successful store
+// the face re-posts the connect start for the row the form was
+// opened from, so the sign-in door the pair unlocked opens in
+// place.
+function pairActionRow(which, row) {
+  return h('div', { class: 'ew-picker-row ew-lib-row' },
+    h('span', { class: 'ew-lib-text' },
+      h('span', { class: 'ew-lib-name' }, 'Client pair'),
+      h('span', { class: 'ew-lib-line' }, `Your workspace\u2019s ${row.name} pair`)),
+    h('button', { type: 'button', class: 'ew-lib-connect', title: `Enter or replace the ${row.name} client pair for your workspace`, onclick: () => { openPairForm(which, row); renderPicker(which); } }, 'Client pair'));
+}
+function openPairForm(which, row, { note = '' } = {}) {
+  const pf = ws.tenantPairForm;
+  const key = keyEntryKey(row.seatId, row.entryId);
+  if (!key || !row.oauthProvider) return;
+  pf.openFor = key;
+  pf.row = { seatId: row.seatId, entryId: row.entryId, name: row.name, oauthProvider: row.oauthProvider, tenantPair: true, state: row.state };
+  pf.model = pairFormModel({ provider: row.oauthProvider, name: row.name, pairConfigured: null });
+  pf.error = '';
+  pf.note = note || '';
+  if (!pf.model) return;
+  // Whether a pair is already stored is the status road's fact:
+  // the form opens in its checking state and the answer fills it.
+  // A refusal (the caller is not the workspace owner or an admin)
+  // lands as the form's error line, in the server's own words.
+  void (async () => {
+    const result = await fetchPairStatus({
+      post: (path, body) => ws.ctx.post(path, body),
+      model: pf.model,
+    });
+    if (ws.tenantPairForm !== pf) return;
+    if (result.ok) pf.model = result.model;
+    else if (!pf.error) pf.error = result.error;
+    if (ws.pickerFor === which) renderPicker(which);
+  })();
+}
+async function savePairForm(which, inputs) {
+  const pf = ws.tenantPairForm;
+  if (!pf.model || pf.saving) return;
+  pf.saving = true;
+  const result = await submitPairForm({
+    post: (path, body) => ws.ctx.post(path, body),
+    model: pf.model,
+    values: {
+      clientId: inputs.clientId?.value ?? '',
+      clientSecret: inputs.clientSecret?.value ?? '',
+      serverPath: inputs.serverPath?.value ?? '',
+    },
+  });
+  pf.saving = false;
+  if (result.ok) {
+    const name = result.model.name;
+    const row = pf.row;
+    pf.model = result.model;
+    pf.error = '';
+    ws.ctx.toast(`The ${name} pair is stored for your workspace.`, 'ok');
+    // The pair unlocked the sign-in: re-post the connect start
+    // for the row the form was opened from, and let its answer
+    // land in place (the provider's own door, in the connect
+    // handler's normal way).
+    if (row) {
+      pf.openFor = null;
+      pf.model = null;
+      pf.row = null;
+      await startPanelConnect(which, row);
+    }
+  } else {
+    pf.error = result.error;
+  }
+  if (ws.pickerFor === which) renderPicker(which);
+}
+function pairFormNode(which, row) {
+  const pf = ws.tenantPairForm;
+  const model = pf.model;
+  if (!model) return h('p', { class: 'ew-note' }, '');
+  const children = [];
+  if (pf.note) children.push(h('p', { class: 'ew-note' }, pf.note));
+  children.push(h('p', { class: 'ew-note' }, model.intro));
+  children.push(h('p', { class: 'ew-note' }, model.stateLine));
+  children.push(h('p', { class: 'ew-note' }, `Redirect URI for the console: ${model.callbackUrl}`));
+  const inputs = {};
+  for (const field of model.fields) {
+    const input = h('input', {
+      type: field.type, class: 'ew-gh-path', placeholder: field.placeholder,
+      autocomplete: field.autocomplete, 'aria-label': field.label,
+      ...(field.maxLength ? { maxLength: field.maxLength } : {}),
+    });
+    inputs[field.name] = input;
+    children.push(input);
+  }
+  if (pf.error) children.push(h('p', { class: 'ew-note' }, pf.error));
+  children.push(h('div', { class: 'ew-gh-bar' }, h('button', {
+    type: 'button', class: 'ew-lib-connect', disabled: pf.saving,
+    title: `Store the ${model.name} client pair for your workspace`,
+    onclick: () => { void savePairForm(which, inputs); },
+  }, pf.saving ? model.button.pendingLabel : model.button.label)));
   return h('div', { class: 'ew-picker-group ew-key-form' }, ...children);
 }
 
@@ -5106,7 +5251,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=30a56f991a6244c2');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=777d1fbb14bdc0ea');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
