@@ -277,6 +277,7 @@
   display: none !important;
 }
 
+.helmion-guard-health-alert-details { margin-top: 0 !important; }
 .helmion-guard-toast-details,
 .helmion-guard-health-alert-details {
   all: initial !important;
@@ -355,56 +356,78 @@
   cursor: pointer !important;
 }
 
-/* A real protection failure: visible, bounded, and never page-covering. */
+/* A real protection problem: a SMALL chip in the bottom-left corner, never
+   over the chat. Dismissible (stays dismissed for this site for the rest of the
+   browser session). The detail lives in the toolbar popup. */
 .helmion-guard-health-alert {
   all: initial !important;
-  display: block !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 6px !important;
   box-sizing: border-box !important;
   position: fixed !important;
-  top: 16px !important;
-  left: 16px !important;
-  z-index: 2147483647 !important;
-  width: min(300px, calc(100vw - 32px)) !important;
-  max-width: calc(100vw - 32px) !important;
-  max-height: min(260px, calc(100vh - 32px)) !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: 12px !important;
+  left: 12px !important;
+  z-index: 2147483644 !important;
+  width: auto !important;
+  max-width: min(300px, calc(100vw - 24px)) !important;
+  max-height: min(160px, calc(100vh - 24px)) !important;
   overflow: auto !important;
-  padding: 11px 13px !important;
-  background: #7a1109 !important;
-  color: #ffffff !important;
-  border: 2px solid #ffd166 !important;
-  border-radius: 8px !important;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3) !important;
+  padding: 4px 6px 4px 10px !important;
+  background: #fff4e5 !important;
+  color: #3d2a00 !important;
+  border: 1px solid #b26a00 !important;
+  border-radius: 999px !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
   font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
   font-size: 13px !important;
-  line-height: 1.4 !important;
+  line-height: 1.3 !important;
 }
+.helmion-guard-health-alert[data-open="true"] { border-radius: 10px !important; }
+.helmion-guard-health-alert:not([data-open="true"]) { flex-wrap: nowrap !important; white-space: nowrap !important; }
+/* Red only for a confirmed failure (a check ran and gave the wrong answer). */
+.helmion-guard-health-alert.helmion-guard-health-danger { background: #7a1109 !important; border-color: #ffd166 !important; }
+.helmion-guard-health-alert.helmion-guard-health-danger .helmion-guard-health-alert-title,
+.helmion-guard-health-alert.helmion-guard-health-danger .helmion-guard-health-alert-detail,
+.helmion-guard-health-alert.helmion-guard-health-danger .helmion-guard-health-alert-close,
+.helmion-guard-health-alert.helmion-guard-health-danger .helmion-guard-health-alert-details { color: #ffffff !important; }
 
 .helmion-guard-health-alert-title {
-  display: block !important;
-  font-size: 14px !important;
-  font-weight: 800 !important;
-  color: #ffd166 !important;
+  display: inline !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #3d2a00 !important;
   font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
 }
 
-.helmion-guard-health-alert-message {
-  display: block !important;
-  margin-top: 4px !important;
-  color: #ffffff !important;
-  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
-}
-
+.helmion-guard-health-alert-message,
 .helmion-guard-health-alert-detail {
   display: block !important;
-  margin-top: 7px !important;
-  color: #ffd9d5 !important;
-  font-size: 12px !important;
+  flex-basis: 100% !important;
+  color: #3d2a00 !important;
+  font-size: 13px !important;
   font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
   word-break: break-word !important;
 }
 
 .helmion-guard-health-alert-detail[hidden] {
   display: none !important;
+}
+
+.helmion-guard-health-alert-close {
+  all: initial !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  border-radius: 999px !important;
+  color: #3d2a00 !important;
+  font: 700 15px/1 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  cursor: pointer !important;
 }
 
 @media (max-width: 660px), (max-height: 420px) {
@@ -426,13 +449,9 @@
   }
 
   .helmion-guard-health-alert {
-    top: auto !important;
-    right: 8px !important;
     bottom: 8px !important;
-    left: auto !important;
-    width: min(280px, calc(100vw - 16px)) !important;
+    left: 8px !important;
     max-width: calc(100vw - 16px) !important;
-    max-height: calc(50vh - 12px) !important;
   }
 }
 
@@ -445,41 +464,52 @@
   display: block !important;
   box-sizing: border-box !important;
   position: fixed !important;
-  top: 16px !important;
+  /* Bottom-right, where the approval pill lives: Guard's questions are in one place. */
+  bottom: 16px !important;
   right: 16px !important;
+  top: auto !important;
+  left: auto !important;
   z-index: 2147483646 !important;
-  width: min(340px, calc(100vw - 32px)) !important;
+  width: min(440px, calc(100vw - 32px)) !important;
   max-width: calc(100vw - 32px) !important;
-  max-height: min(300px, calc(100vh - 32px)) !important;
+  max-height: calc(100vh - 32px) !important;
   overflow: auto !important;
-  padding: 12px 14px !important;
-  border-radius: 8px !important;
-  border: 1px solid #8a5a00 !important;
+  padding: 18px 20px !important;
+  border-radius: 14px !important;
+  border: 3px solid #8a5a00 !important;
   background: #fff8e6 !important;
-  color: #3d2a00 !important;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25) !important;
-  font: 13px/1.4 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  color: #1f1500 !important;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4) !important;
+  pointer-events: auto !important;
+  font: 18px/1.45 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
 }
 .helmion-guard-ask-alert.helmion-guard-tone-danger { border-color: #7a1109 !important; background: #fff4f2 !important; color: #3a0904 !important; }
 .helmion-guard-ask-alert.helmion-guard-tone-ok { border-color: #1d6b35 !important; background: #effaf2 !important; color: #0d3319 !important; }
 .helmion-guard-ask-alert-title,
 .helmion-guard-ask-alert-message,
 .helmion-guard-ask-alert-status { display: block !important; font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important; }
-.helmion-guard-ask-alert-title { font-weight: 800 !important; }
-.helmion-guard-ask-alert-message { margin-top: 4px !important; }
-.helmion-guard-ask-alert-status { margin-top: 6px !important; font-size: 12px !important; font-style: italic !important; }
+.helmion-guard-ask-alert-title { font-weight: 800 !important; font-size: 22px !important; line-height: 1.3 !important; }
+.helmion-guard-ask-alert-message { margin-top: 6px !important; font-size: 18px !important; line-height: 1.45 !important; }
+.helmion-guard-ask-alert-status { margin-top: 8px !important; font-size: 18px !important; font-style: italic !important; }
 .helmion-guard-ask-alert-action {
   all: initial !important;
-  display: inline-block !important;
-  margin: 9px 6px 0 0 !important;
-  padding: 5px 8px !important;
-  border: 1px solid currentColor !important;
-  border-radius: 5px !important;
-  color: inherit !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 52px !important;
+  min-width: 120px !important;
+  margin: 14px 12px 0 0 !important;
+  padding: 12px 20px !important;
+  border: 3px solid #111111 !important;
+  border-radius: 12px !important;
+  color: #111111 !important;
   background: #ffffff !important;
-  font: 12px ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  font: 700 19px/1.2 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
   cursor: pointer !important;
+  pointer-events: auto !important;
 }
+.helmion-guard-ask-alert-action:focus-visible { outline: 4px solid #1a4fd6 !important; outline-offset: 3px !important; }
 .helmion-guard-ask-alert-primary { font-weight: 700 !important; }
 
 /* -------------------------------------------------------------- flag alerts */
@@ -531,20 +561,120 @@
   cursor: pointer !important;
 }
 
-/* 0.6.0: compact allow/deny pill, bottom-right, never covers the chat. */
+/* Approval box + pill, bottom-right. The box sits directly ABOVE the pill and
+   stays open until Allow or Cancel. Large, high-contrast and easy to hit:
+   18px+ text, 48px+ buttons. Every rule is !important on top of all:initial so
+   the AI site's own CSS cannot shrink, hide or cover it. */
 .helmion-guard-approval-pill {
-  position: fixed !important; right: 16px !important; bottom: 16px !important; z-index: 2147483646 !important;
+  all: initial !important;
+  box-sizing: border-box !important;
+  position: fixed !important;
+  right: 16px !important;
+  bottom: 16px !important;
+  left: auto !important;
+  top: auto !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-end !important;
+  gap: 10px !important;
+  width: auto !important;
+  max-width: calc(100vw - 32px) !important;
+  max-height: calc(100vh - 32px) !important;
   pointer-events: auto !important;
-  max-width: 320px; font: 13px/1.35 system-ui, sans-serif; color: #1f1f1f;
-  background: #fff8e1; border: 1px solid #c58f00; border-radius: 18px;
-  box-shadow: 0 2px 8px rgba(0,0,0,.18); padding: 4px;
+  visibility: visible !important;
+  opacity: 1 !important;
+  transform: none !important;
+  font: 18px/1.4 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  color: #111111 !important;
 }
-.helmion-guard-approval-pill.helmion-guard-tone-danger { background: #fdecea; border-color: #b3261e; }
-.helmion-guard-approval-pill-toggle { all: unset; cursor: pointer; pointer-events: auto; padding: 4px 10px; font-weight: 600; display: block; }
-.helmion-guard-approval-pill[aria-expanded="true"] { border-radius: 12px; }
-.helmion-guard-approval-pill-details { padding: 4px 10px 8px; display: flex; flex-wrap: wrap; gap: 6px; }
-.helmion-guard-approval-pill-details[hidden] { display: none; }
-.helmion-guard-approval-pill-message, .helmion-guard-approval-pill-status { flex-basis: 100%; }
-.helmion-guard-approval-pill-status { opacity: .75; font-size: 12px; }
-.helmion-guard-approval-pill-allow, .helmion-guard-approval-pill-deny { cursor: pointer; border-radius: 8px; padding: 3px 12px; border: 1px solid #888; background: #fff; }
-.helmion-guard-approval-pill-deny { border-color: #b3261e; color: #b3261e; }
+.helmion-guard-approval-pill-details {
+  all: initial !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  width: min(440px, calc(100vw - 32px)) !important;
+  max-height: calc(100vh - 120px) !important;
+  overflow: auto !important;
+  padding: 20px !important;
+  border: 3px solid #8a5a00 !important;
+  border-radius: 14px !important;
+  background: #ffffff !important;
+  color: #111111 !important;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.4) !important;
+  pointer-events: auto !important;
+  font: 18px/1.45 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}
+.helmion-guard-approval-pill.helmion-guard-tone-danger .helmion-guard-approval-pill-details { border-color: #b3261e !important; }
+.helmion-guard-approval-pill-details[hidden] { display: none !important; }
+.helmion-guard-approval-pill-question,
+.helmion-guard-approval-pill-message,
+.helmion-guard-approval-pill-status {
+  all: initial !important;
+  display: block !important;
+  color: #111111 !important;
+  font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+}
+.helmion-guard-approval-pill-question { font-size: 22px !important; line-height: 1.3 !important; font-weight: 800 !important; }
+.helmion-guard-approval-pill-message { font-size: 18px !important; line-height: 1.45 !important; }
+.helmion-guard-approval-pill-status { font-size: 18px !important; line-height: 1.4 !important; color: #333333 !important; }
+.helmion-guard-approval-pill-actions {
+  all: initial !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 14px !important;
+  margin-top: 4px !important;
+}
+.helmion-guard-approval-pill-allow,
+.helmion-guard-approval-pill-deny,
+.helmion-guard-approval-pill-toggle {
+  all: initial !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 52px !important;
+  min-width: 132px !important;
+  padding: 12px 24px !important;
+  border-radius: 12px !important;
+  font: 700 20px/1.2 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  text-align: center !important;
+}
+.helmion-guard-approval-pill-allow { background: #0b6b2e !important; color: #ffffff !important; border: 3px solid #063d1a !important; }
+.helmion-guard-approval-pill-deny { background: #ffffff !important; color: #111111 !important; border: 3px solid #111111 !important; }
+.helmion-guard-approval-pill-toggle {
+  min-height: 48px !important;
+  min-width: 48px !important;
+  font-size: 18px !important;
+  border-radius: 999px !important;
+  background: #fff3c4 !important;
+  color: #111111 !important;
+  border: 3px solid #8a5a00 !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3) !important;
+}
+.helmion-guard-approval-pill.helmion-guard-tone-danger .helmion-guard-approval-pill-toggle { background: #fde2df !important; border-color: #b3261e !important; }
+.helmion-guard-approval-pill-allow:focus-visible,
+.helmion-guard-approval-pill-deny:focus-visible,
+.helmion-guard-approval-pill-toggle:focus-visible { outline: 4px solid #1a4fd6 !important; outline-offset: 3px !important; }
+.helmion-guard-approval-pill-allow:hover { background: #095a26 !important; }
+.helmion-guard-approval-pill-deny:hover { background: #f0f0f0 !important; }
+
+/* "What was found" list in the approval box and ask cards: type (count). */
+.helmion-guard-approval-pill-items, .helmion-guard-ask-alert-items { all: initial !important; display: block !important; margin-top: 4px !important; }
+.helmion-guard-approval-pill-items-title, .helmion-guard-ask-alert-items-title {
+  all: initial !important; display: block !important; color: inherit !important;
+  font: 700 18px/1.4 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}
+.helmion-guard-approval-pill-list, .helmion-guard-ask-alert-list {
+  all: initial !important; display: block !important; margin: 6px 0 0 0 !important; padding: 0 0 0 26px !important;
+  list-style: disc outside !important;
+}
+.helmion-guard-approval-pill-item, .helmion-guard-ask-alert-item {
+  all: initial !important; display: list-item !important; list-style: disc outside !important; color: #111111 !important;
+  font: 18px/1.5 ui-sans-serif, "Segoe UI", system-ui, sans-serif !important;
+}

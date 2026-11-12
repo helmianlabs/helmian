@@ -344,17 +344,23 @@ test('FAIL LOUD WITHOUT COVERING THE PAGE: a worker timeout shows a compact plai
     setInterval() { return 0; },
   });
 
-  // guard.js gives the worker 5 seconds before it calls it broken.
+  // guard.js gives the worker 5 seconds, then (a sleeping MV3 worker is
+  // normal) asks once more 3 seconds later before it calls it broken.
   await wait(5400);
+  assert.equal(healthAlerts(doc).length, 0, 'one slow answer is not a failure');
+  await wait(8200);
   fake.reset();
 
   assert.equal(healthAlerts(doc).length, 1, 'the extension went quiet instead of saying it was broken');
   const alert = healthAlerts(doc)[0];
-  assert.match(alert.textContent, /Helmion Guard needs attention/);
-  assert.match(alert.textContent, /Safety checks may be incomplete/);
+  assert.match(alert.textContent, /Guard: some checks are off here/);
   assert.doesNotMatch(alert.textContent, /did not answer|worker|parser|fallback/i);
+  assert.ok(!alert.classList.contains('helmion-guard-health-danger'), 'an unanswered worker is not a confirmed failure: no red');
   const details = doc.querySelectorAll('.helmion-guard-health-alert-details')[0];
   assert.equal(details.textContent, 'Details');
+  // Small and closable.
+  doc.querySelector('[data-helmion-action="dismiss-health"]').dispatch('click', {});
+  assert.equal(healthAlerts(doc).length, 0, 'the chip did not close');
 });
 
 test('FAIL LOUD: a dead service worker shows the same bounded alert without diagnostics', async () => {
@@ -370,11 +376,34 @@ test('FAIL LOUD: a dead service worker shows the same bounded alert without diag
     setInterval() { return 0; },
   });
 
-  await wait(120);
+  await wait(3400);
   fake.reset();
 
   assert.equal(healthAlerts(doc).length, 1);
   assert.doesNotMatch(healthAlerts(doc)[0].textContent, /unreachable|answered with nothing|worker/i);
+});
+
+test('UPDATED EXTENSION: an orphaned tab ("Extension context invalidated") gets a small reload chip, not a red box', async () => {
+  const doc = createDocument([codeBlock('echo hi')]);
+  fake.reset();
+  const orphanChrome = Object.create(chrome);
+  orphanChrome.runtime = Object.create(chrome.runtime);
+  orphanChrome.runtime.sendMessage = () => { throw new Error('Extension context invalidated.'); };
+
+  await loadContentScripts(CONTENT_SCRIPTS, {
+    document: doc,
+    chrome: orphanChrome,
+    MutationObserver: class { constructor(cb) { this.callback = cb; } observe() {} disconnect() {} },
+    window: { addEventListener() {} },
+    setInterval() { return 0; },
+  });
+  await wait(120);
+
+  assert.equal(healthAlerts(doc).length, 1);
+  const chip = healthAlerts(doc)[0];
+  assert.match(chip.textContent, /Guard was updated: reload this page/);
+  assert.doesNotMatch(chip.textContent, /Safety checks may be incomplete|needs attention/);
+  assert.ok(!chip.classList.contains('helmion-guard-health-danger'));
 });
 
 test('FAIL LOUD: the badge shows an orange ! when the guard reports itself broken', async () => {
@@ -665,11 +694,12 @@ test('GEMINI-LIKE FIXTURE: an instruction-override prompt is stopped and asked a
     /tries to override the assistant's instructions/,
     'the pill does not name the injection rule through its reason',
   );
-  assert.match(pills[0].textContent, /No answer in 60 s = Deny/);
+  // PR 180 port: the box stays open until the person decides; no 60 s timer.
+  assert.doesNotMatch(pills[0].textContent, /60 s/);
+  assert.match(pills[0].textContent, /Nothing is sent until you choose/);
 
-  // Settle the pill so its 60-second timer does not outlive the test.
   const deny = doc.querySelectorAll('.helmion-guard-approval-pill-deny')[0];
-  assert.ok(deny, 'the pill has no Deny button');
+  assert.ok(deny, 'the pill has no Cancel button');
   deny.dispatch('click');
   assert.equal(doc.querySelectorAll('.helmion-guard-approval-pill').length, 0, 'the pill stayed after Deny');
 });

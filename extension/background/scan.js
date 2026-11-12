@@ -1,4 +1,4 @@
-// Runs the Helmion destructive-command kernel over extracted code blocks.
+// Runs the Helmian destructive-command kernel over extracted code blocks.
 //
 // This is the only place the kernel is called. It is an ES module so both the
 // extension's service worker and the Node tests load the exact same file.
