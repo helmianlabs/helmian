@@ -4,26 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0B1120">
-  <script>
-    /* Pre-paint theme: apply the stored choice before the stylesheets
-       land so a light-theme user never gets a dark flash. Mirrors
-       app.js's store (helmian.app.theme, JSON) and its 'system'
-       resolution; app.js re-asserts the same value at boot. */
-    try {
-      var helmianTheme = JSON.parse(localStorage.getItem('helmian.app.theme')) || 'midnight';
-      if (helmianTheme === 'system') helmianTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'midnight';
-      document.documentElement.dataset.theme = helmianTheme;
-      if (helmianTheme === 'light') document.querySelector('meta[name="theme-color"]').content = '#F4F6F8';
-    } catch (e) {}
-  </script>
+  <!-- Pre-paint theme: theme-init.js applies the stored choice before
+       the stylesheets land so a light-theme user never gets a dark
+       flash. It is an external file because the /app CSP allows
+       external scripts only; an inline block here cannot run. -->
+  <script src="/app/theme-init.js?v=60b377f31d4d798f"></script>
   <title>Helmian</title>
   <link rel="icon" type="image/png" href="/assets/helmian-logo.png">
   <link rel="manifest" href="/app/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/assets/helmian-logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="/app/app.css?v=2373ccb8c45e367b">
-  <link rel="stylesheet" href="/app/envoy.css?v=2373ccb8c45e367b">
-  <script type="module" src="/app/app.js?v=2373ccb8c45e367b"></script>
+  <link rel="stylesheet" href="/app/app.css?v=60b377f31d4d798f">
+  <link rel="stylesheet" href="/app/envoy.css?v=60b377f31d4d798f">
+  <script type="module" src="/app/app.js?v=60b377f31d4d798f"></script>
 </head>
 <body>
 <div id="shell" class="shell" data-view="desktop">
