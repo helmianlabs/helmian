@@ -1,19 +1,19 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=c0d6966f9644aeb0';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=c0d6966f9644aeb0';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=c0d6966f9644aeb0';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=c0d6966f9644aeb0';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=c0d6966f9644aeb0';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=c0d6966f9644aeb0';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=c0d6966f9644aeb0';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=c0d6966f9644aeb0';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=c0d6966f9644aeb0';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=c0d6966f9644aeb0';
-import { createConnectFields } from './connect-fields.mjs?v=c0d6966f9644aeb0';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=c0d6966f9644aeb0';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=c0d6966f9644aeb0';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=e307c7eb47e83650';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=e307c7eb47e83650';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=e307c7eb47e83650';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=e307c7eb47e83650';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=e307c7eb47e83650';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=e307c7eb47e83650';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=e307c7eb47e83650';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=e307c7eb47e83650';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=e307c7eb47e83650';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=e307c7eb47e83650';
+import { createConnectFields } from './connect-fields.mjs?v=e307c7eb47e83650';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=e307c7eb47e83650';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=e307c7eb47e83650';
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
 const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
@@ -2033,6 +2033,16 @@ function renderCrew(roster, customList, states, desk) {
   if (activeKey) for (const row of list.querySelectorAll('.ew-crew-row')) if (row.getAttribute('data-provider') === activeKey) { row.focus({ preventScroll: true }); break; }
 }
 
+// The add-render peek decision (channels-pane bite, 2026-11-11):
+// the channels pane's peek survives an add-list rebuild only when
+// the pane was resting as the rail AND peeking AND the rebuild is
+// about to destroy a focused node inside it — the three facts
+// renderAgents holds at the rebuild. Pure, so it is unit tested;
+// renderAgents applies it.
+export function addRenderKeepsPeek({ railRest = false, peeking = false, focusInside = false } = {}) {
+  return Boolean(railRest && peeking && focusInside);
+}
+
 function renderAgents() {
   const desk = inMaestroMode();
   const raw = (ws.config?.agents ?? []).map((a) => a.provider);
@@ -2056,14 +2066,39 @@ function renderAgents() {
   // render the click did not cause), else the create pill, which
   // always renders. renderCrew does the same for crew rows above;
   // this is the add list's half of that discipline.
+  //
+  // Peek trap (channels-pane bite, 2026-11-11): the restore below
+  // is not enough on its own in the rail-rest state — the state
+  // the pane rests in. Destroying the focused pill drops focus to
+  // <body> inside replaceChildren, the pane's focusout handler
+  // (wireChannelsRail) reads that as a close and drops the peek,
+  // and a rail-rest pane without the peek hides every child but
+  // the rail tab (envoy.css: .rail-rest:not(.peeking) > * is
+  // display:none) — so the successor stands in a display:none
+  // subtree when its focus() runs, the focus lands nowhere, no
+  // focusin ever brings the peek back, and the pane stays shut.
+  // The picker rows never hit this: renderPicker rebuilds inside
+  // a panel that stays visible throughout. Here the peek is
+  // remembered before the rebuild and put back before the
+  // successor is focused, so the successor is rendered when its
+  // focus() runs. The close was never load-bearing: the added
+  // agent's armed state arrives from changeAgent's own config
+  // and message re-reads, not from the pane closing.
   const addBox = $('ew-crew-add');
   const focusedPill = addBox && document.activeElement && addBox.contains(document.activeElement) ? document.activeElement : null;
   const focusedAdd = focusedPill ? focusedPill.getAttribute('data-provider') : null;
+  const channelsPane = $('ew-channels');
+  const wasPeeking = addRenderKeepsPeek({
+    railRest: Boolean(channelsPane?.classList.contains('rail-rest')),
+    peeking: Boolean(channelsPane?.classList.contains('peeking')),
+    focusInside: Boolean(focusedPill),
+  });
   addBox.replaceChildren(
     ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', 'data-provider': p, title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, seatFaceImg(p), `+ ${NAMES[p]}`)),
     h('button', { type: 'button', class: 'ew-pill create-custom', title: 'Create a custom agent with emoji, name, job & AI provider', onclick: openCreateAgentModal }, '✨ + Custom Agent')
   );
   if (focusedPill) {
+    if (wasPeeking) channelsPane.classList.add('peeking');
     const next = (focusedAdd && addBox.querySelector(`[data-provider="${focusedAdd}"]`)) || addBox.querySelector('.create-custom');
     if (next) next.focus({ preventScroll: true });
   }
@@ -5052,7 +5087,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=c0d6966f9644aeb0');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=e307c7eb47e83650');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
