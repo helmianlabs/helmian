@@ -625,6 +625,54 @@ test('read: all four rows read connected; siblings carry the shared detail; coun
   }
 });
 
+test('read: a connected family projects as ROWS onto a seat that stocks none of them (Gemini)', async () => {
+  const { store, read } = await makeWorld();
+
+  // Gemini stocks no Microsoft entry (the catalog placement pinned
+  // above), and the projection is connection-driven: with the
+  // family unconnected, no family row stands there — nothing is
+  // invented for a seat the catalog does not stock the family on.
+  const before = await read.readSeatLibrary(TENANT, { personId: PERSON, seatId: 'gemini' });
+  assert.equal(
+    before.rows.filter((r) => FAMILY_IDS.includes(r.entryId)).length, 0,
+    'unconnected: no family rows on a non-stocking seat',
+  );
+
+  await connectFamily(store);
+
+  // The connection side has always projected the family's one
+  // connection onto all four members here; the ROWS must stand
+  // too — the read joins connections onto entry rows, so every
+  // member's entry row has to join the seat's list (the store's
+  // listEntries family widening), or three of the four names stay
+  // invisible on exactly the seats the widening exists for.
+  const view = await read.readSeatLibrary(TENANT, { personId: PERSON, seatId: 'gemini' });
+  const rows = view.rows.filter((r) => FAMILY_IDS.includes(r.entryId));
+  assert.equal(rows.length, 4, 'all four members stand as rows on the seat that stocks none of them');
+  for (const fam of FAMILY) {
+    const row = rows.find((r) => r.entryId === fam.entryId);
+    assert.ok(row, `gemini/${fam.entryId}: row present`);
+    assert.equal(row.state, 'connected', `gemini/${fam.entryId}: connected through the family`);
+    assert.equal(row.accountIdentity, 'troy@contoso.example', `gemini/${fam.entryId}: the family's account`);
+    assert.equal(row.workspaceSet, true, `gemini/${fam.entryId}: the row names its road — the workspace set`);
+    assert.equal(row.provenanceSeatId, 'claude', `gemini/${fam.entryId}: the entry record lives on the seat that stocks it`);
+  }
+  for (const fam of FAMILY.slice(1)) {
+    const row = rows.find((r) => r.entryId === fam.entryId);
+    assert.deepEqual(
+      row.stateDetail?.sharedConnection,
+      { family: 'microsoft', recordedUnderEntryId: 'helmian-onedrive' },
+      `gemini/${fam.entryId}: the shared detail rides the projected row`,
+    );
+  }
+
+  // The walls hold on the projected rows too.
+  const other = await read.readSeatLibrary(TENANT, { personId: OTHER_PERSON, seatId: 'gemini' });
+  assert.equal(other.rows.filter((r) => FAMILY_IDS.includes(r.entryId)).length, 0, 'another person: no family rows');
+  const otherTenant = await read.readSeatLibrary(TENANT_B, { personId: PERSON, seatId: 'gemini' });
+  assert.equal(otherTenant.rows.filter((r) => FAMILY_IDS.includes(r.entryId)).length, 0, 'another tenant: no family rows');
+});
+
 // ----------------------------------------------------- write route
 
 async function withEnv(pairs, fn) {
