@@ -35,6 +35,16 @@ import { addRenderKeepsPeek } from '../app/envoy-workspace.js';
 // never load-bearing: the added agent's state arrives from
 // changeAgent's own loadConfig/loadMessages re-reads, not from
 // the pane closing.
+//
+// Optimization bite 3 (2026-11-12) keyed the add list: the pill
+// nodes are built once and reconciled by identity
+// (reconcileChildren), so the wholesale replaceChildren this
+// test originally pinned is gone. The discipline the test
+// stands for is unchanged — the clicked pill is still the one
+// node the reconcile can remove (its seat just joined), so the
+// peek is still captured before the reconcile and restored
+// before the successor is focused; the wiring pin below names
+// the reconcile where it named the rebuild.
 
 test('peek decision: only a peeking rail-rest pane whose add list held focus keeps the peek', () => {
   assert.equal(addRenderKeepsPeek({ railRest: true, peeking: true, focusInside: true }), true,
@@ -60,20 +70,23 @@ test('wiring: the peek is captured before the add rebuild and restored before th
   assert.ok(fn.includes("railRest: Boolean(channelsPane?.classList.contains('rail-rest'))"), 'rail-rest is one of the decision facts');
   assert.ok(fn.includes("peeking: Boolean(channelsPane?.classList.contains('peeking'))"), 'peeking is one of the decision facts');
   assert.ok(fn.includes('focusInside: Boolean(focusedPill)'), 'the focused pill is the focus fact');
-  // Ordering is the fix: capture before the rebuild, restore
+  // Ordering is the fix: capture before the reconcile, restore
   // before the focus() that needs a rendered successor.
   const captureAt = fn.indexOf('const wasPeeking = addRenderKeepsPeek({');
-  const rebuildAt = fn.indexOf('addBox.replaceChildren(');
+  const rebuildAt = fn.indexOf('reconcileChildren(addBox,');
   const restoreAt = fn.indexOf("if (wasPeeking) channelsPane.classList.add('peeking');");
   const focusAt = fn.indexOf('if (next) next.focus({ preventScroll: true });');
-  assert.ok(captureAt !== -1 && rebuildAt !== -1 && captureAt < rebuildAt, 'the peek is captured before the rebuild destroys the pill');
-  assert.ok(restoreAt !== -1 && rebuildAt < restoreAt, 'the peek is restored after the rebuild');
+  assert.ok(captureAt !== -1 && rebuildAt !== -1 && captureAt < rebuildAt, 'the peek is captured before the reconcile can remove the pill');
+  assert.ok(restoreAt !== -1 && rebuildAt < restoreAt, 'the peek is restored after the reconcile');
   assert.ok(focusAt !== -1 && restoreAt < focusAt, 'the peek is back before the successor is focused, so the focus() lands on a rendered node');
   // The pre-existing successor discipline is untouched: the same
   // pill when it survives, else the create pill that always renders.
   assert.ok(fn.includes("const next = (focusedAdd && addBox.querySelector(`[data-provider=\"${focusedAdd}\"]`)) || addBox.querySelector('.create-custom');"),
     'the successor choice is the old one');
-  assert.ok(fn.includes("onclick: () => changeAgent('add-agent', p)"), 'the pills still add through changeAgent');
+  // Bite 3: the pill itself is built by the keyed crewAddPill;
+  // its click still adds through changeAgent, unchanged.
+  const pillAt = js.indexOf('function crewAddPill(');
+  assert.ok(pillAt !== -1 && js.slice(pillAt, pillAt + 800).includes("onclick: () => changeAgent('add-agent', p)"), 'the pills still add through changeAgent');
 });
 
 test('wiring: the add flow still re-reads its state from the server (the close was not load-bearing)', async () => {

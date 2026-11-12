@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=94caa8deac8b08b8';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=94caa8deac8b08b8';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=94caa8deac8b08b8';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=94caa8deac8b08b8';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=94caa8deac8b08b8';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=94caa8deac8b08b8';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=94caa8deac8b08b8';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=94caa8deac8b08b8';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=94caa8deac8b08b8';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=94caa8deac8b08b8';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=94caa8deac8b08b8';
-import { createConnectFields } from './connect-fields.mjs?v=94caa8deac8b08b8';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=94caa8deac8b08b8';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=94caa8deac8b08b8';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=c15fa8551413f59b';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=c15fa8551413f59b';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=c15fa8551413f59b';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=c15fa8551413f59b';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=c15fa8551413f59b';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=c15fa8551413f59b';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=c15fa8551413f59b';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=c15fa8551413f59b';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=c15fa8551413f59b';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=c15fa8551413f59b';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=c15fa8551413f59b';
+import { createConnectFields } from './connect-fields.mjs?v=c15fa8551413f59b';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=c15fa8551413f59b';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=c15fa8551413f59b';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -434,7 +434,7 @@ function syncActivityViews() {
   syncActivityClocks();
 }
 
-// The CREW rail rows are rebuilt by renderAgents() on the message poll
+// The CREW rail rows are keyed by renderAgents() on the message poll
 // (loadMessages renders them on every poll, changed signature or not),
 // so their status dots and activity lines ride that cadence. Their
 // faces' motion (emoji bite 4) is synced in place from the same
@@ -2089,27 +2089,169 @@ function crewRow({ key, name, faceImg, status, motionStage, title }) {
       h('span', { class: 'ew-crew-name' }, name),
       h('span', { class: 'ew-crew-line' }, status.line)));
 }
+
+// ---------- CREW rail: keyed rendering (optimization bite 3) ----------
+// The rail used to be rebuilt wholesale on every message poll:
+// renderCrew ended in an unconditional replaceChildren, so every
+// poll threw away ~a dozen face <video> elements and built fresh
+// ones — each restarting its clip fetch and decode (~290 element
+// creations a minute calm, ~900 during a round; the baseline's
+// ranked #1 cost). The rows are keyed now, the way renderMessages
+// already keys message rows: one row per agent key, built once by
+// crewRow above, then patched in place — status dot and line, the
+// shell's motion classes, the clip kind through crewClipApply
+// (whose own guard re-points a clip only when the kind actually
+// changed) — and reconciled against the desired order by node
+// identity. A poll where nothing changed writes nothing at all.
+// A row leaves only when its agent leaves, and a departed face's
+// clip is stopped and unloaded, never left decoding off-DOM.
+
+// Reconcile a container against the desired child sequence by node
+// identity (the same pass renderMessages runs inline): an identical
+// sequence writes nothing; otherwise only the delta moves —
+// foreign or vanished children are removed, new or out-of-order
+// nodes are inserted, kept nodes are never re-created.
+function reconcileChildren(box, desired) {
+  const cur = [...box.childNodes];
+  let identical = cur.length === desired.length;
+  if (identical) for (let i = 0; i < cur.length; i++) { if (cur[i] !== desired[i]) { identical = false; break; } }
+  if (identical) return;
+  const keepSet = new Set(desired);
+  for (const n of cur) if (!keepSet.has(n)) n.remove();
+  let next = null;
+  for (let i = desired.length - 1; i >= 0; i--) {
+    const node = desired[i];
+    if (node.parentNode !== box || node.nextSibling !== next) box.insertBefore(node, next);
+    next = node;
+  }
+}
+
+const crewRowCache = new Map();
+let crewEmptyNote = null;
+let crewEmptyNoteText = '';
+const crewFaceChild = (entry) => [...entry.shell.childNodes].find((n) => n !== entry.dot) ?? null;
+function crewRowDispose(entry) {
+  const face = crewFaceChild(entry);
+  if (face?.tagName === 'VIDEO') { face.pause(); face.removeAttribute('src'); face.load(); }
+}
+// Patch a kept row to the spec's current truth. Only what moved is
+// written; the face is re-pointed through crewClipApply (never
+// re-created) unless the face build itself changed — the still/clip
+// mode flipped, or a custom agent's emoji changed — in which case
+// only the face child is rebuilt, inside the same shell.
+function crewRowSync(entry, spec) {
+  if (entry.name !== spec.name) { entry.name = spec.name; entry.nameEl.textContent = spec.name; }
+  if (entry.title !== spec.title) { entry.title = spec.title; entry.row.setAttribute('title', spec.title); }
+  if (entry.statusKind !== spec.status.kind) { entry.statusKind = spec.status.kind; entry.dot.className = `ew-crew-dot ${spec.status.kind}`; }
+  if (entry.line !== spec.status.line) { entry.line = spec.status.line; entry.lineEl.textContent = spec.status.line; }
+  const motion = activityMotionClass(spec.stage);
+  entry.shell.classList.toggle('ew-ava-roll', motion === 'ew-ava-roll');
+  entry.shell.classList.toggle('ew-ava-talk', motion === 'ew-ava-talk');
+  const selected = crewRowSelected(spec.key, crewLeadingTargets());
+  if (entry.selected !== selected) { entry.selected = selected; entry.row.classList.toggle('selected', selected); entry.row.setAttribute('aria-pressed', String(selected)); }
+  if (entry.faceStamp !== spec.faceStamp) {
+    entry.faceStamp = spec.faceStamp;
+    const fresh = spec.buildFace();
+    const cur = crewFaceChild(entry);
+    if (cur) cur.replaceWith(fresh); else entry.shell.prepend(fresh);
+    const slug = fresh?.dataset?.slug;
+    if (slug) entry.shell.setAttribute('style', faceMaskStyle(slug)); else entry.shell.removeAttribute('style');
+  } else {
+    // Adopt whatever the shell currently holds: a clip that failed
+    // has already swapped itself for the still through its own
+    // error chain, and that state stands — a missing upload is
+    // attempted once, not once per poll.
+    const face = crewFaceChild(entry);
+    if (face?.tagName === 'VIDEO') crewClipApply(face, spec.stage);
+  }
+}
+function crewRowEntry(spec) {
+  const row = crewRow({ key: spec.key, name: spec.name, faceImg: spec.buildFace(), status: spec.status, motionStage: spec.stage, title: spec.title });
+  const entry = {
+    row,
+    shell: row.querySelector('.ew-crew-face'),
+    dot: row.querySelector('.ew-crew-dot'),
+    nameEl: row.querySelector('.ew-crew-name'),
+    lineEl: row.querySelector('.ew-crew-line'),
+    name: spec.name, title: spec.title, statusKind: spec.status.kind, line: spec.status.line,
+    faceStamp: spec.faceStamp, selected: row.classList.contains('selected'),
+  };
+  return entry;
+}
 function renderCrew(roster, customList, states, desk) {
   const list = $('ew-crew-list');
   if (!list) return;
   const total = roster.length + customList.length;
   const titleEl = $('ew-crew-title');
-  if (titleEl) titleEl.textContent = total ? `CREW — ${total} IN THIS CHANNEL` : 'CREW';
-  const entries = [];
+  const titleText = total ? `CREW — ${total} IN THIS CHANNEL` : 'CREW';
+  if (titleEl && titleEl.textContent !== titleText) titleEl.textContent = titleText;
+  const still = emojiStill();
+  const specs = [];
   roster.forEach((p, i) => {
     const status = crewStatus(p, states[p].state !== 'offline');
-    entries.push({ rank: CREW_RANK[status.kind], order: i, make: () => { const stage = activityMotionStage(ws.activity, p, ws.channelId); return crewRow({ key: p, name: NAMES[p], faceImg: crewSeatFaceClip(p, stage), status, motionStage: stage, title: desk ? `Dispatch to ${NAMES[p]} — your message goes to this seat` : `Target ${NAMES[p]} — your message goes to this seat` }); } });
+    const stage = activityMotionStage(ws.activity, p, ws.channelId);
+    specs.push({ cacheKey: `seat:${p}`, key: p, rank: CREW_RANK[status.kind], order: i, name: NAMES[p], status, stage,
+      faceStamp: `${still ? 'still' : 'clip'}:${crewFaceSlug(p)}`,
+      buildFace: () => crewSeatFaceClip(p, stage),
+      title: desk ? `Dispatch to ${NAMES[p]} — your message goes to this seat` : `Target ${NAMES[p]} — your message goes to this seat` });
   });
   customList.forEach((ca, i) => {
     const status = crewStatus(ca.handle, ws.online.has(ca.provider) || ca.provider === 'ollama');
-    entries.push({ rank: CREW_RANK[status.kind], order: roster.length + i, make: () => crewRow({ key: ca.handle, name: ca.name, faceImg: emojiNode(ca.emoji || '🤖'), status, motionStage: activityMotionStage(ws.activity, ca.handle, ws.channelId), title: `Target ${ca.name} (@${ca.handle})` }) });
+    specs.push({ cacheKey: `custom:${ca.handle}`, key: ca.handle, rank: CREW_RANK[status.kind], order: roster.length + i, name: ca.name, status,
+      stage: activityMotionStage(ws.activity, ca.handle, ws.channelId),
+      faceStamp: `emoji:${ca.emoji || '🤖'}`,
+      buildFace: () => emojiNode(ca.emoji || '🤖'),
+      title: `Target ${ca.name} (@${ca.handle})` });
   });
-  entries.sort((a, b) => a.rank - b.rank || a.order - b.order);
-  const ownerRow = crewRow({ key: 'all', name: 'Whole crew', faceImg: crewOwnerFaceClip(null), status: { kind: 'live', line: desk ? 'Everyone on the desk' : 'Everyone in this channel' }, motionStage: null, title: desk ? 'Dispatch to everyone on the desk' : 'Target the whole crew — clears a single-seat target' });
+  specs.sort((a, b) => a.rank - b.rank || a.order - b.order);
+  const ownerSpec = { cacheKey: 'owner', key: 'all', name: 'Whole crew', status: { kind: 'live', line: desk ? 'Everyone on the desk' : 'Everyone in this channel' }, stage: null,
+    faceStamp: `${still ? 'still' : 'clip'}:owner`,
+    buildFace: () => crewOwnerFaceClip(null),
+    title: desk ? 'Dispatch to everyone on the desk' : 'Target the whole crew — clears a single-seat target' };
+  const desired = [];
+  const seen = new Set();
+  for (const spec of [ownerSpec, ...specs]) {
+    seen.add(spec.cacheKey);
+    let entry = crewRowCache.get(spec.cacheKey);
+    if (!entry) { entry = crewRowEntry(spec); crewRowCache.set(spec.cacheKey, entry); }
+    else crewRowSync(entry, spec);
+    desired.push(entry.row);
+  }
+  for (const [k, entry] of [...crewRowCache]) if (!seen.has(k)) { crewRowDispose(entry); crewRowCache.delete(k); }
+  if (!total) {
+    const noteText = desk ? 'No agents on the desk yet. Add one from the row below.' : 'No agents in this channel yet. Add one from the row below.';
+    if (!crewEmptyNote || crewEmptyNoteText !== noteText) { crewEmptyNote = h('p', { class: 'ew-note' }, noteText); crewEmptyNoteText = noteText; }
+    desired.push(crewEmptyNote);
+  }
+  // Focus discipline, unchanged from the rebuild era: a kept row is
+  // never destroyed, so a focused row keeps its focus through the
+  // reconcile on its own; the restore below stands for the one case
+  // that can still drop it (the row's agent left and came back).
   const activeKey = document.activeElement?.classList?.contains('ew-crew-row') ? document.activeElement.getAttribute('data-provider') : null;
-  list.replaceChildren(ownerRow, ...entries.map((e) => e.make()),
-    ...(total ? [] : [h('p', { class: 'ew-note' }, desk ? 'No agents on the desk yet. Add one from the row below.' : 'No agents in this channel yet. Add one from the row below.')]));
-  if (activeKey) for (const row of list.querySelectorAll('.ew-crew-row')) if (row.getAttribute('data-provider') === activeKey) { row.focus({ preventScroll: true }); break; }
+  reconcileChildren(list, desired);
+  if (activeKey && document.activeElement?.getAttribute?.('data-provider') !== activeKey) for (const row of list.querySelectorAll('.ew-crew-row')) if (row.getAttribute('data-provider') === activeKey) { row.focus({ preventScroll: true }); break; }
+}
+
+// The add-pills under the rail get the same keyed treatment (the
+// baseline's ranked #2 rebuild): one pill per addable seat, built
+// once and reused across renders — a pill leaves the DOM only when
+// its seat joins the roster, and returns as the same node if the
+// seat leaves again. The pill's face follows the seat's workspace
+// face, so a face change rebuilds just that pill.
+const crewAddCache = new Map();
+let crewCreatePill = null;
+function crewAddPill(p, desk) {
+  const stamp = JSON.stringify([seatFace(p), desk]);
+  let entry = crewAddCache.get(p);
+  if (!entry || entry.stamp !== stamp) {
+    entry = { stamp, node: h('button', { type: 'button', class: 'ew-pill', 'data-provider': p, title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, seatFaceImg(p), `+ ${NAMES[p]}`) };
+    crewAddCache.set(p, entry);
+  }
+  return entry.node;
+}
+function crewCreateCustomPill() {
+  if (!crewCreatePill) crewCreatePill = h('button', { type: 'button', class: 'ew-pill create-custom', title: 'Create a custom agent with emoji, name, job & AI provider', onclick: openCreateAgentModal }, '✨ + Custom Agent');
+  return crewCreatePill;
 }
 
 // The add-render peek decision (channels-pane bite, 2026-11-11):
@@ -2134,9 +2276,12 @@ function renderAgents() {
   // member count rides the CREW title, and the add-pills live
   // under the crew list in the same rail (#ew-crew-add).
   renderCrew(roster, customList, states, desk);
-  // Panel-stays-open fix (2026-11-10): the add list rebuilds on every
-  // render, and the pill that was clicked is one of the nodes the
-  // rebuild destroys — an added seat leaves the list. A destroyed
+  // Panel-stays-open fix (2026-11-10): an added seat leaves the add
+  // list, and the pill that was clicked is the node that leaves with
+  // it — when this was written the list rebuilt wholesale on every
+  // render; it is keyed now (optimization bite 3), so the clicked
+  // pill's removal is the one destruction left, and it is the one
+  // this discipline covers. A destroyed
   // focused node drops focus to <body>, and the channels pane reads
   // focus leaving as a close: its focusout handler drops the rail
   // peek, so the panel shut on every add and the owner had to reopen
@@ -2149,7 +2294,7 @@ function renderAgents() {
   // Peek trap (channels-pane bite, 2026-11-11): the restore below
   // is not enough on its own in the rail-rest state — the state
   // the pane rests in. Destroying the focused pill drops focus to
-  // <body> inside replaceChildren, the pane's focusout handler
+  // <body> on removal, the pane's focusout handler
   // (wireChannelsRail) reads that as a close and drops the peek,
   // and a rail-rest pane without the peek hides every child but
   // the rail tab (envoy.css: .rail-rest:not(.peeking) > * is
@@ -2172,10 +2317,10 @@ function renderAgents() {
     peeking: Boolean(channelsPane?.classList.contains('peeking')),
     focusInside: Boolean(focusedPill),
   });
-  addBox.replaceChildren(
-    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => h('button', { type: 'button', class: 'ew-pill', 'data-provider': p, title: desk ? `Add ${NAMES[p]} to the desk — it receives your dispatches` : `Add ${NAMES[p]} to this channel — it answers here`, onclick: () => changeAgent('add-agent', p) }, seatFaceImg(p), `+ ${NAMES[p]}`)),
-    h('button', { type: 'button', class: 'ew-pill create-custom', title: 'Create a custom agent with emoji, name, job & AI provider', onclick: openCreateAgentModal }, '✨ + Custom Agent')
-  );
+  reconcileChildren(addBox, [
+    ...AGENTS.filter((p) => !roster.includes(p) && p !== 'maestro').map((p) => crewAddPill(p, desk)),
+    crewCreateCustomPill(),
+  ]);
   if (focusedPill) {
     if (wasPeeking) channelsPane.classList.add('peeking');
     const next = (focusedAdd && addBox.querySelector(`[data-provider="${focusedAdd}"]`)) || addBox.querySelector('.create-custom');
@@ -5333,7 +5478,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=94caa8deac8b08b8');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=c15fa8551413f59b');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
