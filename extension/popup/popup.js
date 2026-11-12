@@ -83,8 +83,10 @@ async function refresh() {
     ? 'Active on the most recently checked page.'
     : protection === 'limited'
       ? 'Active in compatibility mode.'
-      : protection === 'needs-attention'
-        ? 'Needs attention; checks may be incomplete.'
+      : protection === 'paused'
+        ? 'Paused on this page: Guard could not reach its checker. Reload the page.'
+        : protection === 'needs-attention'
+        ? 'A self-test failed on this page. Do not rely on Guard there.'
         : 'Open or reload a supported AI page to check.';
   $('claimsStatus').textContent = claims === 'active'
     ? 'Active on the most recently checked page.'

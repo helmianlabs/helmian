@@ -337,13 +337,91 @@ if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => { syncS
 export const ONBOARDING_PAGE = 'onboarding/onboarding.html';
 export function handleInstalled(details, api = chrome) {
   syncScribeAlarm();
-  // 0.6.2: first install opens the welcome page. Updates and browser updates do not.
-  if (details && details.reason === 'update') migrateNudgeSites(ledger).catch((e) => console.warn('[Helmian Guard] nudge-site migration failed:', e && e.message));
-  if (details && details.reason === 'install') {
-    try { api.tabs.create({ url: api.runtime.getURL(ONBOARDING_PAGE) }); } catch (error) { console.warn('[Helmian Guard] could not open the welcome page:', error && error.message); }
+  const reason = details && details.reason;
+  // Open AI tabs still run the PREVIOUS copy of Guard after an install or
+  // update, and that copy can no longer reach this worker. Put a working copy
+  // into them now instead of waiting for a reload.
+  if (reason === 'install' || reason === 'update') {
+    reinjectOpenTabs(api).catch((e) => console.warn('[Helmian Guard] re-inject into open tabs failed:', e && e.message));
+  }
+  // 0.6.2: first install opens the welcome page. Updates and browser updates do not,
+  // unless a preset just filled in an empty profile (then only Connect Scribe is left).
+  if (reason === 'update') {
+    migrateNudgeSites(ledger).catch((e) => console.warn('[Helmian Guard] nudge-site migration failed:', e && e.message));
+    applyPreset(ledger, api)
+      .then((applied) => { if (applied) openWelcome(api); })
+      .catch((e) => console.warn('[Helmian Guard] preset failed:', e && e.message));
+  }
+  if (reason === 'install') {
+    applyPreset(ledger, api)
+      .catch((e) => console.warn('[Helmian Guard] preset failed:', e && e.message))
+      .finally(() => openWelcome(api));
     return true;
   }
   return false;
+}
+function openWelcome(api) {
+  try { api.tabs.create({ url: api.runtime.getURL(ONBOARDING_PAGE) }); } catch (error) { console.warn('[Helmian Guard] could not open the welcome page:', error && error.message); }
+}
+
+// ─── RE-INJECT INTO OPEN TABS (0.6.9 candidate) ───────────────────────────
+// Chrome does not put an updated extension's content scripts into tabs that
+// were already open. Those tabs keep the old copy, which can no longer reach
+// the worker ("Extension context invalidated"); on 0.6.8 that drew the big
+// red "Safety checks may be incomplete" box over the chat until the tab was
+// reloaded. Inject the manifest's own content scripts (and CSS, which also
+// hides a stale copy's old red box) into every open tab they match.
+export async function reinjectOpenTabs(api = chrome) {
+  if (!api.scripting || !api.tabs || typeof api.tabs.query !== 'function') return 0;
+  const entries = (api.runtime.getManifest && api.runtime.getManifest().content_scripts) || [];
+  let injected = 0;
+  for (const entry of entries) {
+    let tabs = [];
+    try { tabs = await api.tabs.query({ url: entry.matches }); } catch { tabs = []; }
+    for (const tab of tabs) {
+      if (typeof tab.id !== 'number' || tab.discarded) continue;
+      try {
+        if (entry.css && entry.css.length) await api.scripting.insertCSS({ target: { tabId: tab.id }, files: entry.css });
+        await api.scripting.executeScript({ target: { tabId: tab.id }, files: entry.js });
+        injected += 1;
+      } catch (error) {
+        console.warn('[Helmian Guard] could not refresh Guard in an open tab:', error && error.message);
+      }
+    }
+  }
+  return injected;
+}
+
+// ─── PRESET (0.6.9 candidate) ─────────────────────────────────────────────
+// An optional preset.json shipped inside the extension folder (written by
+// tools/package-guard.mjs --preset FILE; never committed with anyone's data)
+// fills in the welcome page for a person: name, the AIs they use (which sets
+// Scribe mailboxes and auto-nudge sites) and the Scribe door-knock. It only
+// ever fills an EMPTY profile: settings the person already chose are never
+// overwritten. Scribe sign-in still needs the person's own click (the browser
+// permission prompt and Scribe's consent page cannot be pre-answered).
+export const PRESET_FILE = 'preset.json';
+export const PRESET_APPLIED_KEY = 'helmion.preset.applied';
+export async function readPreset(api = chrome, fetchImpl = globalThis.fetch) {
+  if (typeof fetchImpl !== 'function') return null;
+  try {
+    const res = await fetchImpl(api.runtime.getURL(PRESET_FILE));
+    if (!res || !res.ok) return null;
+    const preset = await res.json();
+    return preset && typeof preset === 'object' ? preset : null;
+  } catch { return null; }
+}
+export async function applyPreset(storage, api = chrome, fetchImpl = globalThis.fetch) {
+  if (await readOnboarding(storage)) return null; // never overwrite the person's own choices
+  const preset = await readPreset(api, fetchImpl);
+  if (!preset) return null;
+  const profile = await saveOnboarding(storage, { name: preset.name, ais: preset.ais });
+  const scribe = preset.scribe && typeof preset.scribe === 'object' ? preset.scribe : {};
+  if (scribe.enabled === true) await setScribeSettings(storage, { enabled: true });
+  if (preset.nudge && preset.nudge.enabled === false) await setNudgeSettings(storage, { enabled: false });
+  await storage.set(PRESET_APPLIED_KEY, { at: new Date().toISOString(), ais: profile.ais });
+  try { await syncScribeAlarm(); } catch { /* the next start syncs it */ }
+  return profile;
 }
 if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener((details) => { handleInstalled(details); });
 
@@ -646,7 +724,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (type === 'helmion:status') {
       latestStatus = {
-        protection: ['active', 'limited', 'needs-attention'].includes(message.protection)
+        protection: ['active', 'limited', 'paused', 'needs-attention'].includes(message.protection)
           ? message.protection : 'unknown',
         claims: ['active', 'limited', 'unavailable'].includes(message.claims)
           ? message.claims : 'unknown',

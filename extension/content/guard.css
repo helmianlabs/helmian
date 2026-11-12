@@ -387,6 +387,9 @@
   line-height: 1.3 !important;
 }
 .helmion-guard-health-alert[data-open="true"] { border-radius: 10px !important; }
+/* A health box without the current chip marker was drawn by a stale copy of
+   Guard (0.6.8 and earlier, in a tab open across an update). Never show it. */
+.helmion-guard-health-alert:not([data-helmian-chip]) { display: none !important; }
 .helmion-guard-health-alert:not([data-open="true"]) { flex-wrap: nowrap !important; white-space: nowrap !important; }
 /* Red only for a confirmed failure (a check ran and gave the wrong answer). */
 .helmion-guard-health-alert.helmion-guard-health-danger { background: #7a1109 !important; border-color: #ffd166 !important; }

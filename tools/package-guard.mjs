@@ -1,6 +1,10 @@
 // Stages a Helmion Guard browser build and zips it.
 //
-//   node tools/package-guard.mjs --target chromium|chrome|edge|firefox [--out DIR] [--zip FILE]
+//   node tools/package-guard.mjs --target chromium|chrome|edge|firefox [--out DIR] [--zip FILE] [--preset FILE]
+//
+// --preset FILE copies a person's settings preset (see applyPreset in
+// background/worker.js) into the build as preset.json. It fills an EMPTY
+// profile only, carries no secrets, and is never committed to the repo.
 //
 // chrome and edge are both the Chromium manifest (manifest.json); edge is
 // staged separately so each store gets its own artifact. firefox uses
@@ -23,6 +27,21 @@ const TARGETS = Object.freeze({
 });
 const SHIPPED_DIRS = ['background', 'content', 'generated', 'onboarding', 'popup'];
 const SCRIBE_URL_LINE = /^export const SCRIBE_DEFAULT_URL = '[^']*'; \/\/ @build:scribe-url$/m;
+
+const AI_KEYS = ['chatgpt', 'claude', 'grok', 'gemini', 'mistral', 'perplexity', 'muse'];
+/** Validates and writes preset.json into a staged build. Settings only: never a token or key. */
+export async function applyPresetFile(output, presetPath) {
+  if (!presetPath) return null;
+  const raw = JSON.parse(await readFile(presetPath, 'utf8'));
+  const allowed = new Set(['name', 'ais', 'scribe', 'nudge', 'note']);
+  for (const key of Object.keys(raw)) if (!allowed.has(key)) throw new Error(`preset: unknown field ${key}`);
+  if (typeof raw.name !== 'string' || !raw.name.trim()) throw new Error('preset: name is required');
+  if (!Array.isArray(raw.ais) || !raw.ais.length || raw.ais.some((k) => !AI_KEYS.includes(k))) throw new Error(`preset: ais must be some of ${AI_KEYS.join(', ')}`);
+  if (/token|key|secret|password/i.test(JSON.stringify({ scribe: raw.scribe, nudge: raw.nudge }))) throw new Error('preset: no tokens, keys or passwords');
+  const clean = { name: raw.name.trim(), ais: raw.ais, scribe: { enabled: Boolean(raw.scribe && raw.scribe.enabled) }, nudge: { enabled: !(raw.nudge && raw.nudge.enabled === false) } };
+  await writeFile(join(output, 'preset.json'), `${JSON.stringify(clean, null, 2)}\n`);
+  return clean;
+}
 
 /** Build-time Scribe server address: rewrites the one line in background/defaults.js. */
 export async function applyScribeUrl(output, scribeUrl) {
@@ -121,7 +140,7 @@ export function zipFiles(entries) {
   return Buffer.concat([...locals, ...centrals, end]);
 }
 
-export async function packageGuard({ target = 'chromium', out, zip, scribeUrl = process.env.HELMIAN_SCRIBE_URL } = {}) {
+export async function packageGuard({ target = 'chromium', out, zip, scribeUrl = process.env.HELMIAN_SCRIBE_URL, preset } = {}) {
   const spec = TARGETS[target];
   if (!spec) throw new Error(`Unknown target ${target}; use ${Object.keys(TARGETS).join(', ')}`);
   const manifest = JSON.parse(await readFile(join(EXTENSION, spec.manifest), 'utf8'));
@@ -131,6 +150,7 @@ export async function packageGuard({ target = 'chromium', out, zip, scribeUrl = 
   for (const entry of SHIPPED_DIRS) await cp(join(EXTENSION, entry), join(output, entry), { recursive: true });
   await cp(join(EXTENSION, spec.manifest), join(output, 'manifest.json'));
   await applyScribeUrl(output, scribeUrl);
+  const presetApplied = await applyPresetFile(output, preset);
   const files = await filesUnder(output);
   await writeFile(join(output, 'STAGING-MANIFEST.json'), `${JSON.stringify({
     target, version: manifest.version, manifest: spec.manifest, signed: false, public: false, signing: spec.store, files,
@@ -147,11 +167,11 @@ export async function packageGuard({ target = 'chromium', out, zip, scribeUrl = 
     target, version: manifest.version, output, zip: zipPath, zipBytes: size, files: allFiles.length,
     manifestVersion: manifest.manifest_version, permissions: manifest.permissions,
     optionalHosts: manifest.optional_host_permissions || manifest.optional_permissions || [],
-    hostMatches: manifest.content_scripts[0].matches, signing: spec.store,
+    hostMatches: manifest.content_scripts[0].matches, signing: spec.store, preset: presetApplied ? presetApplied.ais : null,
   };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const result = await packageGuard({ target: arg('--target', 'chromium'), out: arg('--out'), zip: arg('--zip'), scribeUrl: arg('--scribe-url', process.env.HELMIAN_SCRIBE_URL) });
+  const result = await packageGuard({ target: arg('--target', 'chromium'), out: arg('--out'), zip: arg('--zip'), scribeUrl: arg('--scribe-url', process.env.HELMIAN_SCRIBE_URL), preset: arg('--preset') });
   console.log(JSON.stringify(result, null, 2));
 }

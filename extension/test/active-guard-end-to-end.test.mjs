@@ -415,6 +415,10 @@ test('FLAGS SCAN: the scanner finds a secret Guard missed; the send is held and 
 
 test('FLAGS SCAN: clean -> press Send again; scanner down -> Guard\'s own check stands and the card says so', async () => {
   fake.resetStorage();
+  // The previous test's scanner-finding row can land late on a busy machine
+  // (full suite runs files in parallel). Let it land, then start clean.
+  await wait(300);
+  fake.resetStorage();
   const api = await startMockFlagsApi();
   try {
     enableFlags(api, { scanBeforeSend: true });

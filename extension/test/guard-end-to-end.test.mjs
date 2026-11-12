@@ -624,3 +624,74 @@ test('the page error handler is registered so extension errors surface', async (
   assert.ok(windowListeners.has('pointerdown'));
   assert.ok(windowListeners.has('beforeinput'));
 });
+
+// ─── 0.6.9 candidate: red ONLY for a self-test that really failed ──────────
+
+function answeringChrome(answer) {
+  const c = Object.create(chrome);
+  c.runtime = Object.create(chrome.runtime);
+  c.runtime.lastError = null;
+  c.runtime.sendMessage = (message, callback) => { setTimeout(() => callback && callback(answer(message)), 0); };
+  return c;
+}
+
+test('RED ONLY ON A REAL SELF-TEST FAILURE: a checker that gives the wrong verdict shows the small red chip', async () => {
+  const doc = createDocument([codeBlock('echo hi')]);
+  const statuses = [];
+  const wrong = answeringChrome((m) => {
+    if (m.type === 'helmion:status') statuses.push(m.protection);
+    if (m.type === 'helmion:scan') return { ok: true, results: (m.blocks || []).map((b) => ({ id: b.id, blocked: false })) };
+    return { ok: true, results: [] };
+  });
+  await loadContentScripts(CONTENT_SCRIPTS, {
+    document: doc, chrome: wrong,
+    MutationObserver: class { constructor(cb) { this.callback = cb; } observe() {} disconnect() {} },
+    window: { addEventListener() {} }, setInterval() { return 0; },
+  });
+  await wait(150);
+  assert.equal(healthAlerts(doc).length, 1);
+  const chip = healthAlerts(doc)[0];
+  assert.ok(chip.classList.contains('helmion-guard-health-danger'), 'a failed self-test must be red');
+  assert.match(chip.textContent, /Guard self-test failed on this page/);
+  assert.equal(chip.getAttribute('data-helmian-chip'), '1');
+  assert.ok(statuses.includes('needs-attention'));
+});
+
+test('NOT RED: a worker that does not answer pauses with an amber chip and a "paused" status, never needs-attention', async () => {
+  const doc = createDocument([codeBlock('rm -rf /')]);
+  fake.reset();
+  fake.mode = 'missing';
+  const statuses = [];
+  const spy = Object.create(chrome);
+  spy.runtime = Object.create(chrome.runtime);
+  spy.runtime.sendMessage = (m, cb) => { if (m.type === 'helmion:status') statuses.push(m.protection); return chrome.runtime.sendMessage(m, cb); };
+  await loadContentScripts(CONTENT_SCRIPTS, {
+    document: doc, chrome: spy,
+    MutationObserver: class { constructor(cb) { this.callback = cb; } observe() {} disconnect() {} },
+    window: { addEventListener() {} }, setInterval() { return 0; },
+  });
+  await wait(3400);
+  fake.reset();
+  assert.equal(healthAlerts(doc).length, 1);
+  assert.ok(!healthAlerts(doc)[0].classList.contains('helmion-guard-health-danger'));
+  assert.ok(!statuses.includes('needs-attention'), `went red: ${statuses.join(',')}`);
+  assert.ok(statuses.includes('paused'));
+});
+
+test('STALE COPY: a red box left by an old copy of Guard in this tab is removed when this copy starts', async () => {
+  const legacy = element('div', { class: 'helmion-guard-health-alert' }, [element('strong', {}, ['Helmion Guard needs attention'])]);
+  const doc = createDocument([legacy, codeBlock('echo hi')]);
+  fake.reset();
+  await loadContentScripts(CONTENT_SCRIPTS, {
+    document: doc, chrome,
+    MutationObserver: class { constructor(cb) { this.callback = cb; } observe() {} disconnect() {} },
+    window: { addEventListener() {} }, setInterval() { return 0; },
+  });
+  await wait(80);
+  assert.equal(healthAlerts(doc).length, 0, 'the stale red box is still there');
+});
+
+test('STALE COPY CSS: any health box without the current chip marker is hidden', async () => {
+  const css = await (await import('node:fs/promises')).readFile(new URL('../content/guard.css', import.meta.url), 'utf8');
+  assert.match(css, /\.helmion-guard-health-alert:not\(\[data-helmian-chip\]\)\s*\{\s*display:\s*none !important;/);
+});
