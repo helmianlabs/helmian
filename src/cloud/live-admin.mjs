@@ -383,7 +383,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const coraConfigClientScript = suppliedCoraConfigClientScript ?? await readFile(coraConfigClientPath, 'utf8');
   const expectedMigrations = suppliedMigrations ?? await listExpectedMigrationManifest();
   const ownsPool = !suppliedPool;
-  const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5 });
+  const pool = suppliedPool ?? new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5, connectionTimeoutMillis: 5_000, query_timeout: 15_000, statement_timeout: 15_000 });
   const envoy = suppliedEnvoyStore ?? createEnvoyStore(pool);
   const guard = createGuardStore(pool);
   const evidence = suppliedEvidenceStore ?? createEvidenceStore(pool);

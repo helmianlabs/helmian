@@ -59,7 +59,19 @@ function getPool() {
   if (!sharedPool) {
     const connectionString = String(process.env.HELMION_DATABASE_URL ?? '').trim();
     if (!connectionString) throw Object.assign(new Error('database not configured'), { status: 503 });
-    sharedPool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 3 });
+    // Bounded waits (envoy 504 fix, bite 1): without them a request
+    // whose pool is busy queues with no bound and can spend its whole
+    // 60 second function budget waiting for a client, to be killed by
+    // the platform with a 504 the app never sees. 5s to connect or
+    // check out matches the sibling pool precedent
+    // (connector-library-read-route.mjs); 15s per query and per
+    // statement is far above this store's real work (its longest
+    // transaction is the agentWork dispatch, seconds on a healthy
+    // database) and far below the platform limit, so a stuck poll
+    // fails fast, logs, and lets the worker's next 4 second poll try
+    // instead of stacking. Pool size aligned at 5 with the other
+    // pools on this path (live-admin.mjs, api/helmian-admin.js).
+    sharedPool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5, connectionTimeoutMillis: 5_000, query_timeout: 15_000, statement_timeout: 15_000 });
   }
   return sharedPool;
 }
