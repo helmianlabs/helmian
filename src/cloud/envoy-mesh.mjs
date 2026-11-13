@@ -267,6 +267,35 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
   // where it is built, in site-guard.mjs.
   const siteGuardRate = siteGuardRateImpl ?? createSiteGuardRateLimiter({ now });
 
+  // Envoy 504 fix, bite B: the filing-tail registry. agentWork's
+  // post-commit filings (Guard findings ingests, librarian filings)
+  // no longer run on the poll's response path; they run as deferred
+  // tails tracked here, and the store's drainFilingTail() method
+  // awaits everything pending. The tails keep the exact code, order,
+  // and fail-soft wrappers they had on the response path; only when
+  // they run changed. What makes the deferral safe is the tail's own
+  // contract, stated where the jobs are collected: every filing is
+  // witness-only, so a filing failure changes nothing about the work
+  // handed out. A durable queue (the helmian-admin.js worker
+  // pattern) was considered and does not fit here: the jobs carry
+  // live evaluation and screening objects with no serialized form,
+  // so queueing them would change what gets filed, not just when;
+  // if filing loss is ever observed, that queue is the follow-up,
+  // and drainFilingTail is the seam it drains through.
+  const pendingFilingTails = new Set();
+  const trackFilingTail = (tail) => {
+    pendingFilingTails.add(tail);
+    const settle = () => pendingFilingTails.delete(tail);
+    tail.then(settle, settle);
+  };
+  const drainPendingFilingTails = async () => {
+    // Loop until the set is empty: a tail registered while an
+    // earlier drain pass is awaiting is picked up by the next pass.
+    while (pendingFilingTails.size) {
+      await Promise.allSettled([...pendingFilingTails]);
+    }
+  };
+
   return Object.freeze({
     async getConfig(actor, channelId) {
       return tx(actor, async (client) => {
@@ -880,48 +909,88 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         };
       });
       for (const row of refusalRows) publish(actor.tenantId, row, publishImpl);
-      // Guard spine bite 3: witness every evaluation this poll produced
-      // into the Guard findings feed, allows and refusals alike. This
-      // runs after the transaction commits and through a wrapper that
-      // cannot throw, so a findings-write failure is logged loudly and
-      // changes nothing about the work handed out or the refusals
-      // posted above. The Helmian Site Guard's screens from this poll
-      // (bite A1) and its rate trips (bite A2) are witnessed in the
-      // same block, through the same kind of wrapper, into the same
-      // feed.
-      if (findingJobs.length || siteGuardJobs.length || siteGuardRateJobs.length) {
-        const findings = guardStoreImpl ?? createGuardStore(pool);
-        const evaluatedAt = new Date(now()).toISOString();
-        for (const job of findingJobs) {
-          await ingestEvaluationFinding(findings, actor, job.evaluation, { ...job, at: evaluatedAt }, guardLogImpl ? { log: guardLogImpl } : {});
-        }
-        for (const job of siteGuardJobs) {
-          await ingestSiteGuardFindings(findings, actor, job.screening, { ...job, at: evaluatedAt }, siteGuardLogImpl ? { log: siteGuardLogImpl } : {});
-        }
-        for (const job of siteGuardRateJobs) {
-          await ingestSiteGuardRateFinding(findings, actor, job.verdict, job, siteGuardLogImpl ? { log: siteGuardLogImpl } : {});
-        }
-      }
-      // Librarian: file this poll's dispatched asks into the shared
-      // notebook and name any still-generic channel from its first
-      // human message. Post-commit and through the fail-soft
-      // wrappers, like the findings ingest above: a librarian
-      // failure is logged loudly and changes nothing about the work
-      // handed out or the refusals posted.
-      if (librarianJobs.length || namingJobs.size || incidentJobs.length) {
-        const librarian = librarianImpl ?? createLibrarianStore(pool);
-        const librarianOpts = librarianLogImpl ? { log: librarianLogImpl } : {};
-        for (const job of librarianJobs) {
-          await fileDispatchAsk(librarian, actor, job, librarianOpts);
-        }
-        for (const naming of namingJobs.values()) {
-          await nameChannelIfGeneric(librarian, actor, naming, librarianOpts);
-        }
-        for (const incident of incidentJobs) {
-          await fileIncidentFromDispatch(librarian, actor, incident, librarianOpts);
-        }
+      // Envoy 504 fix, bite B: everything from here to the return
+      // used to run serially on this response path — every poll paid
+      // the full filing tail before it could answer, which is part
+      // of how polls stacked into 60s platform timeouts during a
+      // round (cloud-504 report, cause 4). The filings now run as
+      // one deferred tail: the same jobs, in the same order, through
+      // the same fail-soft wrappers, started after the result is
+      // computed and tracked on the store (trackFilingTail above),
+      // so drainFilingTail() can await their completion. What gets
+      // filed is unchanged; only when it runs moved. Each group
+      // carries its own guard inside the tail for one reason: on the
+      // response path a throw would have failed the request, but a
+      // deferred tail that threw would surface as an unhandled
+      // rejection — so a surprise throw is logged loudly here and
+      // can neither crash the process nor skip the other group. The
+      // wrappers' own contract says neither group can throw at all.
+      if (findingJobs.length || siteGuardJobs.length || siteGuardRateJobs.length || librarianJobs.length || namingJobs.size || incidentJobs.length) {
+        trackFilingTail((async () => {
+          // Guard spine bite 3: witness every evaluation this poll produced
+          // into the Guard findings feed, allows and refusals alike. This
+          // runs after the transaction commits and through a wrapper that
+          // cannot throw, so a findings-write failure is logged loudly and
+          // changes nothing about the work handed out or the refusals
+          // posted above. The Helmian Site Guard's screens from this poll
+          // (bite A1) and its rate trips (bite A2) are witnessed in the
+          // same block, through the same kind of wrapper, into the same
+          // feed.
+          try {
+            if (findingJobs.length || siteGuardJobs.length || siteGuardRateJobs.length) {
+              const findings = guardStoreImpl ?? createGuardStore(pool);
+              const evaluatedAt = new Date(now()).toISOString();
+              for (const job of findingJobs) {
+                await ingestEvaluationFinding(findings, actor, job.evaluation, { ...job, at: evaluatedAt }, guardLogImpl ? { log: guardLogImpl } : {});
+              }
+              for (const job of siteGuardJobs) {
+                await ingestSiteGuardFindings(findings, actor, job.screening, { ...job, at: evaluatedAt }, siteGuardLogImpl ? { log: siteGuardLogImpl } : {});
+              }
+              for (const job of siteGuardRateJobs) {
+                await ingestSiteGuardRateFinding(findings, actor, job.verdict, job, siteGuardLogImpl ? { log: siteGuardLogImpl } : {});
+              }
+            }
+          } catch (error) {
+            console.error(`[envoy-mesh] findings filing tail FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — the dispatch stands unchanged; the findings feed has a gap for this poll.`);
+          }
+          // Librarian: file this poll's dispatched asks into the shared
+          // notebook and name any still-generic channel from its first
+          // human message. Post-commit and through the fail-soft
+          // wrappers, like the findings ingest above: a librarian
+          // failure is logged loudly and changes nothing about the work
+          // handed out or the refusals posted.
+          try {
+            if (librarianJobs.length || namingJobs.size || incidentJobs.length) {
+              const librarian = librarianImpl ?? createLibrarianStore(pool);
+              const librarianOpts = librarianLogImpl ? { log: librarianLogImpl } : {};
+              for (const job of librarianJobs) {
+                await fileDispatchAsk(librarian, actor, job, librarianOpts);
+              }
+              for (const naming of namingJobs.values()) {
+                await nameChannelIfGeneric(librarian, actor, naming, librarianOpts);
+              }
+              for (const incident of incidentJobs) {
+                await fileIncidentFromDispatch(librarian, actor, incident, librarianOpts);
+              }
+            }
+          } catch (error) {
+            console.error(`[envoy-mesh] librarian filing tail FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — the dispatch stands unchanged; the shared notebook has a gap for this poll.`);
+          }
+        })());
       }
       return result;
+    },
+
+    // Envoy 504 fix, bite B: await every filing tail agentWork has
+    // deferred on this store (see the registry at the top of
+    // createEnvoyMesh). Resolves once all pending Guard findings
+    // ingests and librarian filings have run; a no-op when none are
+    // pending. The poll's response never waits on this — callers
+    // that need the filings landed (tests asserting the feed, a
+    // future read-path drain in the helmian-admin.js pattern) await
+    // it explicitly.
+    async drainFilingTail() {
+      await drainPendingFilingTails();
     },
 
     async postAsAgent(actor, input) {
