@@ -210,6 +210,7 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:approvals-decide',
   'helmion:pc-approvals-view',
   'helmion:pc-approvals-decide',
+  'helmion:pc-approvals-open-window',
 ]);
 
 function isFromOwnPopup(sender) {
@@ -221,6 +222,29 @@ function isFromOwnPopup(sender) {
     // getURL unavailable. Fail CLOSED — an unverifiable sender does not get the
     // ledger. A safety tool's evidence log is the last thing to hand out on a
     // maybe.
+    return false;
+  }
+}
+
+// The approvals window (Bite 5) is the one own page that legitimately
+// carries a tab: chrome.windows.create puts its page in a tab inside the
+// popup window, so the no-tab rule above would refuse the very page the
+// window exists for. The window's whole contract is the two PC approvals
+// messages below, sent from that exact page; every other privileged type
+// from a tab-carried sender is still refused, every other page is still
+// refused, and a content script can never present this sender — its URL
+// is the web page it runs on, never an extension page. Same fail-closed
+// shape as above: an unverifiable sender gets nothing.
+const PC_WINDOW_TYPES = new Set([
+  'helmion:pc-approvals-view',
+  'helmion:pc-approvals-decide',
+]);
+
+function isFromOwnApprovalsWindow(sender) {
+  if (!sender || sender.id !== chrome.runtime.id) return false;
+  try {
+    return String(sender.url || '').startsWith(chrome.runtime.getURL('popup/approvals-window.html'));
+  } catch {
     return false;
   }
 }
@@ -352,8 +376,8 @@ export async function runApprovalsPoll(opts = {}) {
 // actions an agent asked the Executive Guard to run on Troy's PC, decided
 // through Helmian's proxy — this extension holds no Guard credential for
 // this road. The wiring: this poll and the badge arbiter (Bite 2), the
-// pop-up section (Bite 3), the notification knock directly below (Bite 4).
-// The approvals window is Bite 5.
+// pop-up section (Bite 3), the notification knock (Bite 4), and the
+// approvals window further below (Bite 5).
 //
 // One difference from the door poll above: this alarm is never cleared for
 // being signed out. The door's sign-in happens inside the extension, so its
@@ -434,13 +458,79 @@ export async function notifyPcKnock(before, after) {
     return true;
   } catch { return false; }
 }
-// ─── The knock's click target (INTERIM, Bite 4) ────────────────────────────
-// Clicking the knock opens the Helmian approvals page in a tab: that page
-// is the real decision surface today. Bite 5 builds the approvals window,
-// and re-pointing the click at it is changing the one line inside this
-// function — the listener below and the knock itself do not move.
+// ─── PC APPROVALS WINDOW (approvals pop-up build, Bite 5) ──────────────────
+// The careful decision surface: one small popup-type window showing the
+// full PC approvals list (popup/approvals-window.html). It is
+// single-instance — opening it while it stands focuses the same window
+// instead of stacking a second — and it is opened from exactly two
+// places: the pop-up's "Open approvals window" button (the
+// helmion:pc-approvals-open-window message below) and the knock's click.
+//
+// The window's id is tracked in this module's memory and cleared by the
+// onRemoved listener when the window closes. It is deliberately NOT
+// kept in storage: window ids are per browser session and get reused,
+// so a stored id could later point at somebody else's window, and the
+// storage permission belongs to the ledger alone. A service worker that
+// was evicted while the window stood open has forgotten the id, so the
+// open path also scans the open windows for one already showing the
+// page before it creates anything.
+export const PC_APPROVALS_WINDOW_PAGE = 'popup/approvals-window.html';
+export const PC_APPROVALS_WINDOW_SIZE = Object.freeze({ width: 420, height: 560 });
+let pcApprovalsWindowId = null;
+
+function windowsCall(method, ...args) {
+  return new Promise((resolve) => {
+    try {
+      const r = chrome.windows[method](...args, (value) => { void chrome.runtime.lastError; resolve(value || null); });
+      if (r && typeof r.then === 'function') r.then((value) => resolve(value || null), () => resolve(null));
+    } catch { resolve(null); }
+  });
+}
+
+async function focusPcApprovalsWindow(id) {
+  const win = await windowsCall('get', id);
+  if (!win) return false;
+  await windowsCall('update', id, { focused: true });
+  return true;
+}
+
+export async function openPcApprovalsWindow() {
+  try {
+    if (!chrome.windows || typeof chrome.windows.create !== 'function') return false;
+    if (pcApprovalsWindowId != null) {
+      if (await focusPcApprovalsWindow(pcApprovalsWindowId)) return true;
+      pcApprovalsWindowId = null;
+    }
+    const url = chrome.runtime.getURL(PC_APPROVALS_WINDOW_PAGE);
+    const all = await windowsCall('getAll', { populate: true });
+    const found = (all || []).find((w) => (w.tabs || []).some((t) => String(t.url || '') === url));
+    if (found && typeof found.id === 'number') {
+      pcApprovalsWindowId = found.id;
+      await focusPcApprovalsWindow(found.id);
+      return true;
+    }
+    const created = await windowsCall('create', {
+      url, type: 'popup', width: PC_APPROVALS_WINDOW_SIZE.width, height: PC_APPROVALS_WINDOW_SIZE.height,
+    });
+    if (created && typeof created.id === 'number') pcApprovalsWindowId = created.id;
+    return Boolean(created);
+  } catch { return false; }
+}
+
+if (chrome.windows && chrome.windows.onRemoved) {
+  chrome.windows.onRemoved.addListener((windowId) => {
+    // Closing the window decides nothing; it only forgets the window, so
+    // the next open re-reads the list into a fresh one.
+    if (windowId === pcApprovalsWindowId) pcApprovalsWindowId = null;
+  });
+}
+// ─── The knock's click target ──────────────────────────────────────────────
+// Clicking the knock opens the approvals window (Bite 5). In Bite 4 this
+// one line opened the Helmian approvals page in a tab, the decision
+// surface of that day; the re-point Bite 4 promised is this line and
+// nothing else — the listener below and the knock itself did not move.
 function openPcApprovalsSurface() {
-  try { chrome.tabs.create({ url: 'https://helmian.cloud/app#approvals' }); } catch { /* best effort */ }
+  try { openPcApprovalsWindow(); } catch { /* best effort */ }
 }
 // ─── SCRIBE AUTO-NUDGE (0.6.0, off by default) ─────────────────────────────
 // Queue fresh letters (ids only), then let the policy decide per open chat tab.
@@ -504,7 +594,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   try {
     const type = message && message.type;
 
-    if (PRIVILEGED_TYPES.has(type) && !isFromOwnPopup(sender)) {
+    if (PRIVILEGED_TYPES.has(type) && !isFromOwnPopup(sender)
+      && !(PC_WINDOW_TYPES.has(type) && isFromOwnApprovalsWindow(sender))) {
       console.warn('[Helmion Guard] refused a privileged ledger message from an unexpected sender:', type);
       sendResponse({ ok: false, error: 'this message is only accepted from the extension popup' });
       return false;
@@ -789,6 +880,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await refreshGlobalBadge();
           sendResponse(result);
         })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:pc-approvals-open-window') {
+      // The pop-up's window button. Opening decides nothing and touches
+      // no list; it only brings the decision surface forward.
+      openPcApprovalsWindow()
+        .then((opened) => sendResponse(opened
+          ? { ok: true, opened: true }
+          : { ok: false, error: 'The approvals window could not be opened.' }))
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
     }

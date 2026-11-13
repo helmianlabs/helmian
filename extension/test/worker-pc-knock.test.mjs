@@ -7,9 +7,9 @@
 // and proves the knock only: a rise in the waiting count from zero
 // raises exactly one plain notification, a further arrival does not,
 // a fall back to zero re-arms it, a missing permission means silence
-// and no breakage, and clicking the knock opens the Helmian approvals
-// page in a tab (the interim click target; Bite 5 re-points it at the
-// approvals window).
+// and no breakage, and clicking the knock opens the approvals window
+// (Bite 5's re-point of Bite 4's interim tab target; the window's own
+// open/focus behaviour has its own suite, worker-pc-window.test.mjs).
 //
 // What it does NOT prove: a notification on a real screen. The
 // extension loaded in Chromium, with the chrome.notifications.create
@@ -37,6 +37,8 @@ const notificationsCreated = [];
 const notificationsCleared = [];
 const notificationClickListeners = [];
 const tabsCreated = [];
+const windowsCreated = [];
+const windowsOpen = new Map();
 let notificationsPermission = true;
 
 const chrome = {
@@ -80,6 +82,18 @@ const chrome = {
   tabs: {
     create: (args) => tabsCreated.push(args),
   },
+  windows: {
+    create: (data, callback) => {
+      const win = { id: 41, tabs: [{ url: data.url }] };
+      windowsCreated.push(data);
+      windowsOpen.set(win.id, win);
+      if (callback) callback(win);
+    },
+    get: (id, callback) => { if (callback) callback(windowsOpen.get(id)); },
+    getAll: (_opts, callback) => { if (callback) callback([...windowsOpen.values()]); },
+    update: (_id, _info, callback) => { if (callback) callback({}); },
+    onRemoved: { addListener: () => {} },
+  },
 };
 globalThis.chrome = chrome;
 
@@ -118,6 +132,8 @@ function resetWorld() {
   notificationsCreated.length = 0;
   notificationsCleared.length = 0;
   tabsCreated.length = 0;
+  windowsCreated.length = 0;
+  windowsOpen.clear();
   pcList = [];
   pcListStatus = 200;
   notificationsPermission = true;
@@ -217,18 +233,26 @@ test('a signed-out poll never knocks', async () => {
   assert.equal(notificationsCreated.length, 0);
 });
 
-// ─── The click (interim target) ────────────────────────────────────────────
+// ─── The click (the approvals window since Bite 5) ─────────────────────────
 
-test('clicking the knock opens the Helmian approvals page in a tab and clears the knock', async () => {
+test('clicking the knock opens the approvals window and clears the knock', async () => {
   resetWorld();
   fireNotificationClick(KNOCK_ID);
-  assert.deepEqual(tabsCreated, [{ url: 'https://helmian.cloud/app#approvals' }]);
+  // openPcApprovalsWindow is async inside a fire-and-forget click path;
+  // let its window calls land before reading them.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(windowsCreated.length, 1, 'the click opens the approvals window');
+  assert.equal(windowsCreated[0].url, `chrome-extension://${EXT_ID}/popup/approvals-window.html`);
+  assert.equal(windowsCreated[0].type, 'popup');
+  assert.equal(tabsCreated.length, 0, 'the tab target of Bite 4 is gone');
   assert.deepEqual(notificationsCleared, [KNOCK_ID]);
 });
 
-test('clicking some other notification does not open the approvals page', async () => {
+test('clicking some other notification does not open the approvals window', async () => {
   resetWorld();
   fireNotificationClick('an-unrelated-notification');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(windowsCreated.length, 0);
   assert.equal(tabsCreated.length, 0);
   assert.equal(notificationsCleared.length, 0);
 });

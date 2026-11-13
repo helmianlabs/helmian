@@ -138,6 +138,7 @@ const BENIGN = {
   'helmion:approvals-view': {
     ok: true, view: { session: 'out', state: 'signed-out', items: [], count: 0, lastError: '' },
   },
+  'helmion:pc-approvals-open-window': { ok: true, opened: true },
   'helmion:scribe-settings': {
     ok: true,
     settings: {
@@ -292,7 +293,8 @@ test('the signed-out state shows the sign-in line and the sign-in button, never 
   assert.equal(rows(document).length, 0);
   const signIn = document.byId.get('pcSignInBtn');
   assert.equal(signIn.hidden, false, 'the sign-in button shows in the signed-out state');
-  assert.equal(document.byId.get('pcWindowBtn').disabled, true);
+  assert.equal(document.byId.get('pcWindowBtn').disabled, false,
+    'the window button is live since Bite 5; the window itself shows the signed-out state');
 
   signIn.click();
   assert.equal(tabsCreated.length, 1);
@@ -361,8 +363,18 @@ test('the pop-up page carries both sections, PC first, each labelled as its own 
     html.indexOf('id="pcApprovals"') < html.indexOf('id="approvals"'),
     'the PC approvals section sits above the Scribe section',
   );
-  assert.match(html, /<button id="pcWindowBtn"[^>]*disabled/,
-    'the approvals window button is present but disabled until the window piece is built');
-  assert.match(html, /approvals window is not built yet/i,
-    'a plain note says the window is not built yet, so the disabled button does not pretend');
+  assert.ok(!/<button id="pcWindowBtn"[^>]*\bdisabled\b/.test(html),
+    'the approvals window button is live since Bite 5 built the window');
+  assert.ok(!/approvals window is not built yet/i.test(html),
+    'the not-built note from Bite 3 is gone; the button does the thing it names');
+});
+
+test('the window button asks the worker to open the approvals window, once per click', async () => {
+  const { document, messages } = await loadPopup({ pcView: listView([]) });
+
+  document.byId.get('pcWindowBtn').click();
+  await flush();
+
+  const opens = messages.filter((m) => m.type === 'helmion:pc-approvals-open-window');
+  assert.equal(opens.length, 1, 'one click sends exactly one open message');
 });
