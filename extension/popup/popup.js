@@ -437,6 +437,124 @@ $('approvalsPassphrase').addEventListener('keydown', (e) => { if (e.key === 'Ent
 
 refreshApprovals(false);
 
+// ─── PC approvals pop-up ────────────────────────────────────────────────────
+// The Helmian app's own approvals: actions an AI asked the Executive Guard
+// to run on this PC, decided through Helmian's proxy by the worker
+// (background/pc-approvals-client.js). This section only renders what the
+// worker reports and sends back the one tap, the same habit as the Scribe
+// section above — but the two lists are separate in everything: a different
+// server, different state, a different sign-in. This road rides on the
+// browser's own Helmian session; the extension holds no credential for it,
+// and when the session is missing the sign-in happens on the website, never
+// here. A decision reads as done only when the refreshed list the worker
+// returns no longer carries the item; a failed decision shows one plain
+// line and leaves the item waiting. Closing this pop-up decides nothing,
+// and a decision already sent belongs to the worker, not this page.
+
+function pcExpiryText(expiresAt) {
+  if (!expiresAt) return '';
+  const ms = Date.parse(expiresAt) - Date.now();
+  if (Number.isNaN(ms)) return '';
+  if (ms <= 0) return 'expired';
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return 'expires in under a minute';
+  if (mins < 60) return `expires in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  if (hours < 24) return rest ? `expires in ${hours}h ${rest}m` : `expires in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  const dayRest = hours % 24;
+  return dayRest ? `expires in ${days}d ${dayRest}h` : `expires in ${days}d`;
+}
+
+function pcApprovalRow(item) {
+  const li = document.createElement('li');
+  li.className = 'alert approval-row';
+
+  const sum = document.createElement('div');
+  sum.className = 'approval-sum';
+  sum.textContent = item.summary || 'Action';
+  li.appendChild(sum);
+
+  const metaParts = [];
+  if (item.tool) metaParts.push(item.tool);
+  if (item.site) metaParts.push(item.site);
+  const left = pcExpiryText(item.expiresAt);
+  if (left) metaParts.push(left);
+  if (metaParts.length) {
+    const meta = document.createElement('div');
+    meta.className = 'matched';
+    meta.textContent = metaParts.join(' · ');
+    li.appendChild(meta);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const approve = document.createElement('button');
+  approve.type = 'button';
+  approve.textContent = 'Approve';
+  approve.addEventListener('click', () => decidePcFromPopup(item.id, 'approve', [approve, deny]));
+  const deny = document.createElement('button');
+  deny.type = 'button';
+  deny.textContent = 'Deny';
+  deny.addEventListener('click', () => decidePcFromPopup(item.id, 'deny', [approve, deny]));
+  actions.appendChild(approve);
+  actions.appendChild(deny);
+  li.appendChild(actions);
+  return li;
+}
+
+function renderPcApprovals(r) {
+  const status = $('pcApprovalsStatus');
+  const list = $('pcApprovalsList');
+  list.textContent = '';
+  if (!r || (!r.ok && !r.view)) {
+    $('pcSignInBtn').hidden = true;
+    status.textContent = (r && r.error) || 'PC approvals could not be loaded.';
+    return;
+  }
+  const view = r.view || {};
+  const items = view.items || [];
+  $('pcSignInBtn').hidden = view.state !== 'signed-out';
+  if (view.state !== 'signed-out') {
+    for (const item of items) list.appendChild(pcApprovalRow(item));
+  }
+  if (r.error) { status.textContent = r.error; return; }
+  if (view.state === 'signed-out') {
+    status.textContent = view.lastError || 'Please sign in to Helmian.';
+  } else if (view.state === 'not-owner') {
+    status.textContent = view.lastError || "PC actions are approved by the PC owner's account.";
+  } else if (view.state === 'unavailable') {
+    // A stale list is labelled with the time OF the list, never shown as
+    // current — the same wording the approvals window is planned to use.
+    const when = view.updatedAt ? new Date(view.updatedAt).toLocaleTimeString() : '';
+    const staleLine = when ? `Showing the last list from ${when}.` : 'Showing the last list.';
+    status.textContent = view.lastError ? `${staleLine} ${view.lastError}` : staleLine;
+  } else if (items.length === 0) {
+    status.textContent = 'Nothing is waiting for a decision.';
+  } else {
+    status.textContent = `${view.count} waiting for your decision.`;
+  }
+}
+
+async function decidePcFromPopup(id, verdict, buttons) {
+  for (const b of buttons) b.disabled = true;
+  const r = await askWithPayload('helmion:pc-approvals-decide', { id, verdict });
+  renderPcApprovals(r);
+}
+
+async function refreshPcApprovals(force) {
+  renderPcApprovals(await askWithPayload('helmion:pc-approvals-view', { options: { force: force === true } }));
+}
+
+$('pcSignInBtn').addEventListener('click', () => {
+  try {
+    chrome.tabs.create({ url: 'https://helmian.cloud/app#approvals' });
+  } catch { /* the status line above already says what to do */ }
+});
+
+refreshPcApprovals(false);
+
 // ─── Scribe door-knock ──────────────────────────────────────────────────────
 function requestNotifications() {
   return new Promise((resolve) => {

@@ -77,6 +77,8 @@ button {
 }
 button:hover { border-color: var(--ok); color: var(--ok); }
 .danger-btn:hover { border-color: var(--danger); color: var(--danger); }
+button:disabled { opacity: 0.55; cursor: default; }
+button:disabled:hover { border-color: var(--stroke); color: var(--ink); }
 
 .confirm {
   margin: 10px 0 0;
