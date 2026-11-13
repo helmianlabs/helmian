@@ -65,13 +65,19 @@ test('the service worker is a module, because it imports the copied kernel', () 
 });
 
 test('the content scripts load in the order guard.js depends on', () => {
-  // guard.js calls HelmionExtract, HelmionStreamWatch and HelmionUI at startup.
-  // If it loads first, those are undefined and nothing runs.
+  // guard.js calls HelmionSanitize, HelmionExtract, HelmionStreamWatch and
+  // HelmionUI at startup, and wires the Flags surface. If it loads first,
+  // those are undefined and nothing runs. This list is the manifest's own
+  // declared order, which is the order Chrome loads them in; 0.7.0 added
+  // sanitize.js, flags.js and nudge.js to it.
   assert.deepEqual(manifest.content_scripts[0].js, [
     'content/prompt-risk.js',
+    'content/sanitize.js',
+    'content/flags.js',
     'content/extract.js',
     'content/stream-watch.js',
     'content/ui.js',
+    'content/nudge.js',
     'content/guard.js',
   ]);
   assert.equal(manifest.content_scripts[0].run_at, 'document_start');
@@ -84,7 +90,7 @@ test('it never asks for every site', () => {
   );
 });
 
-test('it asks for exactly ONE permission, and that one is storage', () => {
+test('it asks for exactly the permissions 0.7.0 declares, and the list cannot quietly grow', () => {
   // This check used to assert zero permissions, and it was right to. Phase 1
   // only read the page and ran a regular expression.
   //
@@ -94,19 +100,35 @@ test('it asks for exactly ONE permission, and that one is storage', () => {
   // add a UI that drains this queue." He chose the permission, because a flag
   // that vanishes when Chrome evicts the service worker is not evidence.
   //
-  // ONE permission. Not "storage plus downloads" — the export uses a blob URL
-  // and an anchor, which needs none. Not unlimitedStorage — the ledger caps
-  // itself instead. Every extra permission asked for is trust spent, and this
-  // test is what stops the list quietly growing.
-  assert.deepEqual(manifest.permissions, ['storage']);
-  assert.equal(manifest.optional_permissions, undefined);
-  // Host permissions: exactly one deliberate exception, added per explicit
-  // instruction for the OPT-IN Guard findings upload (background/upload.js).
-  // It is disabled by default and does nothing without the user's explicit
-  // opt-in plus a device token. It needs Troy's manual browser testing before
-  // it is treated as verified. This assertion pins the exception to exactly
-  // helmian.cloud and nothing broader — it must never quietly grow.
-  assert.deepEqual(manifest.host_permissions, ['https://helmian.cloud/*']);
+  // It changed again in 0.7.0, deliberately, because the product grew the
+  // features Troy runs: alarms drives the approvals and Scribe polling,
+  // idle drives the auto-nudge's idle detection. The one-permission property
+  // itself is retired — that widening is real, and it is named here rather
+  // than edited away quietly. What this test still guarantees is the part
+  // that matters: the four lists below are pinned EXACTLY as the shipped
+  // manifest declares them, so any future addition fails this test and has
+  // to be argued for on purpose. Every extra permission asked for is trust
+  // spent, and this test is what stops the list quietly growing.
+  assert.deepEqual(manifest.permissions, ['storage', 'alarms', 'idle']);
+  // Optional permissions are not granted at install; the extension must ask
+  // for them at the moment the feature is used (notifications for fresh-mail
+  // alerts, identity for the Scribe sign-in).
+  assert.deepEqual(manifest.optional_permissions, ['notifications', 'identity']);
+  // Host permissions: the findings upload's helmian.cloud, plus
+  // connect.helmian.cloud, the door the Executive Guard approvals and
+  // Scribe clients talk to. Pinned to exactly these two hosts.
+  assert.deepEqual(manifest.host_permissions, [
+    'https://helmian.cloud/*',
+    'https://connect.helmian.cloud/*',
+  ]);
+  // Optional host permissions, requested only when a feature needs them:
+  // https for user-approved local policy endpoints, http for localhost
+  // development endpoints. Pinned exactly as declared.
+  assert.deepEqual(manifest.optional_host_permissions, [
+    'https://*/*',
+    'http://localhost/*',
+    'http://127.0.0.1/*',
+  ]);
 });
 
 test('the only thing that uses the storage permission is the ledger', async () => {
@@ -190,23 +212,37 @@ function isShippedFile(file) {
   return !segments.includes('test') && !segments.includes('test-support');
 }
 
-// The ONE deliberate exception to the no-network rule. background/upload.js is
-// the opt-in cloud upload for Guard findings: disabled by default, only runs
-// when the user enables it in the popup settings AND provides a device token.
-// Added per explicit instruction; needs Troy's manual browser testing before it
-// is treated as verified. Everything else in the extension must stay
-// network-free, and this allowlist must never grow without the same level of
-// deliberate review.
-const NETWORK_ALLOWLIST = ['background/upload.js'];
+// The deliberate exceptions to the no-network rule. In 0.2.4 there was ONE:
+// background/upload.js, the opt-in cloud upload for Guard findings (disabled
+// by default, only runs when the user enables it in the popup settings AND
+// provides a device token). 0.7.0 retired the no-network property itself:
+// Scribe, Flags and the Executive Guard approvals loop are network features
+// by design, and their clients live in the background worker. The property
+// that replaces it, and the one this list enforces exactly: network calls
+// happen ONLY in these six background modules, never in a content script,
+// never in the popup, and any seventh file reaching for the network fails
+// the test below. This allowlist must never grow without the same level of
+// deliberate review the first entry got.
+const NETWORK_ALLOWLIST = [
+  'background/approvals-client.js',
+  'background/executive.js',
+  'background/flags-client.js',
+  'background/scribe-auth.js',
+  'background/scribe-client.js',
+  'background/upload.js',
+];
 
 function isAllowlisted(file) {
   const relative = path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/');
   return NETWORK_ALLOWLIST.includes(relative);
 }
 
-test('nothing in the extension calls out to the network', async () => {
-  // Phase 1 is a local regular expression. If any of this ever starts making
-  // requests, that is a decision somebody should have to make on purpose.
+test('nothing outside the six background client modules calls out to the network', async () => {
+  // 0.2.4 reached the network nowhere outside the opt-in upload. 0.7.0 talks
+  // to Scribe, Flags and the Executive Guard from the background worker on
+  // purpose. What must never happen quietly is a content script, the popup,
+  // or a seventh background file starting to make requests — that is a
+  // decision somebody should have to make on purpose, in this allowlist.
   const files = await listJsFiles(EXTENSION_ROOT);
   const shipped = files.filter(isShippedFile);
   assert.ok(shipped.length > 0, 'the file walk found nothing to check, so this test proves nothing');
@@ -217,14 +253,21 @@ test('nothing in the extension calls out to the network', async () => {
     for (const pattern of NETWORK_PATTERNS) {
       assert.ok(
         !pattern.test(source),
-        `${path.relative(EXTENSION_ROOT, file)} matches ${pattern} — phase 1 reaches the network nowhere`,
+        `${path.relative(EXTENSION_ROOT, file)} matches ${pattern} — network calls belong only in the allowlisted background client modules`,
       );
     }
   }
 });
 
-test('the network allowlist holds exactly the opt-in upload module', async () => {
-  assert.deepEqual(NETWORK_ALLOWLIST, ['background/upload.js']);
+test('the network allowlist holds exactly the six background client modules', async () => {
+  assert.deepEqual(NETWORK_ALLOWLIST, [
+    'background/approvals-client.js',
+    'background/executive.js',
+    'background/flags-client.js',
+    'background/scribe-auth.js',
+    'background/scribe-client.js',
+    'background/upload.js',
+  ]);
   const files = await listJsFiles(EXTENSION_ROOT);
   const shipped = files.filter(isShippedFile).map((file) => path.relative(EXTENSION_ROOT, file).replace(/\\/g, '/'));
   for (const allowed of NETWORK_ALLOWLIST) {

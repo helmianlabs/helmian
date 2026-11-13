@@ -2,14 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Helmion Guard</title>
+  <title>Helmian Guard</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
   <header>
-    <h1>Helmion Guard</h1>
+    <h1>Helmian Guard</h1>
     <p id="tagline">Every flag it raises is logged on this machine. Cloud upload is opt-in.</p>
   </header>
+
+  <section id="approvals" aria-live="polite">
+    <h2>Approvals</h2>
+    <p class="muted">Actions your AIs take through Scribe wait for your decision here. Nothing runs until you approve it.</p>
+    <div id="approvalsSignIn">
+      <label class="row">Scribe passphrase <input id="approvalsPassphrase" type="password" autocomplete="off" placeholder="Your Scribe passphrase"></label>
+      <div class="actions">
+        <button id="approvalsSignInBtn" type="button">Sign in to approvals</button>
+      </div>
+    </div>
+    <p id="approvalsStatus" class="muted" role="status"></p>
+    <ul id="approvalsList" class="alerts"></ul>
+  </section>
 
   <section id="guardStatus" class="guard-status" aria-live="polite">
     <h2>Current status</h2>
@@ -28,6 +41,7 @@
     <div class="stat"><span class="n" id="statTotal">–</span><span class="l">flags logged</span></div>
     <div class="stat"><span class="n danger" id="statDestructive">–</span><span class="l">destructive commands</span></div>
     <div class="stat"><span class="n note" id="statUnsourced">–</span><span class="l">unsourced claims</span></div>
+    <div class="stat"><span class="n note" id="statFlags">–</span><span class="l">AI flags</span></div>
   </section>
 
   <p id="range" class="muted"></p>
@@ -47,6 +61,73 @@
       <button id="uploadNow" type="button">Upload now</button>
     </div>
     <p id="uploadStatus" class="muted" role="status"></p>
+  </section>
+
+
+  <section id="executive" aria-live="polite">
+    <h2>Executive Guard (opt-in)</h2>
+    <p class="muted">Ask your Executive Guard server before risky sends. Decisions are signed and checked here against the key you pair with. Off by default; without it, Guard decides on this computer.</p>
+    <label class="row"><input id="execEnabled" type="checkbox"> Use Executive Guard</label>
+    <label class="row">Server URL <input id="execUrl" type="url" autocomplete="off" placeholder="https://guard.example or http://127.0.0.1:8787"></label>
+    <label class="row">Device token <input id="execToken" type="password" autocomplete="off" placeholder="Paste device token"></label>
+    <div class="actions">
+      <button id="execSave" type="button">Save and pair</button>
+    </div>
+    <p id="execStatus" class="muted" role="status"></p>
+  </section>
+
+  <section id="flags" aria-live="polite">
+    <h2>Flags account (opt-in)</h2>
+    <p class="muted">Flags (evasive answers, leaked secrets, harmful code) are always shown and logged here. Turn this on to also report them, redacted, to your Flags account (Shared Memory). Off by default.</p>
+    <label class="row"><input id="flagsEnabled" type="checkbox"> Report flags to my Flags account</label>
+    <label class="row">Server URL <input id="flagsUrl" type="url" autocomplete="off" placeholder="https://memory.example.com"></label>
+    <label class="row">API key <input id="flagsKey" type="password" autocomplete="off" spellcheck="false" placeholder="smk_… (shown once on your dashboard)"></label>
+    <label class="row"><input id="flagsScan" type="checkbox"> Also double-check each message with the Flags scanner before it is sent (sends the message text, after Guard's own redaction, to your Flags server; nothing is stored)</label>
+    <label class="row">Daily call budget <input id="flagsBudget" type="number" min="1" max="100000" step="1" placeholder="100"></label>
+    <div class="actions">
+      <button id="flagsSave" type="button">Save flags settings</button>
+    </div>
+    <p id="flagsStatus" class="muted" role="status"></p>
+    <h3>Alerts from your Flags account</h3>
+    <p class="muted">High and critical flags from every AI connected to the account.</p>
+    <div class="actions">
+      <button id="flagsRefresh" type="button">Check now</button>
+    </div>
+    <p id="flagsAlertsStatus" class="muted" role="status"></p>
+    <ul id="flagsAlerts" class="alerts"></ul>
+  </section>
+
+  <section id="scribe" aria-live="polite">
+    <h2>Scribe letters</h2>
+    <p class="muted">Off by default. Knocks when a mailbox you watch has new Scribe mail. Guard only counts letters; the AI reads them (and Scribe records the receipt) when it runs check_inbox.</p>
+    <label class="row"><input id="scribeEnabled" type="checkbox"> Knock when I have Scribe mail</label>
+    <label class="row">Scribe URL <input id="scribeUrl" type="url" autocomplete="off" placeholder="https://scribe.example.com"></label>
+    <div class="row"><button id="scribeSignIn" type="button">Sign in to Scribe</button> <button id="scribeSignOut" type="button">Sign out</button> <span id="scribeAuth" class="muted"></span></div>
+    <label class="row">Mailboxes <input id="scribeMailboxes" type="text" autocomplete="off" placeholder="troy, claude.ai, muse"></label>
+    <label class="row"><input id="scribeLegacy" type="checkbox"> Also count legacy for-&lt;name&gt; memories (self-host, every 5 min at most)</label>
+    <details id="scribeAdvanced">
+      <summary>Advanced</summary>
+      <label class="row">Mailbox token (fallback, only if sign-in is not possible) <input id="scribeToken" type="password" autocomplete="off" spellcheck="false" placeholder="MAILBOX_STATUS_TOKEN or smk_… (mailbox.read)"></label>
+      <label class="row"><input id="scribeNotify" type="checkbox"> Show a notification for new letters (off by default)</label>
+      <label class="row"><input id="scribeBadge" type="checkbox"> Show the unread count on the Guard icon (off by default)</label>
+      <label>Unread-mail path (token mode; default /mailbox/unread)<input id="scribeUnreadPath" type="text" placeholder="/mailbox/unread" spellcheck="false"></label>
+    </details>
+    <div class="row"><button id="scribeSave" type="button">Save Scribe settings</button> <button id="scribeRefresh" type="button">Check now</button></div>
+    <p id="scribeStatus" class="muted" role="status"></p>
+    <ul id="scribeInbox" class="alerts"></ul>
+    <h3>Auto-nudge (behind the scenes)</h3>
+    <p class="muted">Off by default. When an AI has unread Scribe mail and its chat tab is open and idle, Guard types one fixed line asking it to check its Scribe inbox, and submits it. Guard never pastes letter content. At most once per tab every 10 minutes, with a daily cap per site.</p>
+    <label class="row"><input id="nudgeEnabled" type="checkbox"> Auto-nudge open AI tabs</label>
+    <label class="row"><input id="nudgeKilled" type="checkbox"> Kill switch: never nudge (beats everything)</label>
+    <label class="row"><input id="nudgeSite-chatgpt.com" type="checkbox"> ChatGPT (chatgpt.com)</label>
+    <label class="row"><input id="nudgeSite-claude.ai" type="checkbox"> Claude (claude.ai)</label>
+    <label class="row"><input id="nudgeSite-grok.com" type="checkbox"> Grok (grok.com)</label>
+    <label class="row"><input id="nudgeSite-gemini.google.com" type="checkbox"> Gemini (gemini.google.com)</label>
+    <label class="row">Idle minutes before a nudge <input id="nudgeIdle" type="number" min="1" max="120" value="3"></label>
+    <label class="row">Daily cap per site <input id="nudgeCap" type="number" min="1" max="200" value="20"></label>
+    <div class="row"><button id="nudgeSave" type="button">Save auto-nudge</button></div>
+    <p id="nudgeStatus" class="muted" role="status"></p>
+    <ul id="nudgeLog" class="alerts"></ul>
   </section>
 
   <p id="confirm" class="confirm" hidden>

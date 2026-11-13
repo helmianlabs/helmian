@@ -24,12 +24,53 @@
 // instead of a whole reply.
 
 import { scanBlocks } from './scan.js';
+import {
+  ALARM_PERIOD_MIN,
+  MAILBOX_SITES,
+  SCRIBE_ALARM,
+  badgeFor,
+  getScribeSettings,
+  inboxView,
+  isConfigured as scribeConfigured,
+  noticeText,
+  pollScribe,
+  setScribeSettings,
+} from './scribe-client.js';
+import { getAuth as getScribeAuth, signIn as scribeSignIn, signOut as scribeSignOut } from './scribe-auth.js';
+import {
+  APPROVALS_ALARM,
+  approvalsView,
+  badgeTextFor as approvalsBadgeText,
+  decideApproval,
+  getApprovalsState,
+  pollApprovals,
+  setApprovalsBadgeOwned,
+  signInToApprovals,
+} from './approvals-client.js';
+import {
+  getNudgeSettings, queuePending, readNudgeLog, runNudges, setNudgeSettings, noteTab, siteForHost,
+} from './nudge-policy.js';
 import { scanProse } from './claims.js';
 import {
   getUploadSettings,
   setUploadSettings,
   uploadNewFindings,
 } from './upload.js';
+import {
+  getExecutiveSettings,
+  pairExecutive,
+  pollApproval,
+  requestDecision,
+  setExecutiveSettings,
+} from './executive.js';
+import {
+  getFlagsSettings,
+  markAlertsSeen,
+  pollAlerts,
+  reportFlag,
+  scanText,
+  setFlagsSettings,
+} from './flags-client.js';
 import {
   appendEntry,
   chromeStorage,
@@ -42,6 +83,52 @@ import {
 
 // The one place the storage permission is used.
 const ledger = chromeStorage();
+
+// Approvals this browser session asked Executive Guard for: approvalId ->
+// { nonce, actionHash }. Kept in memory on purpose; the content script asks
+// again if the worker was evicted. Only approvals in here are ever polled.
+const pendingApprovals = new Map();
+
+function extensionVersion() {
+  try { return chrome.runtime.getManifest().version; } catch { return '0.0.0'; }
+}
+
+// Sent with Flags reports as context.browser. Only the family, never the full UA.
+function browserFamily() {
+  const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+  if (/Firefox\//.test(ua)) return 'firefox';
+  if (/Edg\//.test(ua)) return 'edge';
+  if (/Chrome\//.test(ua)) return 'chrome';
+  return 'unknown';
+}
+
+// A message from one of this extension's own content scripts (in a tab).
+function isFromOwnContentScript(sender) {
+  if (!sender || !sender.tab || sender.id !== chrome.runtime.id) return false;
+  // An extension page opened in a tab also has sender.tab; a content script's
+  // sender.url is the web page's.
+  try {
+    return !String(sender.url || '').startsWith(chrome.runtime.getURL(''));
+  } catch {
+    return false;
+  }
+}
+
+// What a content script may send for a decision. Raw page text never reaches
+// the worker for this: the content script sends a redacted summary and a hash.
+const DECIDE_KINDS = new Set(['prompt.send', 'prompt.paste', 'code.reveal']);
+function cleanAction(input) {
+  const a = input && typeof input === 'object' ? input : {};
+  if (!DECIDE_KINDS.has(a.kind)) throw new Error(`unsupported action kind: ${String(a.kind)}`);
+  if (!/^[0-9a-f]{64}$/.test(String(a.contentHash))) throw new Error('action needs a sha256 contentHash');
+  return {
+    kind: a.kind,
+    site: String(a.site || 'unknown-site').toLowerCase().slice(0, 253),
+    contentHash: String(a.contentHash),
+    riskSignals: Array.isArray(a.riskSignals) ? a.riskSignals.map(String).slice(0, 32) : [],
+    summary: String(a.summary || '').slice(0, 500),
+  };
+}
 
 const RED = '#b3261e';
 const AMBER = '#c77700';
@@ -101,6 +188,18 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:ledger-clear',
   'helmion:guard-upload',
   'helmion:guard-upload-settings',
+  'helmion:executive-settings',
+  'helmion:executive-pair',
+  'helmion:flags-settings',
+  'helmion:flags-alerts',
+  'helmion:scribe-settings',
+  'helmion:scribe-inbox',
+  'helmion:scribe-nudge',
+  'helmion:scribe-signin',
+  'helmion:nudge-settings',
+  'helmion:approvals-view',
+  'helmion:approvals-signin',
+  'helmion:approvals-decide',
 ]);
 
 function isFromOwnPopup(sender) {
@@ -115,6 +214,149 @@ function isFromOwnPopup(sender) {
     return false;
   }
 }
+
+// ─── SCRIBE DOOR-KNOCK ─────────────────────────────────────────────────────
+// Off by default. A 1-minute alarm (MV3 floor is 30 s) polls each watched
+// mailbox when it is due (60–120 s per the server's poll_after_seconds, ±15 s
+// jitter). Guard only knocks: it never writes to Scribe; the AI's own
+// check_inbox / read_message produce the receipts. See background/scribe-client.js.
+const SCRIBE_BADGE = '#2e6b3a';
+async function syncScribeAlarm() {
+  try {
+    const s = await getScribeSettings(ledger);
+    if (!chrome.alarms) return;
+    if (scribeConfigured(s)) chrome.alarms.create(SCRIBE_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
+    else { chrome.alarms.clear(SCRIBE_ALARM); setScribeBadge(0); }
+  } catch (error) { console.warn('[Helmion Guard] scribe alarm sync failed:', error.message); }
+}
+function setScribeBadge(unread) {
+  try {
+    chrome.action.setBadgeText({ text: badgeFor(unread) });
+    if (unread > 0) {
+      chrome.action.setBadgeBackgroundColor({ color: SCRIBE_BADGE });
+      chrome.action.setTitle({ title: `Helmion Guard: ${unread} unread Scribe letter(s)` });
+    }
+  } catch { /* badge is best effort */ }
+}
+async function notifyFresh(fresh) {
+  if (!fresh || !fresh.length || !chrome.notifications) return;
+  const granted = await new Promise((resolve) => {
+    try { chrome.permissions.contains({ permissions: ['notifications'] }, (ok) => resolve(Boolean(ok))); } catch { resolve(false); }
+  });
+  if (!granted) return;
+  for (const { mailbox, items } of fresh.slice(0, 4)) {
+    const t = noticeText(mailbox, items);
+    try {
+      chrome.notifications.create(`helmion-scribe:${mailbox}:${items[items.length - 1].id}`, {
+        type: 'basic', iconUrl: 'popup/icon-128.png', title: t.title, message: t.message, priority: 1,
+      });
+    } catch { /* notification is best effort */ }
+  }
+}
+function idleState() {
+  return new Promise((resolve) => {
+    try { if (!chrome.idle) { resolve('active'); return; } chrome.idle.queryState(300, (st) => resolve(st || 'active')); }
+    catch { resolve('active'); }
+  });
+}
+export async function runScribePoll(opts = {}) {
+  const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+  const idle = (await idleState()) !== 'active';
+  const result = await pollScribe(ledger, { online, idle, ...opts });
+  // 0.6.0: the badge and notices are off by default (Troy: no doorbell to click).
+  if (typeof result.unread === 'number') setScribeBadge(result.showBadge ? result.unread : 0);
+  if (result.fresh) await notifyFresh(result.fresh);
+  await runAutoNudge(result).catch((error) => console.warn('[Helmion Guard] auto-nudge pass failed:', error && error.message));
+  return result;
+}
+// ─── SCRIBE APPROVALS POP-UP (0.7.0) ───────────────────────────────────────
+// The door (connect.helmian.cloud/approvals) holds the list and takes the
+// decisions; this is only its poll + badge + popup plumbing. See
+// background/approvals-client.js for the contract and the rule that the
+// passphrase is never stored. The badge is the whole signal: amber, global,
+// count only. Nothing opens, sounds or steals focus — the pop-up appears
+// when Troy clicks the icon, which is the point of the feature.
+const APPROVALS_BADGE = '#c77700';
+async function syncApprovalsAlarm() {
+  try {
+    if (!chrome.alarms) return;
+    const s = await getApprovalsState(ledger);
+    if (s.session === 'in') chrome.alarms.create(APPROVALS_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
+    else chrome.alarms.clear(APPROVALS_ALARM);
+  } catch (error) { console.warn('[Helmion Guard] approvals alarm sync failed:', error.message); }
+}
+async function paintApprovalsBadge() {
+  try {
+    const s = await getApprovalsState(ledger);
+    const text = approvalsBadgeText(s.session === 'in' ? s.count : 0);
+    if (!text && !s.badgeOwned) return;
+    chrome.action.setBadgeText({ text });
+    if (text) {
+      chrome.action.setBadgeBackgroundColor({ color: APPROVALS_BADGE });
+      chrome.action.setTitle({ title: `Helmian Guard: ${s.count} approval(s) waiting for your decision` });
+      await setApprovalsBadgeOwned(ledger, true);
+    } else {
+      await setApprovalsBadgeOwned(ledger, false);
+    }
+  } catch { /* badge is best effort */ }
+}
+export async function runApprovalsPoll(opts = {}) {
+  const result = await pollApprovals(ledger, opts);
+  await paintApprovalsBadge();
+  if (result.session === 'out') await syncApprovalsAlarm();
+  return result;
+}
+// ─── SCRIBE AUTO-NUDGE (0.6.0, off by default) ─────────────────────────────
+// Queue fresh letters (ids only), then let the policy decide per open chat tab.
+// The text is fixed (nudge-policy.js nudgeText); letter content never leaves here.
+function sendToTab(tabId, message) {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, message, (answer) => { void chrome.runtime.lastError; resolve(answer || null); });
+    } catch { resolve(null); }
+  });
+}
+export async function runAutoNudge(result = {}, { now = Date.now() } = {}) {
+  for (const { mailbox, items } of (result && result.mail) || []) await queuePending(ledger, mailbox, items, now);
+  return runNudges(ledger, { sendToTab, now });
+}
+function identityApi() {
+  const b = globalThis.browser && globalThis.browser.identity;
+  if (b && typeof b.launchWebAuthFlow === 'function') return { launch: (url) => b.launchWebAuthFlow({ url, interactive: true }), redirect: b.getRedirectURL() };
+  const c = chrome.identity;
+  if (c && typeof c.launchWebAuthFlow === 'function') {
+    return {
+      launch: (url) => new Promise((resolve, reject) => chrome.identity.launchWebAuthFlow({ url, interactive: true }, (final) => {
+        const err = chrome.runtime.lastError; if (err || !final) reject(new Error((err && err.message) || 'Sign-in was cancelled')); else resolve(final);
+      })),
+      redirect: c.getRedirectURL(),
+    };
+  }
+  return null;
+}
+
+// The nudge: open (or focus) the AI that owns the mailbox so it runs check_inbox.
+function openMailboxSite(mailbox) {
+  const url = MAILBOX_SITES[mailbox];
+  if (!url) { try { if (chrome.action.openPopup) chrome.action.openPopup(); } catch { /* unsupported */ } return false; }
+  try { chrome.tabs.create({ url }); return true; } catch { return false; }
+}
+if (chrome.alarms && chrome.alarms.onAlarm) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm && alarm.name === SCRIBE_ALARM) runScribePoll().catch(() => {});
+    if (alarm && alarm.name === APPROVALS_ALARM) runApprovalsPoll().catch(() => {});
+  });
+}
+if (chrome.notifications && chrome.notifications.onClicked) {
+  chrome.notifications.onClicked.addListener((id) => {
+    const m = /^helmion-scribe:([^:]+):/.exec(String(id));
+    if (!m) return;
+    openMailboxSite(m[1]);
+    try { chrome.notifications.clear(id); } catch { /* ignore */ }
+  });
+}
+if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => { syncScribeAlarm(); syncApprovalsAlarm(); });
+if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(() => { syncScribeAlarm(); syncApprovalsAlarm(); });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   try {
@@ -206,6 +448,191 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         })
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
+    }
+
+    // ─── EXECUTIVE GUARD VERIFICATION LOOP ─────────────────────────────────
+    // See background/executive.js. Without a paired server these answer from
+    // the local policy and say so (source:'local', verified:false).
+    if (type === 'helmion:decide') {
+      let action;
+      try { action = cleanAction(message.action); }
+      catch (error) { sendResponse({ ok: false, error: error.message }); return false; }
+      requestDecision(ledger, action, { pendingApprovals })
+        .then((decision) => sendResponse({ ok: true, decision }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approval-status') {
+      pollApproval(ledger, String(message.approvalId || ''), { pendingApprovals })
+        .then((status) => sendResponse({ ok: true, status }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:executive-settings') {
+      const payload = message.settings || {};
+      const isWrite = ['enabled', 'serverUrl', 'deviceToken'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      (isWrite ? setExecutiveSettings(ledger, payload) : getExecutiveSettings(ledger))
+        .then((settings) => sendResponse({ ok: true, settings }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:executive-pair') {
+      pairExecutive(ledger)
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // ─── FLAGS ──────────────────────────────────────────────────────────────
+    // Every flag is logged locally. It is reported to the Flags API only when
+    // the user opted in (background/flags-client.js).
+    if (type === 'helmion:flag') {
+      const flag = message.flag || {};
+      const entry = makeEntry({
+        kind: 'ai-flag',
+        site: flag.site,
+        matched: `${flag.kind}: ${flag.rule}`,
+        text: flag.excerpt,
+        outcome: 'flagged',
+      });
+      appendEntry(ledger, entry)
+        .then(() => reportFlag(ledger, {
+          ...flag,
+          id: flag.id || entry.id,
+          // The page the content script runs in; flags-client keeps only the
+          // origin and path, and only on the four chat sites.
+          url: (sender && (sender.url || (sender.tab && sender.tab.url))) || undefined,
+        }, { version: extensionVersion(), browser: browserFamily() }))
+        .then((report) => sendResponse({ ok: true, report }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // Content script: may it cross-check a message with the Flags scanner?
+    // Answers a yes/no only; the key and URL never go to a page.
+    if (type === 'helmion:flags-config') {
+      getFlagsSettings(ledger)
+        .then((s) => sendResponse({ ok: true, scanBeforeSend: s.enabled && s.scanBeforeSend && s.hasKey && Boolean(s.baseUrl) && !s.keyRejected }))
+        .catch(() => sendResponse({ ok: true, scanBeforeSend: false }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-scan') {
+      if (!isFromOwnContentScript(sender)) { sendResponse({ ok: false, error: 'not allowed' }); return false; }
+      scanText(ledger, typeof message.text === 'string' ? message.text : '')
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-alerts') {
+      const opts = message.options || {};
+      (opts.markSeen ? markAlertsSeen(ledger).then(() => pollAlerts(ledger, { force: false })) : pollAlerts(ledger, { force: opts.force === true }))
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-settings') {
+      const payload = message.settings || {};
+      const isWrite = ['enabled', 'baseUrl', 'apiKey', 'scanBeforeSend', 'dailyBudget'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      (isWrite ? setFlagsSettings(ledger, payload) : getFlagsSettings(ledger))
+        .then((settings) => sendResponse({ ok: true, settings }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-settings') {
+      const payload = message.settings || {};
+      const isWrite = ['enabled', 'baseUrl', 'token', 'mailboxes', 'includeLegacy', 'dailyBudget', 'notify', 'showBadge', 'unreadPath', 'clearToken'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      (isWrite ? setScribeSettings(ledger, payload).then(async (r) => { await syncScribeAlarm(); return r; }) : getScribeSettings(ledger))
+        .then((settings) => sendResponse({ ok: true, settings }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-inbox') {
+      const force = message.options && message.options.force === true;
+      (force ? runScribePoll({ force: true }) : Promise.resolve({}))
+        .then(async (poll) => sendResponse({ ok: true, skipped: poll.skipped, ...(await inboxView(ledger)) }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:nudge-hello') {
+      // Any of the four chat origins registers its tab. Not privileged: it only
+      // says "a chat tab exists here"; the policy and switches still decide.
+      const site = sender && sender.tab && sender.tab.url ? siteForHost(new URL(sender.tab.url).hostname) : null;
+      if (site && sender.tab.id != null) noteTab(ledger, sender.tab.id, site, Date.now()).catch(() => {});
+      sendResponse({ ok: Boolean(site) });
+      return false;
+    }
+
+    if (type === 'helmion:nudge-settings') {
+      const payload = message.settings || {};
+      const write = Object.keys(payload).length > 0;
+      (write ? setNudgeSettings(ledger, payload) : getNudgeSettings(ledger))
+        .then(async (settings) => sendResponse({ ok: true, settings, log: (await readNudgeLog(ledger)).slice(-20).reverse() }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-signin') {
+      const action = message.action;
+      const run = async () => {
+        if (action === 'status') return getScribeAuth(ledger);
+        if (action === 'signout') return scribeSignOut(ledger);
+        const s = await getScribeSettings(ledger);
+        if (!s.baseUrl) throw new Error('Save the Scribe URL first');
+        const id = identityApi();
+        if (!id) throw new Error('This browser did not grant the identity permission needed for sign-in');
+        const view = await scribeSignIn(ledger, s.baseUrl, { launch: id.launch, redirectUri: id.redirect });
+        await setScribeSettings(ledger, { clearRejected: true });
+        await syncScribeAlarm();
+        return view;
+      };
+      run().then((auth) => sendResponse({ ok: true, auth })).catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approvals-view') {
+      const force = message.options && message.options.force === true;
+      runApprovalsPoll({ force })
+        .then(async () => sendResponse({ ok: true, view: approvalsView(await getApprovalsState(ledger)) }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approvals-signin') {
+      // The passphrase exists only inside this call and the client's one
+      // POST. It is never written to storage (approvals-client.js).
+      signInToApprovals(ledger, String(message.passphrase || ''))
+        .then(async (result) => {
+          await syncApprovalsAlarm();
+          await paintApprovalsBadge();
+          sendResponse(result);
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approvals-decide') {
+      decideApproval(ledger, String(message.id || ''), message.verdict === 'approve' ? 'approve' : 'deny')
+        .then(async (result) => {
+          await paintApprovalsBadge();
+          if (result.view && result.view.session === 'out') await syncApprovalsAlarm();
+          sendResponse(result);
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-nudge') {
+      sendResponse({ ok: true, opened: openMailboxSite(String(message.mailbox || '')) });
+      return false;
     }
 
     if (type === 'helmion:badge') {

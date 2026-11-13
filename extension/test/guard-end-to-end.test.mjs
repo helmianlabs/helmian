@@ -1,6 +1,6 @@
 // The whole extension, running.
 //
-// Every other test file checks a piece. This one loads the four content scripts
+// Every other test file checks a piece. This one loads the content scripts
 // in the order manifest.json lists them, points them at a page, and routes their
 // messages to the real service worker in background/worker.js. What gets drawn
 // is what would be drawn in Chrome.
@@ -20,9 +20,12 @@ await installWorker();
 
 const CONTENT_SCRIPTS = [
   'content/prompt-risk.js',
+  'content/sanitize.js',
+  'content/flags.js',
   'content/extract.js',
   'content/stream-watch.js',
   'content/ui.js',
+  'content/nudge.js',
   'content/guard.js',
 ];
 
