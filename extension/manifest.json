@@ -27,6 +27,7 @@
       "js": [
         "content/prompt-risk.js",
         "content/sanitize.js",
+        "generated/helmion-injection.content.js",
         "content/flags.js",
         "content/extract.js",
         "content/stream-watch.js",

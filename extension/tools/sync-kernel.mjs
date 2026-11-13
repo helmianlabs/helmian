@@ -88,6 +88,39 @@ export const INJECTION = copyNamed('injection');
 export const INJECTION_SOURCE = INJECTION.source;
 export const INJECTION_GENERATED_FILE = INJECTION.generated;
 
+/* ─── THE DERIVED CONTENT BUILD ────────────────────────────────────────────
+ *
+ * One copy gets a second, derived artifact. src/core/injection-risk.mjs is
+ * the send-time scan for the content scripts, and content scripts are
+ * classic scripts: they cannot load the ES module copy above (its `export`
+ * statements are a syntax error there), and there is no bundler in this
+ * repo. Hand-writing a twin detector inside a content file is the drift
+ * this script exists to prevent.
+ *
+ * So the injection copy is ALSO written as a classic-script build of the
+ * very same source: the `export` keywords stripped mechanically, the
+ * public names attached as HelmionInjection (the attach shape every other
+ * content script uses). Nobody hand-types a pattern; the single source of
+ * truth stays src/core/injection-risk.mjs, and kernel-sync.test.mjs
+ * re-derives this build in memory and byte-compares it, exactly as it does
+ * the module copies. */
+export const INJECTION_CONTENT = Object.freeze({
+  name: 'injection-content',
+  label: 'src/core/injection-risk.mjs',
+  source: source('src', 'core', 'injection-risk.mjs'),
+  generated: generated('helmion-injection.content.js'),
+  global: 'HelmionInjection',
+  attach: Object.freeze([
+    Object.freeze({ as: 'scan', from: 'scanInjection' }),
+    Object.freeze({ as: 'describe', from: 'describeInjectionFindings' }),
+    Object.freeze({ as: 'SIGNAL', from: 'INJECTION_OVERRIDE_SIGNAL' }),
+  ]),
+});
+
+export const CONTENT_BUILDS = Object.freeze([INJECTION_CONTENT]);
+
+export const INJECTION_CONTENT_GENERATED_FILE = INJECTION_CONTENT.generated;
+
 // The header is fixed text on purpose. Nothing in it changes between runs — no
 // timestamp, no hash, no version, no machine-specific path — so regenerating an
 // unchanged source produces a byte-identical file and the drift test stays
@@ -180,6 +213,75 @@ export function stripHeader(text) {
   return body.slice(index + HEADER_END_TEXT.length).replace(/^\r?\n/, '');
 }
 
+export function contentHeaderFor(build, eol = '\n') {
+  return [
+    '// GENERATED FILE — DO NOT EDIT.',
+    '//',
+    `// Classic-script build of ${build.label} for the content scripts,`,
+    '// which cannot load ES modules. Produced by',
+    '// extension/tools/sync-kernel.mjs from the same single source as the',
+    '// byte-for-byte module copy: the `export` keywords are stripped',
+    `// mechanically and the public names are attached as ${build.global}.`,
+    '// Edit the original, then run:',
+    '//     node extension/tools/sync-kernel.mjs',
+    '//',
+    '// extension/test/kernel-sync.test.mjs fails if this file and the original',
+    '// ever differ, so the two can never drift apart quietly.',
+    '',
+  ].join(eol);
+}
+
+// The whole transformation, and it is deliberately tiny: an `export`
+// keyword in front of a declaration is removed, nothing else is touched.
+// Any other export form (a bare `export { ... }` list, a default export
+// the strip cannot see) is refused by buildContentFile below rather than
+// silently producing a file that is not the source.
+export function stripExports(text) {
+  return String(text)
+    .replace(/^export default /gm, '')
+    .replace(/^export (?=(?:async function|function|const|let|var|class) )/gm, '');
+}
+
+export function contentAttachFor(build, eol = '\n') {
+  return [
+    '',
+    '// The module source above is verbatim apart from the stripped `export`',
+    '// keywords. What follows is the rest of the transformation: the public',
+    '// names, attached the way every other content script attaches.',
+    `(function attach${build.global}(root) {`,
+    "  'use strict';",
+    '',
+    `  root.${build.global} = {`,
+    ...build.attach.map(({ as, from }) => `    ${as}: ${from},`),
+    '  };',
+    "}(typeof globalThis !== 'undefined' ? globalThis : this));",
+    '',
+  ].join(eol);
+}
+
+export async function buildContentFile(build = INJECTION_CONTENT) {
+  const text = await readFile(build.source, 'utf8');
+  assertBrowserSafe(text, build.label);
+  const eol = lineEndingOf(text);
+  const body = stripExports(text);
+  if (/(?:^|\n)export[\s{*]/.test(body)) {
+    throw new Error(
+      `${build.label} uses an export form the content build cannot strip mechanically. `
+      + 'Keep its exports as declarations (export function / export const), '
+      + 'or extend stripExports in extension/tools/sync-kernel.mjs deliberately.',
+    );
+  }
+  const bodyText = body.endsWith('\n') ? body : body + eol;
+  return `${contentHeaderFor(build, eol)}${HEADER_END_TEXT}${eol}${bodyText}${contentAttachFor(build, eol)}`;
+}
+
+export async function syncContentOne(build) {
+  const contents = await buildContentFile(build);
+  await mkdir(path.dirname(build.generated), { recursive: true });
+  await writeFile(build.generated, contents, 'utf8');
+  return { file: build.generated, bytes: Buffer.byteLength(contents, 'utf8') };
+}
+
 export async function syncOne(copy) {
   const contents = await buildGeneratedFile(copy);
   await mkdir(path.dirname(copy.generated), { recursive: true });
@@ -191,6 +293,9 @@ export async function syncKernel() {
   const written = [];
   for (const copy of COPIES) {
     written.push(await syncOne(copy));
+  }
+  for (const build of CONTENT_BUILDS) {
+    written.push(await syncContentOne(build));
   }
   return written;
 }

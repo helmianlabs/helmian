@@ -110,6 +110,8 @@
     allowOnce: null,
     privacyActiveFp: null,
     privacyShownAt: 0,
+    injectionActiveFp: null,
+    injectionShownAt: 0,
     approvalTimer: null,
     // Optional cross-check with the Flags scanner (POST /api/flags/scan), off
     // unless the person turned it on in the popup. Cached from the worker.
@@ -619,6 +621,9 @@
 
     const privacy = HelmionSanitize.scan(text);
     if (privacy.found) { stopForPrivacy(event, composer, text, fp, privacy); return; }
+
+    const injection = HelmionInjection.scan(text);
+    if (injection.signals.length) { stopForInjection(event, composer, text, fp, injection); return; }
     if (state.flagsScan && text.trim()) crossCheckWithFlags(event, composer, text, fp);
     refreshFlagsConfig();
   }
@@ -969,6 +974,138 @@
           title: 'Helmion Guard paused this message',
           message: `It contains ${what}. The policy check did not answer, so it was not sent.`,
           actions: [redactAction, cancelAction],
+        });
+      });
+  }
+
+  // --------------------------------------------------------- injection lane
+  //
+  // Same shape as the privacy lane, one lane later: the destructive and
+  // privacy scans keep their exact behavior and their cards when they fire,
+  // and this scan runs only on text both of them cleared. The detector is
+  // the src/core kernel (content build:
+  // generated/helmion-injection.content.js); the decision is the same
+  // helmion:decide call, and the injection-needs-approval rule is what
+  // turns the signal into an ask whose reason the pill shows. There is
+  // nothing to redact in an override passage, so the only editing action
+  // is Keep editing.
+
+  function stopForInjection(event, composer, text, fp, injection) {
+    stopEvent(event);
+    // One send gesture fires several events; answer the first, swallow the rest.
+    const now = Date.now();
+    if (state.injectionActiveFp === fp && now - state.injectionShownAt < 1500) return;
+    state.injectionActiveFp = fp;
+    state.injectionShownAt = now;
+
+    const what = HelmionInjection.describe(injection);
+    const sanitized = HelmionSanitize.scan(text).redacted;
+    const keepEditingAction = {
+      id: 'cancel',
+      label: 'Keep editing',
+      onClick: () => {
+        state.injectionActiveFp = null;
+        stopApprovalPolling();
+        HelmionUI.hideAskAlert();
+        if (typeof composer.focus === 'function') composer.focus();
+      },
+    };
+
+    HelmionUI.showAskAlert({
+      tone: 'warn',
+      title: 'Helmion Guard paused this message',
+      message: `${what} Nothing has been sent.`,
+      status: 'Checking policy\u2026',
+      actions: [keepEditingAction],
+    });
+
+    logToLedger({
+      kind: 'ai-flag',
+      site: SOURCE,
+      matched: `injection-prompt: ${injection.signals.join(',')}`,
+      // Never the raw text: the ledger gets the sanitized copy, exactly as
+      // the privacy lane hands it the redacted copy.
+      text: sanitized,
+      outcome: 'paused-before-send',
+    });
+
+    contentHash(text)
+      .then((hash) => askDecision({
+        kind: 'prompt.send',
+        site: SOURCE,
+        contentHash: hash,
+        riskSignals: injection.signals,
+        summary: sanitized.slice(0, 500),
+      }))
+      .then((decision) => {
+        if (state.injectionActiveFp !== fp) return; // the person already moved on
+        const where = decision.source === 'executive-guard' ? 'Executive Guard' : 'Guard policy on this computer';
+        if (decision.verdict === 'allow') {
+          grantOnce(fp, decision.source);
+          HelmionUI.showAskAlert({
+            tone: 'ok',
+            title: `${where} allowed this message`,
+            message: 'Press Send again to send it as written.',
+            actions: [keepEditingAction],
+          });
+          return;
+        }
+        if (decision.verdict === 'deny') {
+          HelmionUI.showAskAlert({
+            tone: 'danger',
+            title: 'Helmion Guard stopped this message',
+            message: `${what} ${decision.reason || ''}`.trim(),
+            status: `Decided by ${where}${decision.serverUnavailable ? ' (Executive Guard could not be reached)' : ''}.`,
+            actions: [keepEditingAction],
+          });
+          return;
+        }
+        // ask
+        if (decision.source === 'executive-guard' && decision.pending && decision.approvalId) {
+          HelmionUI.showAskAlert({
+            tone: 'warn',
+            title: 'Waiting for approval',
+            message: `${what} An approver must allow it in Executive Guard.`,
+            status: 'Waiting for an approver\u2026',
+            actions: [keepEditingAction],
+          });
+          pollApproval(decision.approvalId, fp, { denied: 'The approver did not allow this message.', actions: [keepEditingAction] });
+          return;
+        }
+        // Compact corner pill: explicit Allow or Deny; timeout = deny; never auto-allows.
+        HelmionUI.hideAskAlert();
+        HelmionUI.showApprovalPill({
+          tone: 'warn',
+          title: 'Guard: send this as written?',
+          message: `${what} ${decision.reason || ''}`.trim(),
+          status: decision.serverUnavailable ? 'Executive Guard could not be reached; you decide. No answer in 60 s = Deny.' : 'No answer in 60 s = Deny.',
+          allowLabel: 'Allow once',
+          denyLabel: 'Deny',
+          timeoutMs: 60000,
+          onAllow: () => {
+            if (state.injectionActiveFp !== fp) return;
+            grantOnce(fp, 'person-at-keyboard');
+            HelmionUI.showAskAlert({
+              tone: 'ok',
+              title: 'Allowed once',
+              message: 'Press Send again to send it as written.',
+              actions: [keepEditingAction],
+            });
+          },
+          onDeny: (why) => {
+            logToLedger({ kind: 'ai-flag', site: SOURCE, matched: `approval-pill-${why}`, text: '', outcome: 'blocked-before-send' });
+          },
+        });
+      })
+      .catch((error) => {
+        // Fail closed: no decision means the message stays unsent.
+        console.warn('[Helmion Guard] injection decision failed:', error && error.message);
+        if (state.injectionActiveFp !== fp) return;
+        HelmionUI.showAskAlert({
+          tone: 'danger',
+          title: 'Helmion Guard paused this message',
+          message: `${what} The policy check did not answer, so it was not sent.`,
+          actions: [keepEditingAction],
         });
       });
   }
