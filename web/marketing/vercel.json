@@ -4,6 +4,10 @@
   "trailingSlash": false,
   "rewrites": [
     {
+      "source": "/mcp",
+      "destination": "/api/helmian-admin?__p=/mcp"
+    },
+    {
       "source": "/api/signup",
       "destination": "/api/helmian-admin?__p=/api/signup"
     },
