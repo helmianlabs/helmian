@@ -219,14 +219,24 @@ function isShippedFile(file) {
 // Scribe, Flags and the Executive Guard approvals loop are network features
 // by design, and their clients live in the background worker. The property
 // that replaces it, and the one this list enforces exactly: network calls
-// happen ONLY in these six background modules, never in a content script,
-// never in the popup, and any seventh file reaching for the network fails
+// happen ONLY in these seven background modules, never in a content script,
+// never in the popup, and any eighth file reaching for the network fails
 // the test below. This allowlist must never grow without the same level of
 // deliberate review the first entry got.
+//
+// The seventh entry was added on purpose in the same change as the client
+// itself (the Guard approvals pop-up build, 2026-11-12):
+// background/pc-approvals-client.js is the Helmian proxy client for PC
+// approvals. It holds no credential (the browser's own Helmian session
+// rides along on its calls, or the call comes back 401), it talks only to
+// helmian.cloud, whose host permission the manifest already grants, and it
+// lives in the background worker like the other six. That is the review
+// this list exists to force, recorded where the next addition will look.
 const NETWORK_ALLOWLIST = [
   'background/approvals-client.js',
   'background/executive.js',
   'background/flags-client.js',
+  'background/pc-approvals-client.js',
   'background/scribe-auth.js',
   'background/scribe-client.js',
   'background/upload.js',
@@ -237,11 +247,11 @@ function isAllowlisted(file) {
   return NETWORK_ALLOWLIST.includes(relative);
 }
 
-test('nothing outside the six background client modules calls out to the network', async () => {
+test('nothing outside the seven background client modules calls out to the network', async () => {
   // 0.2.4 reached the network nowhere outside the opt-in upload. 0.7.0 talks
   // to Scribe, Flags and the Executive Guard from the background worker on
   // purpose. What must never happen quietly is a content script, the popup,
-  // or a seventh background file starting to make requests — that is a
+  // or an eighth background file starting to make requests — that is a
   // decision somebody should have to make on purpose, in this allowlist.
   const files = await listJsFiles(EXTENSION_ROOT);
   const shipped = files.filter(isShippedFile);
@@ -259,11 +269,12 @@ test('nothing outside the six background client modules calls out to the network
   }
 });
 
-test('the network allowlist holds exactly the six background client modules', async () => {
+test('the network allowlist holds exactly the seven background client modules', async () => {
   assert.deepEqual(NETWORK_ALLOWLIST, [
     'background/approvals-client.js',
     'background/executive.js',
     'background/flags-client.js',
+    'background/pc-approvals-client.js',
     'background/scribe-auth.js',
     'background/scribe-client.js',
     'background/upload.js',
