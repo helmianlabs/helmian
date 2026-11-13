@@ -378,7 +378,8 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 /* Clips are opaque black-stage VP9. The matching still is real RGBA.
    Mask the video with that still so a boxless slot does not become
    a black square. Motion outside the still silhouette is clipped,
-   except the animated three (owner, grok, openrouter), whose masks
+   except the animated six (owner, grok, openrouter, claude, muse,
+   qwen), whose masks
    are the union silhouettes of all their poses (<slug>-mask.png,
    wired in faceMaskStyle), so a head tilt or a face turn is not
    clipped by the neutral still's outline. */
