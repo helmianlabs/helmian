@@ -431,6 +431,166 @@
     return null;
   }
 
+
+  // ------------------------------------------------------------- ask alert
+  //
+  // The "ask" half of block-or-ask. One bounded corner card with a title, a
+  // message, an optional status line and up to three buttons. Used by the
+  // privacy lane (a secret or personal details about to be sent) and by the
+  // Executive Guard loop (waiting for, then showing, an approver's answer).
+  // Same size limits as the prompt alert; never stretches across the page.
+
+  var askAlertElement = null;
+
+  function hideAskAlert() {
+    if (askAlertElement && askAlertElement.parentNode) {
+      askAlertElement.parentNode.removeChild(askAlertElement);
+    }
+    askAlertElement = null;
+  }
+
+  function showAskAlert(options) {
+    var opts = options || {};
+    var parent = host();
+    if (!parent) return null;
+    hideAskAlert();
+    askAlertElement = make('div', PREFIX + '-ask-alert ' + PREFIX + '-tone-' + (opts.tone || 'warn'));
+    askAlertElement.setAttribute('role', 'alertdialog');
+    askAlertElement.appendChild(make('strong', PREFIX + '-ask-alert-title', opts.title || 'Helmion Guard'));
+    if (opts.message) askAlertElement.appendChild(make('span', PREFIX + '-ask-alert-message', opts.message));
+    if (opts.status) askAlertElement.appendChild(make('span', PREFIX + '-ask-alert-status', opts.status));
+    var actions = (opts.actions || []).slice(0, 3);
+    for (var i = 0; i < actions.length; i += 1) {
+      (function addAction(action) {
+        var button = make('button', PREFIX + '-ask-alert-action' + (action.primary ? ' ' + PREFIX + '-ask-alert-primary' : ''), action.label);
+        button.type = 'button';
+        if (action.id) button.setAttribute('data-helmion-action', action.id);
+        button.addEventListener('click', function onAction() {
+          if (typeof action.onClick === 'function') action.onClick();
+        });
+        askAlertElement.appendChild(button);
+      }(actions[i]));
+    }
+    parent.appendChild(askAlertElement);
+    return askAlertElement;
+  }
+
+  // ---------------------------------------------------------- approval pill
+  //
+  // The allow/deny decision as a compact pill in the bottom-right corner, so it
+  // never covers the chat. Click the pill to expand the details and the two
+  // buttons. It NEVER decides by itself: only an explicit Allow click calls
+  // onAllow. Deny, Escape-like dismissal, being replaced, and the timeout all
+  // call onDeny (timeout = deny). Default timeout 60 s.
+
+  var pillElement = null;
+  var pillTimer = null;
+
+  function closePill() {
+    if (pillTimer) clearTimeout(pillTimer);
+    pillTimer = null;
+    if (pillElement && pillElement.parentNode) pillElement.parentNode.removeChild(pillElement);
+    pillElement = null;
+  }
+
+  function showApprovalPill(options) {
+    var opts = options || {};
+    var parent = host();
+    if (!parent) { if (typeof opts.onDeny === 'function') opts.onDeny('no-page'); return null; }
+    if (pillElement && pillElement._deny) pillElement._deny('replaced');
+    var settled = false;
+    function settle(allow, why) {
+      if (settled) return;
+      settled = true;
+      closePill();
+      if (allow) { if (typeof opts.onAllow === 'function') opts.onAllow(); }
+      else if (typeof opts.onDeny === 'function') opts.onDeny(why || 'denied');
+    }
+    var el = make('div', PREFIX + '-approval-pill ' + PREFIX + '-tone-' + (opts.tone || 'warn'));
+    el.setAttribute('role', 'alertdialog');
+    el.setAttribute('aria-expanded', 'false');
+    el._deny = function (why) { settle(false, why); };
+    var toggle = make('button', PREFIX + '-approval-pill-toggle', opts.title || 'Helmion Guard: approve?');
+    toggle.type = 'button';
+    toggle.setAttribute('data-helmion-action', 'expand');
+    var details = make('div', PREFIX + '-approval-pill-details');
+    details.hidden = true;
+    if (opts.message) details.appendChild(make('span', PREFIX + '-approval-pill-message', opts.message));
+    if (opts.status) details.appendChild(make('span', PREFIX + '-approval-pill-status', opts.status));
+    var allow = make('button', PREFIX + '-approval-pill-allow', opts.allowLabel || 'Allow');
+    allow.type = 'button'; allow.setAttribute('data-helmion-action', 'allow');
+    allow.addEventListener('click', function (e) { if (e && e.isTrusted === false) return; settle(true); });
+    var deny = make('button', PREFIX + '-approval-pill-deny', opts.denyLabel || 'Deny');
+    deny.type = 'button'; deny.setAttribute('data-helmion-action', 'deny');
+    deny.addEventListener('click', function () { settle(false, 'denied'); });
+    details.appendChild(allow);
+    details.appendChild(deny);
+    toggle.addEventListener('click', function () {
+      details.hidden = !details.hidden;
+      el.setAttribute('aria-expanded', details.hidden ? 'false' : 'true');
+    });
+    el.appendChild(toggle);
+    el.appendChild(details);
+    parent.appendChild(el);
+    pillElement = el;
+    var ms = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 60000;
+    pillTimer = setTimeout(function () { settle(false, 'timeout'); }, ms);
+    return el;
+  }
+
+  // ------------------------------------------------------------ flag alerts
+  //
+  // Flags are about the AI's reply (evasion, a privacy leak, harmful code).
+  // Each gets a small card in the bottom-left corner — away from the red code
+  // lane and the prompt alerts in the top-right — at most three at a time, the
+  // oldest dropped first. Evasion is slate (advisory); leaks and harmful code
+  // are dark red. Nothing on the page is hidden by a flag.
+
+  var MAX_FLAG_ALERTS = 3;
+  var flagAlerts = [];
+  var flagStack = null;
+
+  function stack(parent) {
+    if (flagStack && flagStack.parentNode) return flagStack;
+    flagStack = make('div', PREFIX + '-flag-stack');
+    parent.appendChild(flagStack);
+    return flagStack;
+  }
+
+  function hideFlagAlerts() {
+    for (var i = 0; i < flagAlerts.length; i += 1) {
+      if (flagAlerts[i].parentNode) flagAlerts[i].parentNode.removeChild(flagAlerts[i]);
+    }
+    flagAlerts = [];
+  }
+
+  function showFlagAlert(flag) {
+    var parent = host();
+    if (!parent || !flag) return null;
+    var titles = { 'evasion': 'AI FLAG: evasion', 'privacy-leak': 'AI FLAG: privacy leak', 'harmful-code': 'AI FLAG: harmful code' };
+    var card = make('div', PREFIX + '-flag-alert ' + PREFIX + '-flag-' + (flag.kind || 'unknown'));
+    card.setAttribute('role', 'status');
+    card.setAttribute('data-helmion-flag-kind', flag.kind || 'unknown');
+    card.appendChild(make('strong', PREFIX + '-flag-alert-title', titles[flag.kind] || 'AI FLAG'));
+    card.appendChild(make('span', PREFIX + '-flag-alert-message', flag.label || ''));
+    if (flag.excerpt) card.appendChild(make('span', PREFIX + '-flag-alert-excerpt', flag.excerpt));
+    var close = make('button', PREFIX + '-flag-alert-close', 'Dismiss');
+    close.type = 'button';
+    close.addEventListener('click', function dismiss() {
+      if (card.parentNode) card.parentNode.removeChild(card);
+      flagAlerts = flagAlerts.filter(function keep(other) { return other !== card; });
+    });
+    card.appendChild(close);
+    stack(parent).appendChild(card);
+    flagAlerts.push(card);
+    while (flagAlerts.length > MAX_FLAG_ALERTS) {
+      var oldest = flagAlerts.shift();
+      if (oldest.parentNode) oldest.parentNode.removeChild(oldest);
+    }
+    return card;
+  }
+
+  // ---------------------------------------------------------------- export
   root.HelmionUI = {
     PREFIX: PREFIX,
     MASK_CLASS: MASK_CLASS,
@@ -445,6 +605,12 @@
     hideToast: hideToast,
     showPromptAlert: showPromptAlert,
     hidePromptAlert: hidePromptAlert,
+    showAskAlert: showAskAlert,
+    showApprovalPill: showApprovalPill,
+    hideApprovalPill: function () { if (pillElement && pillElement._deny) pillElement._deny('dismissed'); },
+    hideAskAlert: hideAskAlert,
+    showFlagAlert: showFlagAlert,
+    hideFlagAlerts: hideFlagAlerts,
     showBanner: showBanner,
     hideBanner: hideBanner,
     showAdvisoryBanner: showAdvisoryBanner,

@@ -61,6 +61,12 @@ export const COPIES = Object.freeze([
     source: source('src', 'core', 'harmful-content.mjs'),
     generated: generated('helmion-harmful-content.generated.js'),
   }),
+  Object.freeze({
+    name: 'injection',
+    label: 'src/core/injection-risk.mjs',
+    source: source('src', 'core', 'injection-risk.mjs'),
+    generated: generated('helmion-injection.generated.js'),
+  }),
 ]);
 
 export function copyNamed(name) {
@@ -77,6 +83,10 @@ export const GENERATED_FILE = KERNEL.generated;
 export const CLAIMS = copyNamed('claims');
 export const CLAIMS_SOURCE = CLAIMS.source;
 export const CLAIMS_GENERATED_FILE = CLAIMS.generated;
+
+export const INJECTION = copyNamed('injection');
+export const INJECTION_SOURCE = INJECTION.source;
+export const INJECTION_GENERATED_FILE = INJECTION.generated;
 
 // The header is fixed text on purpose. Nothing in it changes between runs — no
 // timestamp, no hash, no version, no machine-specific path — so regenerating an
