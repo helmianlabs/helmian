@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { CALM_POLL_MS, MAESTRO_DESK_SLUG, activityCue, activityCueText, activityCues, activityElapsed, activityLive, activityName, activityProviderNames, addressed, agentRoomFor, agentRoomThread, customAgentCreateBody, deskChannelFor, deskRoster, deskTargets, dialogConnectFields, dragLayout, isDeskChannel, latestActivity, mergeReactionPost, mirrorLinkHeader, pickerAgentContext, reactionActorLabel, reactionChar, reactionChipModel, roomAddressed } from '../app/envoy-workspace.js';
+import { CALM_POLL_MS, MAESTRO_DESK_SLUG, activityCue, activityCueText, activityCues, activityElapsed, activityLive, activityName, activityProviderNames, addressed, agentRoomFor, agentRoomThread, customAgentCreateBody, deskChannelFor, deskRoster, deskTargets, dialogConnectFields, dragLayout, isDeskChannel, latestActivity, mergeReactionPost, mirrorLinkHeader, pickerAgentContext, reactionActorLabel, reactionChar, reactionChipModel, roomAddressed, watchOfferSignature, watchOffersFrom, watchPageName, watchStepText, WATCH_SEATS } from '../app/envoy-workspace.js';
 import * as envoyWorkspace from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
@@ -1402,4 +1402,63 @@ test('first-run hand-off: the shell carries the card element and the Agents-tab 
   const appJs = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
   assert.match(appJs, /function openAgentsTab\(\) \{ selectIntegrationsTab\('agents'\)/, 'the shell road selects the Agents tab before opening Integrations');
   assert.match(appJs, /openAgentsTab,/, 'the road is handed to the workspace through its context');
+});
+
+// ---------- watch offers and the live pane (live browser view, Bite 3) ----------
+// The offer is the only road to a watch: it rides the presence poll
+// (runner-presence.mjs reportWatch, sql/086), names one browser
+// seat and the page it is on, and expires on its own stamp. The
+// helpers below are its whole client side — what they drop can
+// never be offered, and what they keep is all the pane may show.
+
+test('watch offers: browser seats only, unexpired only, freshest wins', () => {
+  const body = { watch: [
+    { provider: 'mistral', url: 'https://chat.mistral.ai/c/1', expiresAt: iso(-60_000) },
+    { provider: 'groq', url: 'https://groq.example.com/', expiresAt: iso(-60_000) },
+    { provider: 'claude', url: 'https://claude.ai/chat/1', expiresAt: iso(60_000) },
+    { provider: 'openai', url: 'https://chatgpt.com/c/old', expiresAt: iso(-30_000) },
+    { provider: 'openai', url: 'https://chatgpt.com/c/new', expiresAt: iso(-90_000) },
+    { provider: 'gemini', url: null, expiresAt: iso(-45_000) },
+    { provider: 'mistral', url: 'not a url at all', expiresAt: 'junk' },
+    { url: 'https://chat.mistral.ai/c/2', expiresAt: iso(-60_000) },
+  ] };
+  const offers = watchOffersFrom(body, NOW);
+  assert.deepEqual(offers.map((o) => o.seat), ['mistral', 'openai', 'gemini'], 'API seats, expired offers and junk rows never reach the pane');
+  assert.equal(offers[0].name, 'Mistral');
+  assert.equal(offers[0].url, 'https://chat.mistral.ai/c/1');
+  assert.equal(offers[1].url, 'https://chatgpt.com/c/new', 'a duplicate seat keeps the offer with the freshest expiry');
+  assert.equal(offers[2].url, null, 'a page that has not navigated yet still offers its watch');
+  assert.deepEqual(WATCH_SEATS, ['mistral', 'openai', 'claude', 'grok', 'gemini']);
+});
+
+test('watch offers: an empty or missing feed offers nothing', () => {
+  assert.deepEqual(watchOffersFrom({}, NOW), []);
+  assert.deepEqual(watchOffersFrom(null, NOW), []);
+  assert.deepEqual(watchOffersFrom({ watch: 'nope' }, NOW), []);
+  assert.equal(watchOfferSignature([]), '');
+  assert.equal(watchOfferSignature(watchOffersFrom({ watch: [{ provider: 'mistral', url: null, expiresAt: iso(-60_000) }] }, NOW)), 'mistral:');
+});
+
+test('watch step line: the page is named in plain words', () => {
+  assert.equal(watchPageName('https://chat.mistral.ai/c/abc'), 'Le Chat');
+  assert.equal(watchPageName('https://chatgpt.com/c/abc'), 'ChatGPT');
+  assert.equal(watchPageName('https://example.com/some/page'), 'example.com');
+  assert.equal(watchPageName('not a url'), null);
+  assert.equal(watchPageName(null), null);
+  assert.equal(watchStepText({ name: 'Mistral', url: 'https://chat.mistral.ai/c/abc' }), 'Mistral is working in Le Chat');
+  assert.equal(watchStepText({ name: 'Mistral', url: null }), 'Mistral is working in its browser');
+});
+
+test('watch pane: the shell carries the watch bar and the canvas, the desk carries the watch', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  const bar = html.indexOf('id="ew-browser-watchbar"');
+  const view = html.indexOf('class="ew-browser-view"');
+  assert.ok(bar !== -1 && bar < view, 'the watch bar sits between the status line and the browser view');
+  assert.match(html, /<canvas id="ew-browser-watch"/, 'the live view draws on a canvas in the browser view');
+  assert.match(css, /\.ew-browser-view canvas \{/, 'the canvas fills the browser view like the frame does');
+  for (const needle of ['function startWatch', 'function stopWatch', 'function endWatch', 'function syncWatchBar', "ws.ctx.post('/api/admin/browser/watch-ticket', { seat })", "['helmian-watch', minted.ticket]", "type: 'ack'", 'ws.watchOffers = watchOffersFrom(body)']) {
+    assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  }
 });

@@ -58,6 +58,28 @@ export const RUNNER_PRESENCE_PATH = '/api/admin/envoy/runner/presence';
 // unavailable, exactly like presence before its own migration.
 export const ACTIVITY_STAGES = Object.freeze(['started', 'working', 'file-placed', 'published', 'done', 'failed']);
 export const ACTIVITY_TTL_MS = 5 * 60_000;
+
+// Watch offers (live agent-browser view, Bite 3, 2026-11-12): the
+// session executor posts one small fact while one of its seats has a
+// browser page open — { provider, watch: { url } } over this same
+// route, device-token callers only — and the desk reads the
+// unexpired offers back on the GET payload it already polls (a new
+// `watch` field, beside `activity`). The offer is what lets the
+// Browser tab offer a live watch of the agent's own browser; the
+// pane then mints its ticket and connects to the watch service
+// directly (watch-tickets.mjs), so no frame ever rides this route.
+// One row per provider in helmion.watch_offers (sql/086), upserted
+// on each post and deleted on the executor's clear post
+// (watch: null) when its last page closes. The TTL is the backstop:
+// an executor that dies mid-turn stops posting, and its offer
+// expires on its own — the pane never offers a watch on a browser
+// that is not there. Same honesty rules as activity: a member's
+// watch write attests to nothing and is dropped untouched (it does
+// not even stamp presence — a watch claim is not a presence fact),
+// and no offer may create or move a presence row. Until sql/086 is
+// applied, reads answer [] and writes report unavailable.
+export const WATCH_OFFER_TTL_MS = 45_000;
+const WATCH_PROVIDERS = new Set(['mistral', 'openai', 'claude', 'grok', 'gemini']);
 const ACTIVITY_STAGE_SET = new Set(ACTIVITY_STAGES);
 const ACTIVITY_LIST_LIMIT = 100;
 const ACTIVITY_CLOCK_SKEW_MS = 60_000;
@@ -121,6 +143,39 @@ export function normalizeActivityEvent(raw, fallbackProvider, now = new Date()) 
     detail: sanitizeActivityDetail(raw.detail),
     at: new Date(atMs).toISOString(),
     expiresAt: new Date(atMs + ACTIVITY_TTL_MS).toISOString(),
+  };
+}
+
+// Shape one watch-offer report. The wire shape on the presence
+// route's POST body: { provider, watch } where watch is either
+// { url } (a browser page is open; url may be null while the page
+// has not navigated anywhere yet) or null (no page open — clear
+// the offer). Only the five browser seats can ever offer a watch;
+// the provider resolves through the same vocabulary as activity,
+// then narrows to the browser seats. The url is an address bar
+// string, never content: it must parse as an http or https URL
+// and is length-capped like every other string on this route.
+export function normalizeWatchOffer(raw, fallbackProvider, now = new Date()) {
+  const bad = (message) => Object.assign(new Error(message), { status: 400 });
+  const provider = normalizeActivityProvider(fallbackProvider);
+  if (!provider || !WATCH_PROVIDERS.has(provider)) throw bad('unknown watch provider');
+  if (raw === null) return { provider, clear: true, url: null };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw bad('watch offer required');
+  let url = null;
+  if (raw.url != null) {
+    url = String(raw.url).trim();
+    if (!url || url.length > 2048) throw bad('watch url invalid');
+    let parsed;
+    try { parsed = new URL(url); } catch { throw bad('watch url invalid'); }
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw bad('watch url invalid');
+  }
+  const atMs = now.getTime();
+  return {
+    provider,
+    clear: false,
+    url,
+    at: new Date(atMs).toISOString(),
+    expiresAt: new Date(atMs + WATCH_OFFER_TTL_MS).toISOString(),
   };
 }
 
@@ -343,6 +398,64 @@ export function createRunnerPresenceStore(pool) {
         throw error;
       }
     },
+
+    // Store one watch offer (sql/086), or clear it. The set is an
+    // upsert keyed by (tenant, provider): the executor re-posts
+    // while its page is open, so the row's expiry keeps moving;
+    // the clear is a delete. An offer never touches the presence
+    // rows: a browser being open is not a connection claim.
+    async reportWatch(tenantId, rawWatch, fallbackProvider) {
+      const offer = normalizeWatchOffer(rawWatch, fallbackProvider, new Date());
+      try {
+        await withTenant(tenantId, async (client) => {
+          if (offer.clear) {
+            await client.query(
+              `delete from helmion.watch_offers
+               where tenant_id = current_setting('helmion.tenant_id', true) and provider_name = $1`,
+              [offer.provider]);
+          } else {
+            await client.query(
+              `insert into helmion.watch_offers(tenant_id, provider_name, url, updated_at, expires_at)
+               values (current_setting('helmion.tenant_id', true), $1, $2, $3, $4)
+               on conflict (tenant_id, provider_name)
+               do update set url = excluded.url, updated_at = excluded.updated_at, expires_at = excluded.expires_at`,
+              [offer.provider, offer.url, offer.at, offer.expiresAt]);
+          }
+        });
+        return offer.clear
+          ? { ok: true, watch: { provider: offer.provider, offered: false } }
+          : { ok: true, watch: { provider: offer.provider, offered: true, url: offer.url, expiresAt: offer.expiresAt } };
+      } catch (error) {
+        if (isMissingTable(error)) throw Object.assign(new Error('watch store unavailable'), { status: 503 });
+        throw error;
+      }
+    },
+
+    // The desk's watch offers: this tenant's unexpired rows, newest
+    // first. Expiry is judged at read time, exactly like the
+    // activity feed, so a stale offer never rides the payload.
+    // 42P01-safe like listActivity(): before sql/086 the offers
+    // are empty and presence answers exactly as it always has.
+    async listWatch(tenantId, now = new Date()) {
+      try {
+        return await withTenant(tenantId, async (client) => {
+          const r = await client.query(
+            `select provider_name, url, updated_at, expires_at from helmion.watch_offers
+             where tenant_id = current_setting('helmion.tenant_id', true) and expires_at > $1
+             order by updated_at desc`,
+            [now.toISOString()]);
+          return r.rows.map((row) => ({
+            provider: String(row.provider_name),
+            url: row.url != null ? String(row.url) : null,
+            updatedAt: new Date(row.updated_at).toISOString(),
+            expiresAt: new Date(row.expires_at).toISOString(),
+          }));
+        });
+      } catch (error) {
+        if (isMissingTable(error)) return [];
+        throw error;
+      }
+    },
   };
 }
 
@@ -371,7 +484,10 @@ export async function handleRunnerPresenceRoute({
       // existing field keeps its meaning; `activity` is additive, and
       // it is [] until sql/067 lands.
       const activity = typeof store.listActivity === 'function' ? await store.listActivity(actor.tenantId) : [];
-      send(response, 200, JSON.stringify({ valid: true, presence, activity }));
+      // The watch offers ride the same read (Bite 3): additive like
+      // `activity`, [] until sql/086 lands.
+      const watch = typeof store.listWatch === 'function' ? await store.listWatch(actor.tenantId) : [];
+      send(response, 200, JSON.stringify({ valid: true, presence, activity, watch }));
     } else if (request.method === 'POST') {
       let body = {};
       try { body = (await readJson(request)) ?? {}; } catch {}
@@ -411,6 +527,24 @@ export async function handleRunnerPresenceRoute({
           syncJob: { id: job.id, status: job.status },
           syncedAt: new Date().toISOString(),
         }));
+        return true;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'watch')) {
+        // A watch offer: its own write, never a presence report —
+        // an offer must not create or move a connected claim.
+        if (actor.viaDeviceToken === true) {
+          // The session executor reporting its seats' open browsers
+          // — the only caller whose offer means anything, same rule
+          // as the connected claim.
+          const result = await store.reportWatch(actor.tenantId, body.watch, body.provider);
+          send(response, 200, JSON.stringify({ valid: true, ...result }));
+          return true;
+        }
+        // A member browser session cannot attest that a seat's
+        // browser is open, so its watch write is dropped whole: no
+        // offer stored, and — unlike its connected claim — not even
+        // a sync stamp, because a watch claim is not a presence fact.
+        send(response, 200, JSON.stringify({ valid: true, watchAccepted: false }));
         return true;
       }
       if (body.activity != null) {

@@ -8,15 +8,15 @@
        the stylesheets land so a light-theme user never gets a dark
        flash. It is an external file because the /app CSP allows
        external scripts only; an inline block here cannot run. -->
-  <script src="/app/theme-init.js?v=3fc6a7d2b555633c"></script>
+  <script src="/app/theme-init.js?v=6566fcf5c4ebf899"></script>
   <title>Helmian</title>
   <link rel="icon" type="image/png" href="/assets/helmian-logo.png">
   <link rel="manifest" href="/app/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/assets/helmian-logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="/app/app.css?v=3fc6a7d2b555633c">
-  <link rel="stylesheet" href="/app/envoy.css?v=3fc6a7d2b555633c">
-  <script type="module" src="/app/app.js?v=3fc6a7d2b555633c"></script>
+  <link rel="stylesheet" href="/app/app.css?v=6566fcf5c4ebf899">
+  <link rel="stylesheet" href="/app/envoy.css?v=6566fcf5c4ebf899">
+  <script type="module" src="/app/app.js?v=6566fcf5c4ebf899"></script>
 </head>
 <body>
 <div id="shell" class="shell" data-view="desktop">
@@ -294,12 +294,14 @@
                 <button class="ew-icon" type="button" id="ew-browser-close" aria-label="Close page" title="Close page" disabled>✕</button>
               </form>
               <div class="ew-browser-status" id="ew-browser-status" role="status" aria-live="polite"></div>
+              <div class="ew-browser-watchbar" id="ew-browser-watchbar"></div>
               <div class="ew-browser-view">
                 <div class="ew-browser-start" id="ew-browser-start">
                   <p class="muted sm">Public HTTPS sites open here. Every visit goes in the audit trail. Some sites refuse to be shown inside other apps; use ↗ for those.</p>
                   <div class="ew-quick" id="ew-browser-quick"></div>
                 </div>
                 <iframe id="ew-browser-frame" title="Browser" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" allow="fullscreen; picture-in-picture; encrypted-media" referrerpolicy="strict-origin-when-cross-origin" hidden></iframe>
+                <canvas id="ew-browser-watch" title="Live agent view" hidden></canvas>
               </div>
             </div>
           </div>
