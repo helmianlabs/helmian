@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=c583282bdafb6d8c';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=c583282bdafb6d8c';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=c583282bdafb6d8c';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=c583282bdafb6d8c';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=c583282bdafb6d8c';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=c583282bdafb6d8c';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=c583282bdafb6d8c';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=c583282bdafb6d8c';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=c583282bdafb6d8c';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=c583282bdafb6d8c';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=c583282bdafb6d8c';
-import { createConnectFields } from './connect-fields.mjs?v=c583282bdafb6d8c';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=c583282bdafb6d8c';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=c583282bdafb6d8c';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=3fc6a7d2b555633c';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=3fc6a7d2b555633c';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=3fc6a7d2b555633c';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=3fc6a7d2b555633c';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=3fc6a7d2b555633c';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=3fc6a7d2b555633c';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=3fc6a7d2b555633c';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=3fc6a7d2b555633c';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=3fc6a7d2b555633c';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=3fc6a7d2b555633c';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=3fc6a7d2b555633c';
+import { createConnectFields } from './connect-fields.mjs?v=3fc6a7d2b555633c';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=3fc6a7d2b555633c';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=3fc6a7d2b555633c';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -601,7 +601,7 @@ const crewFaceSlug = (provider) => CREW_FACE_SLUG[provider] ?? provider;
 // every pose their clips morph through) instead of the still. Their
 // visible stills and posters are untouched; every other slug keeps
 // masking with its own still.
-const UNION_FACE_MASK_SLUGS = new Set(['owner', 'grok', 'openrouter', 'claude', 'muse', 'qwen', 'gemini', 'maestro', 'helm']);
+const UNION_FACE_MASK_SLUGS = new Set(['owner', 'grok', 'openrouter', 'claude', 'muse', 'qwen', 'gemini', 'maestro', 'helm', 'chatgpt', 'groq', 'cloudflare', 'mistral', 'nvidia']);
 const faceMaskStyle = (slug) => `--face-mask:url("${assetUrl(`/app/assets/crew/${UNION_FACE_MASK_SLUGS.has(slug) ? `${slug}-mask.png` : `${slug}-256.png`}`)}")`;
 // Grok and OpenRouter carry their motion inside their clips now
 // (real face rotation, eye movement, node travel, animation bite
@@ -609,13 +609,19 @@ const faceMaskStyle = (slug) => `--face-mask:url("${assetUrl(`/app/assets/crew/$
 // a light travelling the loop, a rocking moon, animation bite B2),
 // and Gemini, Maestro and Helm carry theirs (the twins leaning and
 // taking turns, the owl's head-turn and book dip, the plume sway
-// and visor shadow, animation bite B3), so the generic CSS
-// activity classes must not ride their shells:
+// and visor shadow, animation bite B3), and ChatGPT, Groq,
+// Cloudflare, Mistral and NVIDIA carry theirs (the knot winding
+// and unwinding, the comet's tail flicker and darts, the cloud's
+// breathing lobes and thought puff, the wind streaks streaming and
+// gathering, the antenna knobs wiggling over a turning forehead
+// spiral, animation bite D, which completes the library: every
+// character now carries its own real animation), so the generic
+// CSS activity classes must not ride their shells:
 // a whole-picture ew-ava-roll over a clip that already moves would
 // double the motion. Their stages still flow to crewClipApply
 // untouched; only the class is suppressed. The owner needs no entry
 // here: his stage is forced null at his call sites.
-const CLIP_ANIMATED_SLUGS = new Set(['grok', 'openrouter', 'claude', 'muse', 'qwen', 'gemini', 'maestro', 'helm']);
+const CLIP_ANIMATED_SLUGS = new Set(['grok', 'openrouter', 'claude', 'muse', 'qwen', 'gemini', 'maestro', 'helm', 'chatgpt', 'groq', 'cloudflare', 'mistral', 'nvidia']);
 const faceMotionClass = (slug, stage) => (CLIP_ANIMATED_SLUGS.has(slug) ? '' : activityMotionClass(stage));
 function crewFaceImg(slug, fallback) {
   const img = h('img', { class: 'ew-crew-face-img', src: assetUrl(`/app/assets/crew/${slug}-56.png`), srcset: `${assetUrl(`/app/assets/crew/${slug}-128.png`)} 2x, ${assetUrl(`/app/assets/crew/${slug}-256.png`)} 3x`, alt: '', width: 36, height: 36, loading: 'lazy' });
@@ -5551,7 +5557,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=c583282bdafb6d8c');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=3fc6a7d2b555633c');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
