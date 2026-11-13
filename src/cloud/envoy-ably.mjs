@@ -29,6 +29,7 @@ import { handleMaestroDeskRoute } from './envoy-maestro.mjs';
 import { handleEnvoyReactionsRoute } from './envoy-reactions.mjs';
 import { handleEnvoyFacesRoute } from './envoy-faces.mjs';
 import { handleWatchTicketRoute, handleWatchSecretRoute } from './watch-tickets.mjs';
+import { handleMuseConnectorRoute } from './muse-connector.mjs';
 
 export const ENVOY_ABLY_TOKEN_PATH = '/api/admin/envoy/ably-token';
 export const ENVOY_ABLY_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 min; the bridge client auto-renews
@@ -281,6 +282,10 @@ export async function handleEnvoyAblyRoute({
   if (await handleEnvoyFacesRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleWatchTicketRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleWatchSecretRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
+  // The Muse connector (MCP, POST /mcp): key auth only — the route
+  // never consults the member session or a device token, because the
+  // connector key is itself the tenant credential (muse-connector.mjs).
+  if (await handleMuseConnectorRoute({ request, response, requestUrl, send, readJson })) return true;
   if (await handleEnvoyMeshRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (request?.method !== 'POST' || requestUrl?.pathname !== ENVOY_ABLY_TOKEN_PATH) return false;
   const membershipError = (error) => error?.status === 403 || error instanceof TenantAuthorizationError;
