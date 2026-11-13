@@ -28,6 +28,7 @@ import { handleAgentRoomsRoute } from './envoy-rooms.mjs';
 import { handleMaestroDeskRoute } from './envoy-maestro.mjs';
 import { handleEnvoyReactionsRoute } from './envoy-reactions.mjs';
 import { handleEnvoyFacesRoute } from './envoy-faces.mjs';
+import { handleWatchTicketRoute } from './watch-tickets.mjs';
 
 export const ENVOY_ABLY_TOKEN_PATH = '/api/admin/envoy/ably-token';
 export const ENVOY_ABLY_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 min; the bridge client auto-renews
@@ -278,6 +279,7 @@ export async function handleEnvoyAblyRoute({
   if (await handleMaestroDeskRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleEnvoyReactionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleEnvoyFacesRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
+  if (await handleWatchTicketRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleEnvoyMeshRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (request?.method !== 'POST' || requestUrl?.pathname !== ENVOY_ABLY_TOKEN_PATH) return false;
   const membershipError = (error) => error?.status === 403 || error instanceof TenantAuthorizationError;
