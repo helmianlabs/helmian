@@ -42,7 +42,7 @@
 //   - Fail-soft until sql/087 lands, like the watch-ticket signer:
 //     a missing table answers 503 and serves nothing.
 //
-// THE TWO TOOLS read through the app's existing data paths only:
+// THE TOOLS read through the app's existing data paths only:
 //   - list_agents: the tenant's agent roster (envoy-agents.mjs
 //     AGENT_PROVIDERS + AGENT_NAMES) joined with the runner presence
 //     store (helmion.runner_provider_presence, via
@@ -58,15 +58,51 @@
 //     voice runs on the Hillsboro box and in the desk's browser, the
 //     cloud records no per-agent voice state, so the answer says
 //     exactly that instead of inventing one.
+//
+// BITE 2 (2026-11-13) adds the shared memory tools, over the shared
+// notebook — helmion.context_entries, the store envoy-notebook.mjs
+// reads into every seat's prompt at dispatch and the librarian
+// (envoy-librarian.mjs) files dispatched asks into. That notebook
+// is Helmian's shared memory: the Neon store the agents themselves
+// use. Scoping decisions, all deliberate:
+//   - The notebook's own seat read includes the NULL-slug platform
+//     rows (project_slug IS NULL — rows every tenant has always
+//     read). This endpoint serves ONLY the key tenant's own rows
+//     (project_slug = the key's tenant): the connector's law is
+//     tenant-only, and the shared rows are a named exclusion, not
+//     an oversight. Another tenant's rows can never appear.
+//   - The librarian knowledge base (helmion.librarian_incidents)
+//     and the blockers/lessons pile are memory-adjacent stores with
+//     their own surfaces; they are NOT the shared notebook and are
+//     not served here.
+//   - context_entries carries no credential columns: the only
+//     columns that exist are id, project_slug, key, value,
+//     updated_at, and the reads project id, key, value, updated_at
+//     — the tenant slug itself never rides an answer. The value is
+//     the tenant's own memory content, served whole on read exactly
+//     as the seats themselves see it.
+//   - shared_memory_search matches the query as literal text
+//     against the entry key and the entry value's text rendering,
+//     newest first, bounded at SHARED_MEMORY_SEARCH_LIMIT results.
+//     shared_memory_read takes the numeric id a search returned;
+//     an id that belongs to another tenant answers exactly like an
+//     id that does not exist — no existence leak.
 import { createHash, randomBytes } from 'node:crypto';
 import { Pool } from 'pg';
 import { AGENT_NAMES, AGENT_PROVIDERS, normalizeProvider } from './envoy-agents.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
+import { renderNotebookValue } from './envoy-notebook.mjs';
 
 export const MUSE_CONNECTOR_PATH = '/mcp';
 export const MUSE_CONNECTOR_KEY_PREFIX = 'hlm_muse_';
 export const MUSE_CONNECTOR_PROTOCOL_VERSION = '2025-03-26';
-export const MUSE_CONNECTOR_SERVER_INFO = Object.freeze({ name: 'helmian-muse-connector', version: '1.0.0' });
+export const MUSE_CONNECTOR_SERVER_INFO = Object.freeze({ name: 'helmian-muse-connector', version: '1.1.0' });
+// Shared memory bounds (Bite 2): a search answers at most this many
+// entries, and a search snippet carries at most this many characters
+// of the entry's rendered value around the match. Both bounds are
+// named in the tool descriptions, so the caller can see them.
+export const SHARED_MEMORY_SEARCH_LIMIT = 20;
+export const SHARED_MEMORY_SNIPPET_MAX_CHARS = 240;
 // The whole v1 scope: these tools read, nothing else exists to call.
 export const MUSE_CONNECTOR_SCOPES = Object.freeze(['read']);
 
@@ -85,11 +121,34 @@ export const MUSE_CONNECTOR_TOOLS = Object.freeze([
       additionalProperties: false,
     }),
   }),
+  Object.freeze({
+    name: 'shared_memory_search',
+    description: 'Search your workspace shared memory (the Helmian shared notebook the agents read and write) for entries whose key or text matches the query. Returns at most 20 entries, newest first, each with its id, key, a snippet around the match, and when it was last updated. Read one in full with shared_memory_read. The workspace is fixed by the connection; only this workspace\'s own entries are searched.',
+    inputSchema: Object.freeze({
+      type: 'object',
+      properties: Object.freeze({ query: Object.freeze({ type: 'string', description: 'The text to look for in entry keys and entry text.' }) }),
+      required: Object.freeze(['query']),
+      additionalProperties: false,
+    }),
+  }),
+  Object.freeze({
+    name: 'shared_memory_read',
+    description: 'Read one shared memory entry in full by the id a shared_memory_search returned: its key, its full value, and when it was last updated. An id that is not part of this workspace answers exactly like an id that does not exist.',
+    inputSchema: Object.freeze({
+      type: 'object',
+      properties: Object.freeze({ id: Object.freeze({ type: 'integer', description: 'The entry id from a shared_memory_search result.' }) }),
+      required: Object.freeze(['id']),
+      additionalProperties: false,
+    }),
+  }),
 ]);
 const TOOL_NAMES = new Set(MUSE_CONNECTOR_TOOLS.map((tool) => tool.name));
 // A tools/call argument naming any of these is a tenant/user
 // selector, and selectors are refused, never honoured (house law).
-const SELECTOR_KEYS = new Set(['tenant', 'tenantId', 'tenant_id', 'organization', 'organizationId', 'organization_id', 'user', 'userId', 'user_id', 'subject', 'workspace', 'workspaceId', 'workspace_id']);
+// The project-slug spellings joined in Bite 2: the shared notebook
+// is keyed by project_slug and the tenant id IS the slug, so naming
+// a slug is naming a tenant.
+const SELECTOR_KEYS = new Set(['tenant', 'tenantId', 'tenant_id', 'organization', 'organizationId', 'organization_id', 'user', 'userId', 'user_id', 'subject', 'workspace', 'workspaceId', 'workspace_id', 'project', 'projectSlug', 'project_slug', 'slug']);
 
 // --- the key: mint, hash, verify shape ---
 
@@ -235,7 +294,40 @@ export function createMuseConnectorData(pool) {
       ]);
       return { presence, activity, connections: stored.connections, toolAccounts: stored.toolAccounts };
     },
+
+    // The shared notebook (helmion.context_entries), the Bite 2
+    // tools' store. The table predates tenants and carries no RLS:
+    // the WHERE clause is the whole isolation story, exactly as in
+    // envoy-notebook.mjs — except the seat read there also includes
+    // the NULL-slug platform rows, and this endpoint deliberately
+    // does not (see the header). The projection is id, key, value,
+    // updated_at only: project_slug is the isolation column, never
+    // payload. A missing table reads as an empty notebook, the
+    // store's own fail-soft.
+    async searchMemory(tenantId, query) {
+      const pattern = `%${escapeLikePattern(query)}%`;
+      return safeRows(pool,
+        `select id, key, value, updated_at from helmion.context_entries
+          where project_slug = $1 and (key ilike $2 escape '!' or value::text ilike $2 escape '!')
+          order by updated_at desc, key
+          limit ${SHARED_MEMORY_SEARCH_LIMIT}`,
+        [String(tenantId), pattern]);
+    },
+
+    async readMemory(tenantId, id) {
+      const rows = await safeRows(pool,
+        'select id, key, value, updated_at from helmion.context_entries where project_slug = $1 and id = $2',
+        [String(tenantId), id]);
+      return rows[0] ?? null;
+    },
   });
+}
+
+// LIKE patterns with '!' as the escape character: the caller's
+// query is literal text, so its own %, _ and ! are escaped before
+// the %…% wrap — a query can never widen its own match.
+export function escapeLikePattern(text) {
+  return String(text ?? '').replace(/!/g, '!!').replace(/%/g, '!%').replace(/_/g, '!_');
 }
 
 // The roster: the built-in agents in catalogue order, then any
@@ -317,6 +409,69 @@ export function assembleAgentHealth(snapshot, providerFilter = null) {
     });
 }
 
+// --- the shared memory tools' assembly (pure) ---
+
+// One line of memory text: control-free, whitespace-collapsed — the
+// notebook's own rendering discipline (envoy-notebook.mjs), without
+// its per-line cap; the snippet bound below does the capping.
+function memoryOneLine(text) {
+  return String(text ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// A bounded window of the entry's rendered value around the first
+// match of the query, so the caller sees WHY the entry matched.
+// When the match lives only in the key, the window is the value's
+// head. The ellipsis marks a cut on that side, honestly.
+export function sharedMemorySnippet(value, query) {
+  const text = memoryOneLine(renderNotebookValue(value));
+  if (!text) return '';
+  if (text.length <= SHARED_MEMORY_SNIPPET_MAX_CHARS) return text;
+  const needle = memoryOneLine(query).toLowerCase();
+  const at = needle ? text.toLowerCase().indexOf(needle) : -1;
+  if (at < 0) return `${text.slice(0, SHARED_MEMORY_SNIPPET_MAX_CHARS)}…`;
+  const start = Math.max(0, at - Math.floor((SHARED_MEMORY_SNIPPET_MAX_CHARS - needle.length) / 2));
+  const slice = text.slice(start, start + SHARED_MEMORY_SNIPPET_MAX_CHARS);
+  return `${start > 0 ? '…' : ''}${slice}${start + SHARED_MEMORY_SNIPPET_MAX_CHARS < text.length ? '…' : ''}`;
+}
+
+// Search rows in the store's shape → the wire shape. The projection
+// is the guarantee: exactly these four fields ride, so no tenant
+// slug, no store-internal column, nothing else can appear.
+export function assembleMemorySearchResults(rows, query) {
+  return (rows ?? []).slice(0, SHARED_MEMORY_SEARCH_LIMIT).map((row) => ({
+    id: Number(row?.id),
+    key: String(row?.key ?? ''),
+    snippet: sharedMemorySnippet(row?.value, query),
+    updatedAt: row?.updated_at ? new Date(row.updated_at).toISOString() : null,
+  }));
+}
+
+// One entry read in full: the value rides whole, exactly as stored
+// (a string stays a string; structured JSON stays structured) — the
+// same rendering contract the notebook's own reads keep.
+export function assembleMemoryEntry(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    key: String(row.key ?? ''),
+    value: row.value ?? null,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+  };
+}
+
+// The id a read accepts: the integer a search returned (a numeric
+// string of the same digits is the same id). Anything else —
+// fractions, words, zero, negatives, numbers beyond the safe range —
+// is refused before any data is read.
+export function parseMemoryId(raw) {
+  if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0) return raw;
+  if (typeof raw === 'string' && /^[0-9]+$/.test(raw.trim())) {
+    const n = Number(raw.trim());
+    if (Number.isSafeInteger(n) && n > 0) return n;
+  }
+  return null;
+}
+
 // --- the JSON-RPC surface (MCP streamable HTTP, stateless) ---
 
 const rpcError = (id, code, message) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
@@ -369,23 +524,56 @@ export function createMuseConnectorRpc({ data } = {}) {
         if (selector) {
           return { status: 200, body: rpcError(id, -32602, `The argument "${selector}" is a tenant selector and is not accepted; the workspace is fixed by the connection.`) };
         }
-        const allowed = name === 'agent_health' ? new Set(['provider']) : new Set();
+        const allowed = new Set(({ agent_health: ['provider'], shared_memory_search: ['query'], shared_memory_read: ['id'] })[name] ?? []);
         const extra = Object.keys(args).find((key) => !allowed.has(key));
         if (extra) {
           return { status: 200, body: rpcError(id, -32602, `Unknown argument for ${name}: ${extra}.`) };
         }
+        // The shared memory tools validate their one argument
+        // BEFORE any data is read, in plain words: an empty search
+        // or a malformed id is the caller's fix to make, and a
+        // refused call reads nothing.
+        let memoryQuery = null;
+        let memoryId = null;
+        if (name === 'shared_memory_search') {
+          memoryQuery = typeof args.query === 'string' ? args.query.trim() : '';
+          if (!memoryQuery) {
+            return { status: 200, body: rpcError(id, -32602, 'shared_memory_search needs a query: one non-empty string of text to look for.') };
+          }
+        }
+        if (name === 'shared_memory_read') {
+          memoryId = parseMemoryId(args.id);
+          if (memoryId === null) {
+            return { status: 200, body: rpcError(id, -32602, 'shared_memory_read needs an id: the integer entry id a shared_memory_search returned.') };
+          }
+        }
         try {
-          const snapshot = await data.snapshot(tenantId);
           let payload;
-          if (name === 'list_agents') {
-            payload = { agents: assembleAgents(snapshot) };
-          } else {
-            let filter = null;
-            if (args.provider !== undefined) {
-              filter = normalizeProvider(args.provider);
-              if (!filter) return { status: 200, body: rpcError(id, -32602, `Unknown provider: ${String(args.provider)}`) };
+          if (name === 'shared_memory_search') {
+            if (typeof data.searchMemory !== 'function') throw Object.assign(new Error('memory search is not available'), { status: 503 });
+            const rows = await data.searchMemory(tenantId, memoryQuery);
+            payload = { results: assembleMemorySearchResults(rows, memoryQuery) };
+          } else if (name === 'shared_memory_read') {
+            if (typeof data.readMemory !== 'function') throw Object.assign(new Error('memory read is not available'), { status: 503 });
+            const entry = assembleMemoryEntry(await data.readMemory(tenantId, memoryId));
+            if (!entry) {
+              // One answer for a foreign id and a missing id alike:
+              // the read confirms nothing about other workspaces.
+              return { status: 200, body: rpcError(id, -32602, 'No shared memory entry with that id exists in this workspace.') };
             }
-            payload = { agents: assembleAgentHealth(snapshot, filter) };
+            payload = { entry };
+          } else {
+            const snapshot = await data.snapshot(tenantId);
+            if (name === 'list_agents') {
+              payload = { agents: assembleAgents(snapshot) };
+            } else {
+              let filter = null;
+              if (args.provider !== undefined) {
+                filter = normalizeProvider(args.provider);
+                if (!filter) return { status: 200, body: rpcError(id, -32602, `Unknown provider: ${String(args.provider)}`) };
+              }
+              payload = { agents: assembleAgentHealth(snapshot, filter) };
+            }
           }
           return {
             status: 200,
