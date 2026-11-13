@@ -7,14 +7,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MUSE_CONNECTOR_TOOLS,
+  SHARED_MEMORY_SEARCH_LIMIT,
   assembleAgentHealth,
   assembleAgents,
+  assembleMemoryEntry,
+  assembleMemorySearchResults,
   createMuseConnectorData,
   createMuseConnectorKeyStore,
   createMuseConnectorRpc,
   handleMuseConnectorRoute,
   hashMuseConnectorKey,
   isMuseConnectorKeyShape,
+  parseMemoryId,
+  sharedMemorySnippet,
 } from '../src/cloud/muse-connector.mjs';
 
 // --- fakes ---
@@ -79,14 +84,46 @@ function fixtureSnapshot(tenantId) {
   };
 }
 
+// Shared memory fixtures in the real store's row shape
+// (helmion.context_entries as the connector's projection selects
+// it: id, key, value, updated_at). The buckets model the store's
+// scoping: each tenant's rows live under its own slug, and the
+// fixture reader serves a bucket only to its own tenant — the same
+// contract the SQL WHERE clause keeps. Tenant B deliberately holds
+// an entry under the SAME key as one of Troy's, with text that must
+// never cross.
+const MEMORY_ROWS = {
+  [TROY]: [
+    { id: 101, key: 'dairy:staging-winner', value: { fact: 'The November 6 staging build winner was the Claude landing page.' }, updated_at: new Date('2026-11-12T21:00:00Z') },
+    { id: 102, key: 'chat:team-1:msg-9', value: { channel: 'Team', ask: 'Which landing page won the staging build?', seats: ['claude'] }, updated_at: new Date('2026-11-12T20:00:00Z') },
+    { id: 103, key: 'ops:deploy-note', value: 'Plain string memory: staging deploys ride the Friday train.', updated_at: new Date('2026-11-12T19:00:00Z') },
+  ],
+  [OTHER]: [
+    { id: 201, key: 'dairy:staging-winner', value: { fact: 'Tenant B staging fact that must never leak.' }, updated_at: new Date('2026-11-12T21:30:00Z') },
+  ],
+};
+
+function fixtureSearchMemory(tenantId, query) {
+  const q = String(query).toLowerCase();
+  return (MEMORY_ROWS[tenantId] ?? []).filter((row) =>
+    row.key.toLowerCase().includes(q) || JSON.stringify(row.value).toLowerCase().includes(q));
+}
+
+function fixtureReadMemory(tenantId, id) {
+  return (MEMORY_ROWS[tenantId] ?? []).find((row) => row.id === id) ?? null;
+}
+
 function makeRpc() {
   const seenTenants = [];
+  const memoryReads = [];
   const rpc = createMuseConnectorRpc({
     data: {
       snapshot: async (tenantId) => { seenTenants.push(tenantId); return fixtureSnapshot(tenantId); },
+      searchMemory: async (tenantId, query) => { memoryReads.push(['search', tenantId, query]); return fixtureSearchMemory(tenantId, query); },
+      readMemory: async (tenantId, id) => { memoryReads.push(['read', tenantId, id]); return fixtureReadMemory(tenantId, id); },
     },
   });
-  return { rpc, seenTenants };
+  return { rpc, seenTenants, memoryReads };
 }
 
 const call = (rpc, tenantId, method, params) => rpc({ tenantId, message: { jsonrpc: '2.0', id: 1, method, params } });
@@ -126,14 +163,16 @@ test('key store fails soft (503) before sql/087 is applied', async () => {
 
 // --- the RPC surface ---
 
-test('tools/list returns exactly the two read tools, with no tenant parameter anywhere', async () => {
+test('tools/list returns exactly the four read tools, with no tenant parameter anywhere', async () => {
   const { rpc } = makeRpc();
   const { status, body } = await call(rpc, TROY, 'tools/list');
   assert.equal(status, 200);
   const names = body.result.tools.map((tool) => tool.name);
-  assert.deepEqual(names, ['list_agents', 'agent_health']);
+  assert.deepEqual(names, ['list_agents', 'agent_health', 'shared_memory_search', 'shared_memory_read']);
   assert.deepEqual(body.result.tools, [...MUSE_CONNECTOR_TOOLS]);
   assert.ok(!JSON.stringify(body.result.tools).includes('tenant'), 'no tool may take a tenant parameter');
+  const search = body.result.tools.find((tool) => tool.name === 'shared_memory_search');
+  assert.match(search.description, /20/, 'the search bound is named in the tool description');
 });
 
 test('initialize answers with server info and a protocol version', async () => {
@@ -221,6 +260,130 @@ test('assembly helpers shape raw store rows directly', () => {
   const health = assembleAgentHealth(snap, 'grok');
   assert.equal(health.length, 1);
   assert.equal(health[0].recentActivity[0].stage, 'failed');
+});
+
+// --- the shared memory tools (Bite 2) ---
+
+test('shared_memory_search returns only the key tenant\'s entries, with match snippets', async () => {
+  const { rpc, memoryReads } = makeRpc();
+  const { status, body } = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_search', arguments: { query: 'staging' } });
+  assert.equal(status, 200);
+  const results = body.result.structuredContent.results;
+  assert.deepEqual(results.map((r) => r.id), [101, 102, 103]);
+  assert.ok(!results.some((r) => r.id === 201), "tenant B's entry must never surface, even under the same key");
+  const winner = results.find((r) => r.id === 101);
+  assert.equal(winner.key, 'dairy:staging-winner');
+  assert.match(winner.snippet, /winner was the Claude landing page/);
+  assert.equal(winner.updatedAt, '2026-11-12T21:00:00.000Z');
+  assert.deepEqual(Object.keys(winner).sort(), ['id', 'key', 'snippet', 'updatedAt'], 'the search projection is exactly four fields');
+  assert.deepEqual(memoryReads, [['search', TROY, 'staging']], 'the tenant comes from the key context, never the arguments');
+});
+
+test('shared_memory_search from another tenant sees only its own rows', async () => {
+  const { rpc } = makeRpc();
+  const { body } = await call(rpc, OTHER, 'tools/call', { name: 'shared_memory_search', arguments: { query: 'staging' } });
+  assert.deepEqual(body.result.structuredContent.results.map((r) => r.id), [201]);
+});
+
+test('shared_memory_search refuses an empty, missing or non-string query plainly, reading nothing', async () => {
+  const { rpc, memoryReads } = makeRpc();
+  for (const args of [{ query: '   ' }, { query: '' }, {}, { query: 42 }]) {
+    const { body } = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_search', arguments: args });
+    assert.ok(body.error, `arguments ${JSON.stringify(args)} must error`);
+    assert.match(body.error.message, /needs a query/);
+  }
+  assert.equal(memoryReads.length, 0, 'a refused search must not read any memory');
+});
+
+test('shared_memory_search results are bounded at the named limit', async () => {
+  const rows = Array.from({ length: SHARED_MEMORY_SEARCH_LIMIT + 5 }, (_, i) => ({
+    id: 1000 + i, key: `bulk:${i}`, value: 'bound check entry', updated_at: new Date('2026-11-12T10:00:00Z'),
+  }));
+  const rpc = createMuseConnectorRpc({
+    data: {
+      snapshot: async () => fixtureSnapshot(TROY),
+      searchMemory: async () => rows,
+      readMemory: async () => null,
+    },
+  });
+  const { body } = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_search', arguments: { query: 'bound' } });
+  assert.equal(body.result.structuredContent.results.length, SHARED_MEMORY_SEARCH_LIMIT);
+});
+
+test('shared_memory_read returns the full entry for its own tenant', async () => {
+  const { rpc } = makeRpc();
+  const { body } = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_read', arguments: { id: 101 } });
+  const entry = body.result.structuredContent.entry;
+  assert.equal(entry.id, 101);
+  assert.equal(entry.key, 'dairy:staging-winner');
+  assert.deepEqual(entry.value, { fact: 'The November 6 staging build winner was the Claude landing page.' });
+  assert.equal(entry.updatedAt, '2026-11-12T21:00:00.000Z');
+  const asString = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_read', arguments: { id: '103' } });
+  assert.equal(asString.body.result.structuredContent.entry.value, 'Plain string memory: staging deploys ride the Friday train.');
+});
+
+test('shared_memory_read answers a foreign id exactly like a missing id (no existence leak)', async () => {
+  const { rpc } = makeRpc();
+  const foreign = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_read', arguments: { id: 201 } });
+  const missing = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_read', arguments: { id: 999999 } });
+  assert.ok(foreign.body.error && missing.body.error);
+  assert.equal(foreign.body.error.code, missing.body.error.code);
+  assert.equal(foreign.body.error.message, missing.body.error.message);
+  const reverse = await call(rpc, OTHER, 'tools/call', { name: 'shared_memory_read', arguments: { id: 101 } });
+  assert.equal(reverse.body.error.message, missing.body.error.message, 'the refusal is symmetric across tenants');
+});
+
+test('shared_memory_read refuses a malformed id before reading anything', async () => {
+  const { rpc, memoryReads } = makeRpc();
+  for (const id of ['abc', -3, 1.5, 0, null, {}]) {
+    const { body } = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_read', arguments: { id } });
+    assert.ok(body.error, `id ${JSON.stringify(id)} must error`);
+    assert.match(body.error.message, /needs an id/);
+  }
+  assert.equal(memoryReads.length, 0);
+});
+
+test('the memory tools refuse tenant selectors — including the notebook\'s own slug — and unknown arguments', async () => {
+  const { rpc, memoryReads } = makeRpc();
+  const byTenant = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_search', arguments: { query: 'staging', tenantId: OTHER } });
+  assert.match(byTenant.body.error.message, /tenant selector/);
+  const bySlug = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_search', arguments: { query: 'staging', projectSlug: OTHER } });
+  assert.match(bySlug.body.error.message, /tenant selector/, 'the shared notebook is keyed by project slug; naming one is selecting a tenant');
+  const bySlugRead = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_read', arguments: { id: 101, project_slug: OTHER } });
+  assert.match(bySlugRead.body.error.message, /tenant selector/);
+  const unknown = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_search', arguments: { query: 'staging', limit: 5 } });
+  assert.match(unknown.body.error.message, /Unknown argument/);
+  assert.equal(memoryReads.length, 0, 'refused calls must not read any memory');
+});
+
+test('memory payloads carry no tenant slug and no credential-shaped fields', async () => {
+  const { rpc } = makeRpc();
+  const search = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_search', arguments: { query: 'staging' } });
+  const read = await call(rpc, TROY, 'tools/call', { name: 'shared_memory_read', arguments: { id: 102 } });
+  const whole = JSON.stringify([search.body, read.body]);
+  assert.ok(!whole.includes('project_slug') && !whole.includes('projectSlug'), 'the isolation column never rides an answer');
+  assert.ok(!whole.includes(TROY) && !whole.includes(OTHER), 'no tenant id rides an answer');
+  assert.ok(!/credential/i.test(whole), 'no credential-shaped field may appear');
+});
+
+test('memory assembly helpers shape store rows directly', () => {
+  const long = { id: '7', key: 'k', value: `head ${'x'.repeat(300)} needle ${'y'.repeat(300)}`, updated_at: '2026-11-12T10:00:00Z' };
+  const [shaped] = assembleMemorySearchResults([long], 'needle');
+  assert.equal(shaped.id, 7);
+  assert.match(shaped.snippet, /needle/);
+  assert.ok(shaped.snippet.startsWith('…') && shaped.snippet.endsWith('…'), 'a mid-value window is marked cut on both sides');
+  assert.ok(shaped.snippet.length <= 242);
+  assert.equal(assembleMemoryEntry(null), null);
+  assert.deepEqual(assembleMemoryEntry({ id: 3, key: 'a', value: 'v', updated_at: null }), { id: 3, key: 'a', value: 'v', updatedAt: null });
+  assert.equal(sharedMemorySnippet('short value', 'absent'), 'short value');
+  assert.equal(parseMemoryId(5), 5);
+  assert.equal(parseMemoryId('5'), 5);
+  assert.equal(parseMemoryId(' 5 '), 5);
+  assert.equal(parseMemoryId(0), null);
+  assert.equal(parseMemoryId(-1), null);
+  assert.equal(parseMemoryId(2.5), null);
+  assert.equal(parseMemoryId('1e3'), null);
+  assert.equal(parseMemoryId('9007199254740993'), null, 'beyond the safe range is refused');
 });
 
 // --- the HTTP route delegate ---
@@ -321,4 +484,59 @@ test('createMuseConnectorData reads presence, connections and tool accounts thro
   const health = assembleAgentHealth(snap, 'claude');
   assert.equal(health[0].toolAccounts[0].accountLabel, 'fixture-account');
   assert.ok(!JSON.stringify(health).includes('credential'), 'no credential-shaped field may appear');
+});
+
+// --- the memory data reader over a fake pg pool (real query shape) ---
+
+test('createMuseConnectorData reads the shared notebook scoped to the key tenant only', async () => {
+  // The fake table carries the scoping column the way the real one
+  // does; the fake applies ONLY the filters the SQL itself states,
+  // so a missing or widened WHERE would show up here as a leak.
+  const table = [
+    { id: 101, project_slug: TROY, key: 'dairy:staging-winner', value: { fact: 'winner' }, updated_at: new Date('2026-11-12T21:00:00Z') },
+    { id: 201, project_slug: OTHER, key: 'dairy:staging-winner', value: { fact: 'tenant B' }, updated_at: new Date('2026-11-12T21:30:00Z') },
+    { id: 301, project_slug: null, key: 'platform:shared', value: 'shared row', updated_at: new Date('2026-11-12T22:00:00Z') },
+  ];
+  const seen = [];
+  const pool = {
+    query: async (sql, params) => {
+      seen.push({ sql, params });
+      if (!sql.includes('from helmion.context_entries')) throw new Error(`unexpected query: ${sql}`);
+      let rows = table.filter((row) => row.project_slug === params[0]);
+      if (sql.includes('ilike')) {
+        const needle = String(params[1]).replace(/%/g, '').toLowerCase();
+        rows = rows.filter((row) => row.key.toLowerCase().includes(needle) || JSON.stringify(row.value).toLowerCase().includes(needle));
+      } else {
+        rows = rows.filter((row) => row.id === params[1]);
+      }
+      return { rows: rows.map(({ project_slug, ...rest }) => rest), rowCount: rows.length };
+    },
+  };
+  const data = createMuseConnectorData(pool);
+  const found = await data.searchMemory(TROY, 'staging');
+  assert.deepEqual(found.map((r) => r.id), [101], "only the key tenant's rows: no other tenant's, and no NULL-slug platform rows");
+  const searchSql = seen[0].sql;
+  assert.match(searchSql, /project_slug = \$1/);
+  assert.ok(!/is null/i.test(searchSql), 'the connector read must not widen to the shared NULL rows');
+  assert.match(searchSql, /limit 20/, 'the bound is enforced in the query itself');
+  assert.equal(seen[0].params[0], TROY);
+  const entry = await data.readMemory(TROY, 101);
+  assert.equal(entry.key, 'dairy:staging-winner');
+  assert.equal(await data.readMemory(TROY, 201), null, "another tenant's id reads as absent");
+  assert.equal(await data.readMemory(TROY, 301), null, 'a platform row is not the tenant\'s to read through this door');
+});
+
+test('the memory reader escapes LIKE wildcards so a query stays literal text', async () => {
+  const seen = [];
+  const pool = { query: async (sql, params) => { seen.push(params); return { rows: [], rowCount: 0 }; } };
+  const data = createMuseConnectorData(pool);
+  await data.searchMemory(TROY, '50% off_sale!');
+  assert.equal(seen[0][1], '%50!% off!_sale!!%', 'the caller\'s %, _ and ! are escaped under the ! escape character');
+});
+
+test('the memory reader fails soft to empty when the notebook table is missing', async () => {
+  const missing = { query: async () => { const e = new Error('missing'); e.code = '42P01'; throw e; } };
+  const data = createMuseConnectorData(missing);
+  assert.deepEqual(await data.searchMemory(TROY, 'x'), []);
+  assert.equal(await data.readMemory(TROY, 1), null);
 });
