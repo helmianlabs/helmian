@@ -553,6 +553,39 @@ $('pcSignInBtn').addEventListener('click', () => {
   } catch { /* the status line above already says what to do */ }
 });
 
+// The knock's permission (Bite 4). The worker knocks once when a PC
+// action starts waiting (background/worker.js), but only when the
+// notifications permission is granted — and that permission is optional,
+// asked for only from a click in this pop-up, never at install and never
+// by the worker. This row is that ask: it shows only while the permission
+// is missing, and once granted it stays away. When the browser cannot
+// say whether the permission is held, the row stays hidden rather than
+// offering a button that cannot work.
+function pcNotificationsGranted() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.permissions || typeof chrome.permissions.contains !== 'function') { resolve(null); return; }
+      const r = chrome.permissions.contains({ permissions: ['notifications'] }, (ok) => { void chrome.runtime.lastError; resolve(Boolean(ok)); });
+      if (r && typeof r.then === 'function') r.then((ok) => resolve(Boolean(ok)), () => resolve(null));
+    } catch { resolve(null); }
+  });
+}
+
+async function refreshPcAlertsRow() {
+  const rowEl = $('pcAlertsRow');
+  if (!rowEl) return;
+  rowEl.hidden = (await pcNotificationsGranted()) !== false;
+}
+
+$('pcAlertsBtn').addEventListener('click', async () => {
+  // requestNotifications is the Scribe door-knock section's helper below:
+  // one permissions.request inside the click, as Chrome requires the ask
+  // to ride on a user gesture. A refused ask leaves the row showing, so
+  // it can be tried again; nothing else changes either way.
+  if (await requestNotifications()) $('pcAlertsRow').hidden = true;
+});
+
+refreshPcAlertsRow();
 refreshPcApprovals(false);
 
 // ─── Scribe door-knock ──────────────────────────────────────────────────────
