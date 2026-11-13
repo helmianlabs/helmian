@@ -1108,25 +1108,44 @@ test('boxless faces: no 28px tile, no dark stage, mask on, clips in message rows
   assert.ok(!sig.includes('activityElapsed'), 'the elapsed clock is not part of the rebuild signature');
 });
 
-test('owner union mask (animation bite A): owner masks with owner-mask.png, every other slug with its still', async () => {
+test('union masks (animation bites A + B1): owner, grok and openrouter mask with their union silhouettes, every other slug with its still', async () => {
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
-  const maskFn = js.slice(js.indexOf('const faceMaskStyle'), js.indexOf('function crewFaceImg'));
-  assert.ok(maskFn.includes("slug === 'owner' ? 'owner-mask.png'"), 'the owner slug resolves to the union-silhouette mask');
+  const maskFn = js.slice(js.indexOf('const UNION_FACE_MASK_SLUGS'), js.indexOf('function crewFaceImg'));
+  assert.ok(maskFn.includes("new Set(['owner', 'grok', 'openrouter'])"), 'the union-mask set names the animated three');
+  assert.ok(maskFn.includes('${slug}-mask.png'), 'a union slug resolves to its <slug>-mask.png');
   assert.ok(maskFn.includes('${slug}-256.png'), 'every other slug still masks with its own 256px still');
-  // The mask asset itself: a 256x256 PNG (the union silhouette of the
-  // neutral master and the owner's pose masters), next to the clips.
+  // The mask assets themselves: 256x256 PNGs (the union silhouette of
+  // the neutral master and every pose the clips morph through), next
+  // to the clips, which are present and non-trivial for all three.
   const { readFile: rf, stat } = await import('node:fs/promises');
-  const maskBuf = await rf(new URL('../app/assets/crew/owner-mask.png', import.meta.url));
-  assert.equal(maskBuf.readUInt32BE(16), 256, 'owner-mask.png is 256px wide');
-  assert.equal(maskBuf.readUInt32BE(20), 256, 'owner-mask.png is 256px high');
-  for (const kind of ['idle', 'thinking', 'speaking']) {
-    const s = await stat(new URL(`../app/assets/crew/owner-${kind}.webm`, import.meta.url));
-    assert.ok(s.size > 10_000, `owner-${kind}.webm is present and non-trivial`);
+  for (const slug of ['owner', 'grok', 'openrouter']) {
+    const maskBuf = await rf(new URL(`../app/assets/crew/${slug}-mask.png`, import.meta.url));
+    assert.equal(maskBuf.readUInt32BE(16), 256, `${slug}-mask.png is 256px wide`);
+    assert.equal(maskBuf.readUInt32BE(20), 256, `${slug}-mask.png is 256px high`);
+    for (const kind of ['idle', 'thinking', 'speaking']) {
+      const s = await stat(new URL(`../app/assets/crew/${slug}-${kind}.webm`, import.meta.url));
+      assert.ok(s.size > 10_000, `${slug}-${kind}.webm is present and non-trivial`);
+    }
   }
   // The owner never takes the generic stage motion: his message face
   // is built at stage null and his rows re-point at null.
   const msgOwner = js.slice(js.indexOf('function msgOwnerAvatar'), js.indexOf('// The desk crew rail'));
   assert.ok(msgOwner.includes('crewOwnerFaceClip(null)'), 'owner message faces hold the idle clip (stage null)');
+});
+
+test('clip-animated slugs (animation bite B1): grok and openrouter never take the generic CSS motion classes, their stages still reach the clips', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  assert.ok(js.includes("const CLIP_ANIMATED_SLUGS = new Set(['grok', 'openrouter'])"), 'the clip-animated set names grok and openrouter');
+  const helper = js.slice(js.indexOf('const faceMotionClass'), js.indexOf('function crewFaceImg'));
+  assert.ok(helper.includes("CLIP_ANIMATED_SLUGS.has(slug) ? '' : activityMotionClass(stage)"), 'the helper suppresses the class only for clip-animated slugs');
+  for (const site of ['function crewFaceNode', 'function msgSeatAvatar', 'function syncCrewMotion', 'function syncMsgMotion', 'function crewRowSync']) {
+    const body = js.slice(js.indexOf(site), js.indexOf(site) + 1500);
+    assert.ok(body.includes('faceMotionClass('), `${site} routes its motion class through the suppression helper`);
+  }
+  const syncCrew = js.slice(js.indexOf('function syncCrewMotion'), js.indexOf('function syncCrewMotion') + 1500);
+  assert.ok(syncCrew.includes('crewClipApply(video, stage)'), 'crew sync still points clips at the live stage');
+  const syncMsg = js.slice(js.indexOf('function syncMsgMotion'), js.indexOf('function syncMsgMotion') + 1500);
+  assert.ok(syncMsg.includes('crewClipApply(video, stage)'), 'message sync still points clips at the live stage');
 });
 
 test('bite 5 wiring: faces route, member face, channel face, custom pill art', async () => {

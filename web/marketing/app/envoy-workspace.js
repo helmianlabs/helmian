@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=1fcc10008d70c760';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=1fcc10008d70c760';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=1fcc10008d70c760';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=1fcc10008d70c760';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=1fcc10008d70c760';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=1fcc10008d70c760';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=1fcc10008d70c760';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=1fcc10008d70c760';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=1fcc10008d70c760';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=1fcc10008d70c760';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=1fcc10008d70c760';
-import { createConnectFields } from './connect-fields.mjs?v=1fcc10008d70c760';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=1fcc10008d70c760';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=1fcc10008d70c760';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=80bb4d86f2be0d90';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=80bb4d86f2be0d90';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=80bb4d86f2be0d90';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=80bb4d86f2be0d90';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=80bb4d86f2be0d90';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=80bb4d86f2be0d90';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=80bb4d86f2be0d90';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=80bb4d86f2be0d90';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=80bb4d86f2be0d90';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=80bb4d86f2be0d90';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=80bb4d86f2be0d90';
+import { createConnectFields } from './connect-fields.mjs?v=80bb4d86f2be0d90';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=80bb4d86f2be0d90';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=80bb4d86f2be0d90';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -486,8 +486,9 @@ function syncCrewMotion() {
   for (const row of document.querySelectorAll('#ew-crew-list .ew-crew-row[data-provider]')) {
     const face = row.querySelector('.ew-crew-face');
     if (!face) continue;
-    const stage = activityMotionStage(ws.activity, row.getAttribute('data-provider'), ws.channelId);
-    const cls = activityMotionClass(stage);
+    const provider = row.getAttribute('data-provider');
+    const stage = activityMotionStage(ws.activity, provider, ws.channelId);
+    const cls = faceMotionClass(crewFaceSlug(provider), stage);
     face.classList.toggle('ew-ava-roll', cls === 'ew-ava-roll');
     face.classList.toggle('ew-ava-talk', cls === 'ew-ava-talk');
     const video = face.querySelector('video.ew-crew-face-video');
@@ -506,7 +507,7 @@ function syncMsgMotion() {
   for (const shell of document.querySelectorAll('#ew-messages .ew-avatar[data-provider]')) {
     const provider = shell.getAttribute('data-provider');
     const stage = provider === 'owner' ? null : activityMotionStage(ws.activity, provider, ws.channelId);
-    const cls = activityMotionClass(stage);
+    const cls = faceMotionClass(crewFaceSlug(provider), stage);
     shell.classList.toggle('ew-ava-roll', cls === 'ew-ava-roll');
     shell.classList.toggle('ew-ava-talk', cls === 'ew-ava-talk');
     const video = shell.querySelector('video.ew-crew-face-video');
@@ -592,12 +593,23 @@ const crewFaceSlug = (provider) => CREW_FACE_SLUG[provider] ?? provider;
 // The still that masks a slug's clips (envoy.css --face-mask): the
 // pack still at the same slug is real RGBA; the clips are not.
 // Owner is the one exception (avatar animation bite A): his rebuilt
-// clips move his head outside the neutral still's outline (the idle
-// head tilt), so he masks with owner-mask.png — the union silhouette
-// of the neutral master and every pose the clips morph through —
-// instead of his still. His visible stills and poster are untouched;
+// The animated three (owner, grok, openrouter) move outside their
+// neutral stills' outlines (head tilts, face turns, rocking spheres),
+// so they mask with a <slug>-mask.png (the union silhouette of the
+// neutral master and every pose their clips morph through) instead
+// of the still. Their visible stills and posters are untouched;
 // every other slug keeps masking with its own still.
-const faceMaskStyle = (slug) => `--face-mask:url("${assetUrl(`/app/assets/crew/${slug === 'owner' ? 'owner-mask.png' : `${slug}-256.png`}`)}")`;
+const UNION_FACE_MASK_SLUGS = new Set(['owner', 'grok', 'openrouter']);
+const faceMaskStyle = (slug) => `--face-mask:url("${assetUrl(`/app/assets/crew/${UNION_FACE_MASK_SLUGS.has(slug) ? `${slug}-mask.png` : `${slug}-256.png`}`)}")`;
+// Grok and OpenRouter carry their motion inside their clips now
+// (real face rotation, eye movement, node travel, animation bite
+// B1), so the generic CSS activity classes must not ride their
+// shells: a whole-picture ew-ava-roll over a clip that already turns
+// the face would double the motion. Their stages still flow to
+// crewClipApply untouched; only the class is suppressed. The owner
+// needs no entry here: his stage is forced null at his call sites.
+const CLIP_ANIMATED_SLUGS = new Set(['grok', 'openrouter']);
+const faceMotionClass = (slug, stage) => (CLIP_ANIMATED_SLUGS.has(slug) ? '' : activityMotionClass(stage));
 function crewFaceImg(slug, fallback) {
   const img = h('img', { class: 'ew-crew-face-img', src: assetUrl(`/app/assets/crew/${slug}-56.png`), srcset: `${assetUrl(`/app/assets/crew/${slug}-128.png`)} 2x, ${assetUrl(`/app/assets/crew/${slug}-256.png`)} 3x`, alt: '', width: 36, height: 36, loading: 'lazy' });
   img.dataset.slug = slug;
@@ -618,8 +630,8 @@ const crewOwnerFaceImg = () => crewFaceImg('owner', () => ownerFaceFallback());
 // dataset.slug — the clip and the still both carry it) so
 // envoy.css can mask the clip's opaque black stage away.
 function crewFaceNode(faceImg, statusKind, motionStage) {
-  const motion = activityMotionClass(motionStage);
   const slug = faceImg?.dataset?.slug;
+  const motion = slug ? faceMotionClass(slug, motionStage) : activityMotionClass(motionStage);
   const attrs = { class: `ew-crew-face${motion ? ` ${motion}` : ''}` };
   if (slug) attrs.style = faceMaskStyle(slug);
   return h('span', attrs,
@@ -723,8 +735,8 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
 // there is no pack slug to ask for.
 function msgSeatAvatar(provider, motionStage = null) {
   if (!provider) return seatAvatar(provider, motionStage);
-  const motion = activityMotionClass(motionStage);
   const slug = crewFaceSlug(provider);
+  const motion = faceMotionClass(slug, motionStage);
   return h('div', {
     class: `ew-avatar face-ava${motion ? ` ${motion}` : ''}`,
     'data-provider': provider,
@@ -2189,7 +2201,7 @@ function crewRowSync(entry, spec) {
   if (entry.title !== spec.title) { entry.title = spec.title; entry.row.setAttribute('title', spec.title); }
   if (entry.statusKind !== spec.status.kind) { entry.statusKind = spec.status.kind; entry.dot.className = `ew-crew-dot ${spec.status.kind}`; }
   if (entry.line !== spec.status.line) { entry.line = spec.status.line; entry.lineEl.textContent = spec.status.line; }
-  const motion = activityMotionClass(spec.stage);
+  const motion = faceMotionClass(crewFaceSlug(spec.key), spec.stage);
   entry.shell.classList.toggle('ew-ava-roll', motion === 'ew-ava-roll');
   entry.shell.classList.toggle('ew-ava-talk', motion === 'ew-ava-talk');
   const selected = crewRowSelected(spec.key, crewLeadingTargets());
@@ -5532,7 +5544,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=1fcc10008d70c760');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=80bb4d86f2be0d90');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
