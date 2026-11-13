@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=3fc6a7d2b555633c';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=3fc6a7d2b555633c';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=3fc6a7d2b555633c';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=3fc6a7d2b555633c';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=3fc6a7d2b555633c';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=3fc6a7d2b555633c';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=3fc6a7d2b555633c';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=3fc6a7d2b555633c';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=3fc6a7d2b555633c';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=3fc6a7d2b555633c';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=3fc6a7d2b555633c';
-import { createConnectFields } from './connect-fields.mjs?v=3fc6a7d2b555633c';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=3fc6a7d2b555633c';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=3fc6a7d2b555633c';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=6566fcf5c4ebf899';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=6566fcf5c4ebf899';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=6566fcf5c4ebf899';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=6566fcf5c4ebf899';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=6566fcf5c4ebf899';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=6566fcf5c4ebf899';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=6566fcf5c4ebf899';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=6566fcf5c4ebf899';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=6566fcf5c4ebf899';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=6566fcf5c4ebf899';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=6566fcf5c4ebf899';
+import { createConnectFields } from './connect-fields.mjs?v=6566fcf5c4ebf899';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=6566fcf5c4ebf899';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=6566fcf5c4ebf899';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -384,6 +384,66 @@ export function activityName(provider, customAgents = []) {
 // cadence while a seat is visibly working there.
 export function activityLive(activity, channelId, customAgents = [], now = Date.now()) {
   return activityCues(activity, channelId, customAgents, now).length > 0;
+}
+
+// ---------- watch offers (live browser view, Bite 3) ----------
+// The pane half of the live agent-browser view. The presence poll
+// now also carries `watch`: one offer per browser seat whose
+// executor session is live on the server right now (the executor
+// posts the fact while a page is open and clears it when the page
+// closes; every offer also carries its own expiry — runner-
+// presence.mjs). An offer is the only thing that ever offers a
+// watch: no offer, no watch, and never a fake view of a browser
+// that is not open. Seats that answer through a direct connection
+// never appear here at all — they work without a browser, and the
+// watch bar says so in plain words.
+export const WATCH_SEATS = Object.freeze(['mistral', 'openai', 'claude', 'grok', 'gemini']);
+const WATCH_PAGE_NAMES = Object.freeze({
+  'chat.mistral.ai': 'Le Chat',
+  'claude.ai': 'Claude',
+  'chatgpt.com': 'ChatGPT',
+  'grok.com': 'Grok',
+  'gemini.google.com': 'Gemini',
+});
+// The offer rows the pane may show, from one presence payload:
+// browser seats only, unexpired only, one per seat (the freshest
+// expiry wins a duplicate). Anything malformed is dropped, never
+// rendered as a watch that cannot start.
+export function watchOffersFrom(body, now = Date.now()) {
+  const rows = Array.isArray(body?.watch) ? body.watch : [];
+  const bySeat = new Map();
+  for (const row of rows) {
+    const seat = String(row?.provider ?? '').toLowerCase();
+    if (!WATCH_SEATS.includes(seat)) continue;
+    const expiresAt = Date.parse(row?.expiresAt ?? '');
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) continue;
+    const prev = bySeat.get(seat);
+    if (prev && Date.parse(prev.expiresAt) >= expiresAt) continue;
+    bySeat.set(seat, {
+      seat,
+      name: NAMES[seat] ?? seat,
+      url: typeof row?.url === 'string' && row.url ? row.url : null,
+      expiresAt: new Date(expiresAt).toISOString(),
+    });
+  }
+  return [...bySeat.values()];
+}
+// The plain name of the page an agent is working on, for the
+// status line: the provider app's own name where we know it, the
+// host otherwise, and nothing when the page has not navigated yet.
+export function watchPageName(url) {
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return WATCH_PAGE_NAMES[host] ?? host;
+  } catch { return null; }
+}
+export function watchStepText(offer) {
+  const page = watchPageName(offer?.url);
+  return page ? `${offer.name} is working in ${page}` : `${offer.name} is working in its browser`;
+}
+export function watchOfferSignature(offers) {
+  return (offers ?? []).map((o) => `${o.seat}:${o.url ?? ''}`).join(',');
 }
 
 // ---------- seat avatar motion (emoji bite 4) ----------
@@ -1096,6 +1156,10 @@ function setPane(name, open, { user = false } = {}) {
     const maxBtn = $('ew-bench-max');
     if (maxBtn) { maxBtn.textContent = '⤢'; maxBtn.title = 'Expand'; maxBtn.setAttribute('aria-label', 'Expand workbench'); }
   }
+  // Closing the workbench closes any live watch with it (Bite 3):
+  // the stream ends when the customer leaves the pane, and the
+  // socket close is what stops it on the server side too.
+  if (name === 'bench' && !open) stopWatch();
   if (narrow()) {
     pane.classList.toggle('sheet-open', open);
     const anySheet = document.querySelector('.ew-pane.sheet-open');
@@ -5557,7 +5621,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=3fc6a7d2b555633c');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=6566fcf5c4ebf899');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -5588,6 +5652,7 @@ function openBench(tab) {
 const BENCH_TABS = ['browser', 'create', 'canvas', 'preview'];
 function selectTab(name) {
   if (!BENCH_TABS.includes(name)) name = 'browser';
+  if (name !== 'browser') stopWatch();
   for (const t of document.querySelectorAll('#ew-bench .ew-tab')) { const on = t.dataset.tab === name; t.classList.toggle('active', on); t.setAttribute('aria-selected', String(on)); }
   for (const p of document.querySelectorAll('#ew-bench .ew-tabpane')) { const on = p.dataset.tabpane === name; p.hidden = !on; p.classList.toggle('active', on); }
   ls.set('tab', name);
@@ -5642,6 +5707,9 @@ function buildYoutubeLauncherHtml() {
   </body></html>`;
 }
 async function navigate(input, { push = true } = {}) {
+  // Opening a page of your own ends any watch first: the pane is
+  // one view, and the customer's browsing takes it back.
+  stopWatch();
   const status = $('ew-browser-status');
   const address = toAddress(input);
   if (!address) return;
@@ -5680,9 +5748,184 @@ function syncBrowserButtons() {
   for (const id of ['ew-browser-reload', 'ew-browser-external', 'ew-browser-close']) $(id).disabled = !has;
 }
 function closePage() {
+  stopWatch();
   const frame = $('ew-browser-frame'); frame.src = 'about:blank'; frame.hidden = true;
   $('ew-browser-start').hidden = false; $('ew-browser-url').value = ''; $('ew-browser-status').textContent = '';
   nav.stack = []; nav.index = -1; syncBrowserButtons();
+}
+
+// Live watch (live browser view, Bite 3): while a watch runs, the
+// pane's view is a canvas fed frame by frame from the watch
+// service, in the same frame the iframe uses, under the same
+// address bar. The ticket is minted per watch from the signed-in
+// session (the tenant is the session's, never chosen here), the
+// socket carries it as a subprotocol, and every frame is answered
+// with an ack at once: the ack is what paces the agent's browser,
+// so a slow pane slows only itself. The customer's own browsing
+// stack is separate state throughout: starting a watch hides the
+// frame without touching it, and ending the watch puts it back
+// exactly as it was. A watch ends when the customer stops it,
+// leaves the tab, opens a page of their own, or when the seat's
+// offer leaves the poll — and an ended watch never leaves its
+// last frame standing as if it were live.
+const watchView = { seat: null, socket: null, pending: null, drawing: false };
+let watchBarSig = null;
+
+function liveWatchOffers() {
+  const now = Date.now();
+  return (ws.watchOffers ?? []).filter((o) => Date.parse(o.expiresAt) > now);
+}
+
+function syncWatchBar() {
+  const bar = $('ew-browser-watchbar');
+  if (!bar) return;
+  const offers = liveWatchOffers();
+  // The seat being watched left the poll: its turn is over, so the
+  // watch is over too — end it here rather than leave a still
+  // picture standing in the pane.
+  if (watchView.seat && !offers.some((o) => o.seat === watchView.seat)) endWatch();
+  const sig = watchView.seat ? `watching:${watchView.seat}` : watchOfferSignature(offers);
+  if (sig === watchBarSig) return;
+  watchBarSig = sig;
+  if (watchView.seat) {
+    const name = NAMES[watchView.seat] ?? watchView.seat;
+    bar.replaceChildren(h('div', { class: 'ew-watch-row' },
+      h('span', { class: 'ew-watch-live' }, `Watching ${name} live`),
+      h('span', { class: 'ew-spacer' }),
+      h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: () => stopWatch() }, 'Stop watching')));
+    return;
+  }
+  if (offers.length) {
+    bar.replaceChildren(...offers.map((offer) => h('div', { class: 'ew-watch-row' },
+      h('span', {}, watchStepText(offer)),
+      h('span', { class: 'ew-spacer' }),
+      h('button', { type: 'button', class: 'ew-btn primary sm', onclick: () => { void startWatch(offer.seat); } }, `Watch ${offer.name}`))));
+    return;
+  }
+  bar.replaceChildren(h('div', { class: 'ew-watch-row' },
+    h('span', { class: 'muted sm' }, 'No agent is working in a browser right now. Agents that answer through a direct connection work without a browser.')));
+}
+
+async function startWatch(seat) {
+  stopWatch();
+  const status = $('ew-browser-status');
+  status.textContent = 'Starting the live view…';
+  let minted;
+  try { minted = await ws.ctx.post('/api/admin/browser/watch-ticket', { seat }); }
+  catch { status.textContent = 'The live view could not start. The agent may have finished already.'; return; }
+  if (!minted?.ticket || !minted?.watchUrl) { status.textContent = 'The live view could not start. The agent may have finished already.'; return; }
+  let socket;
+  try { socket = new WebSocket(minted.watchUrl, ['helmian-watch', minted.ticket]); }
+  catch { status.textContent = 'The live view could not start.'; return; }
+  watchView.seat = seat;
+  watchView.socket = socket;
+  watchBarSig = null;
+  socket.addEventListener('message', (event) => { if (watchView.socket === socket) onWatchMessage(event.data); });
+  socket.addEventListener('close', () => { if (watchView.socket === socket) endWatch(); });
+  socket.addEventListener('error', () => { if (watchView.socket === socket) endWatch(); });
+  syncWatchBar();
+}
+
+function onWatchMessage(data) {
+  let msg;
+  try { msg = JSON.parse(String(data)); } catch { return; }
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.type === 'ready') { showWatchCanvas(); return; }
+  if (msg.type === 'page') {
+    // The address bar follows the agent's page as it moves.
+    if (typeof msg.url === 'string' && msg.url) {
+      $('ew-browser-url').value = msg.url;
+      $('ew-browser-status').textContent = watchStepText({ name: NAMES[watchView.seat] ?? watchView.seat, url: msg.url });
+    }
+    return;
+  }
+  if (msg.type === 'frame') {
+    try { watchView.socket?.send(JSON.stringify({ type: 'ack', sessionId: msg.sessionId })); } catch { /* a failed ack drops one frame, never the watch */ }
+    if (typeof msg.data === 'string' && msg.data) drawWatchFrame(msg.data);
+  }
+}
+
+function showWatchCanvas() {
+  const offer = liveWatchOffers().find((o) => o.seat === watchView.seat);
+  $('ew-browser-frame').hidden = true;
+  $('ew-browser-start').hidden = true;
+  $('ew-browser-watch').hidden = false;
+  // The back/forward/reload/new-tab buttons work the customer's
+  // own stack; while watching they stand down. The address bar is
+  // the agent's for now, and the close button stops the watch.
+  for (const id of ['ew-browser-back', 'ew-browser-fwd', 'ew-browser-reload', 'ew-browser-external']) $(id).disabled = true;
+  $('ew-browser-url').value = offer?.url ?? '';
+  $('ew-browser-status').textContent = offer
+    ? watchStepText(offer)
+    : `${NAMES[watchView.seat] ?? watchView.seat} is working in its browser`;
+}
+
+// Frames are drawn latest-wins: a frame still decoding when the
+// next lands is skipped, so the pane can never fall behind the
+// agent's page and play catch-up.
+function drawWatchFrame(data) {
+  watchView.pending = data;
+  if (watchView.drawing) return;
+  watchView.drawing = true;
+  const step = () => {
+    const latest = watchView.pending;
+    watchView.pending = null;
+    if (latest == null || !watchView.seat) { watchView.drawing = false; return; }
+    const img = new Image();
+    img.onload = () => {
+      const canvas = $('ew-browser-watch');
+      if (canvas && watchView.seat) {
+        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+        }
+        canvas.getContext('2d')?.drawImage(img, 0, 0);
+      }
+      step();
+    };
+    img.onerror = () => step();
+    img.src = `data:image/jpeg;base64,${latest}`;
+  };
+  step();
+}
+
+function teardownWatch() {
+  const seat = watchView.seat;
+  const socket = watchView.socket;
+  watchView.seat = null;
+  watchView.socket = null;
+  watchView.pending = null;
+  if (socket) { try { socket.close(); } catch { /* already gone */ } }
+  const canvas = $('ew-browser-watch');
+  if (canvas) canvas.hidden = true;
+  // The customer's own browsing returns exactly as it was: their
+  // page again, or the start panel if they had none open.
+  const frame = $('ew-browser-frame');
+  if (frame) frame.hidden = nav.index < 0;
+  const start = $('ew-browser-start');
+  if (start) start.hidden = nav.index >= 0;
+  $('ew-browser-url').value = nav.index >= 0 ? nav.stack[nav.index] : '';
+  syncBrowserButtons();
+  watchBarSig = null;
+  return seat;
+}
+
+function stopWatch() {
+  if (!watchView.seat && !watchView.socket) return;
+  teardownWatch();
+  $('ew-browser-status').textContent = '';
+  syncWatchBar();
+}
+
+// The stream ended on its own (the socket closed, or the seat's
+// offer left the poll): say so plainly and restore the pane, so
+// the last frame is never left standing as if it were still live.
+function endWatch() {
+  if (!watchView.seat && !watchView.socket) return;
+  const seat = teardownWatch();
+  const name = NAMES[seat] ?? seat ?? 'The agent';
+  $('ew-browser-status').textContent = `${name} has finished — the live view has ended.`;
+  syncWatchBar();
 }
 
 // Canvas: code on the left, live render on the right (HTML and CSS; scripts stay off).
@@ -5807,8 +6050,9 @@ function wire() {
 }
 
 async function loadPresence() {
-  try { const body = await ws.ctx.api('/api/admin/envoy/runner/presence'); ws.presenceRows = Array.isArray(body.presence) ? body.presence : []; ws.online = new Set((body.presence ?? []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n === 'ollama' ? 'qwen' : n; })); ws.activity = Array.isArray(body.activity) ? body.activity : []; }
+  try { const body = await ws.ctx.api('/api/admin/envoy/runner/presence'); ws.presenceRows = Array.isArray(body.presence) ? body.presence : []; ws.online = new Set((body.presence ?? []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n === 'ollama' ? 'qwen' : n; })); ws.activity = Array.isArray(body.activity) ? body.activity : []; ws.watchOffers = watchOffersFrom(body); }
   catch { ws.online = new Set(); /* the last good presence rows and activity feed stay — activity events expire on their own stamps */ }
+  syncWatchBar();
   syncActivityViews();
 }
 
