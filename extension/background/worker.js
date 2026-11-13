@@ -347,12 +347,13 @@ export async function runApprovalsPoll(opts = {}) {
   if (result.session === 'out') await syncApprovalsAlarm();
   return result;
 }
-// ─── PC APPROVALS (approvals pop-up build, Bite 2) ─────────────────────────
+// ─── PC APPROVALS (approvals pop-up build, Bites 2 and 4) ──────────────────
 // The Helmian app's own approvals (background/pc-approvals-client.js): the
 // actions an agent asked the Executive Guard to run on Troy's PC, decided
 // through Helmian's proxy — this extension holds no Guard credential for
-// this road. Wiring only: the pop-up section is Bite 3, the notification
-// knock is Bite 4, the approvals window is Bite 5.
+// this road. The wiring: this poll and the badge arbiter (Bite 2), the
+// pop-up section (Bite 3), the notification knock directly below (Bite 4).
+// The approvals window is Bite 5.
 //
 // One difference from the door poll above: this alarm is never cleared for
 // being signed out. The door's sign-in happens inside the extension, so its
@@ -367,9 +368,79 @@ async function syncPcApprovalsAlarm() {
   } catch (error) { console.warn('[Helmion Guard] pc approvals alarm sync failed:', error.message); }
 }
 export async function runPcApprovalsPoll(opts = {}) {
+  const before = await getPcApprovalsState(ledger);
   const result = await pollPcApprovals(ledger, opts);
   await refreshGlobalBadge();
+  // The knock (Bite 4, below) reads the rise from the state this poll
+  // just stored, set against the state as it stood before the poll ran.
+  await notifyPcKnock(before, await getPcApprovalsState(ledger));
   return result;
+}
+// ─── PC APPROVALS KNOCK (approvals pop-up build, Bite 4) ───────────────────
+// The badge is the standing signal; this is the knock. When a poll finds
+// the waiting count has risen FROM ZERO — a first action is waiting where
+// none was — exactly one plain notification appears: no buttons, nothing
+// to decide inside it, the ask itself as its message. Further arrivals
+// while anything is already waiting do not knock again, and a count that
+// falls back to zero re-arms the knock for the next arrival. The rise is
+// decided from the client's refreshed stored state after the poll, never
+// from a stale guess.
+//
+// The knock fires only when the notifications permission is granted. That
+// permission is optional in the manifest and is asked for only from a
+// click in the pop-up (popup.js, the PC section's "Turn on alerts"
+// button) — never at install, never at startup, never from here. Without
+// it the badge alone carries the news, and nothing breaks.
+//
+// The knock is best effort throughout: the badge has already been painted
+// by the time this runs, and a browser without notifications changes
+// nothing else.
+export const PC_KNOCK_ID = 'helmion-pc-approvals';
+
+export function pcKnockText(state) {
+  const first = (state && state.items && state.items[0]) || null;
+  const ask = first && first.summary ? String(first.summary) : 'An action';
+  const count = Number(state && state.count) || 0;
+  return {
+    title: 'Helmian Guard — an action is waiting for your decision',
+    message: count > 1 ? `${ask} (${count} waiting in all.)` : ask,
+  };
+}
+
+async function notificationsGranted() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.permissions || typeof chrome.permissions.contains !== 'function') { resolve(false); return; }
+      const r = chrome.permissions.contains({ permissions: ['notifications'] }, (ok) => { void chrome.runtime.lastError; resolve(Boolean(ok)); });
+      if (r && typeof r.then === 'function') r.then((ok) => resolve(Boolean(ok)), () => resolve(false));
+    } catch { resolve(false); }
+  });
+}
+
+export async function notifyPcKnock(before, after) {
+  try {
+    if (!chrome.notifications) return false;
+    if (!before || !after) return false;
+    if (Number(before.count) !== 0) return false; // only a rise FROM zero knocks
+    if (!(Number(after.count) > 0)) return false; // ...to something waiting
+    if (after.session !== 'in' || after.owner === false) return false; // count means waiting only then
+    if (!await notificationsGranted()) return false;
+    const t = pcKnockText(after);
+    try {
+      chrome.notifications.create(PC_KNOCK_ID, {
+        type: 'basic', iconUrl: 'popup/icon-128.png', title: t.title, message: t.message, priority: 1,
+      });
+    } catch { return false; /* notification is best effort */ }
+    return true;
+  } catch { return false; }
+}
+// ─── The knock's click target (INTERIM, Bite 4) ────────────────────────────
+// Clicking the knock opens the Helmian approvals page in a tab: that page
+// is the real decision surface today. Bite 5 builds the approvals window,
+// and re-pointing the click at it is changing the one line inside this
+// function — the listener below and the knock itself do not move.
+function openPcApprovalsSurface() {
+  try { chrome.tabs.create({ url: 'https://helmian.cloud/app#approvals' }); } catch { /* best effort */ }
 }
 // ─── SCRIBE AUTO-NUDGE (0.6.0, off by default) ─────────────────────────────
 // Queue fresh letters (ids only), then let the policy decide per open chat tab.
@@ -415,6 +486,11 @@ if (chrome.alarms && chrome.alarms.onAlarm) {
 }
 if (chrome.notifications && chrome.notifications.onClicked) {
   chrome.notifications.onClicked.addListener((id) => {
+    if (id === PC_KNOCK_ID) {
+      openPcApprovalsSurface();
+      try { chrome.notifications.clear(id); } catch { /* ignore */ }
+      return;
+    }
     const m = /^helmion-scribe:([^:]+):/.exec(String(id));
     if (!m) return;
     openMailboxSite(m[1]);
