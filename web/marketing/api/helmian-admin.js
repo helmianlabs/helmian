@@ -18,7 +18,14 @@ function boot() {
     state = (async () => {
       const missing = REQUIRED.filter((k) => !String(process.env[k] ?? '').trim());
       if (missing.length) return { missing };
-      const pool = new pg.Pool({ connectionString: process.env.HELMION_DATABASE_URL, max: 3, idleTimeoutMillis: 10_000 });
+      // Bounded waits (envoy 504 fix, bite 1): 5s to connect or check
+      // out, 15s per query and per statement, so no request queues
+      // unbounded behind a busy pool into the 60s platform limit.
+      // Size aligned at 5 with the other pools on this path
+      // (src/cloud/live-admin.mjs, src/cloud/envoy-mesh.mjs); this
+      // pool is the one supplied to the live admin handler in
+      // production, over the Neon pooled URL named above.
+      const pool = new pg.Pool({ connectionString: process.env.HELMION_DATABASE_URL, max: 5, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 5_000, query_timeout: 15_000, statement_timeout: 15_000 });
       const admin = await createLiveHelmianCloudAdminHandler({ env: { HELMION_CLOUD_ENVIRONMENT: 'production', ...process.env }, pool, logger: (e) => console.log(JSON.stringify(e)) });
       const worker = createConsoleCommandWorker({ pool, workerId: 'worker:vercel-console' });
       const agentTaskWorker = createAgentTaskWorker({ pool, workerId: 'worker:vercel-agent-tasks' });

@@ -52,6 +52,20 @@ export function normalizeTenantContext(input = {}) {
   });
 }
 
+// Per-transaction statement bound (envoy 504 fix, bite 1). A tenant
+// transaction is one request's unit of work; the longest legitimate
+// one on the envoy path (the agentWork dispatch) runs seconds on a
+// healthy database. 15s is far above that and far below the 60s
+// platform function limit, so a transaction stuck behind lock or
+// load fails inside the request that owns it, frees its pool client,
+// and surfaces as a logged, retryable error instead of a platform
+// 504. It rides this identity select as one more transaction-local
+// set_config, so it holds on every pool a tenant transaction is
+// handed, including delegate pools whose own config carries no
+// statement bound, and it clears itself at commit or rollback with
+// nothing left set on the pooled connection.
+export const TENANT_STATEMENT_TIMEOUT_MS = 15_000;
+
 /**
  * Set request identity only for the current transaction. A missing context is
  * deliberately represented by PostgreSQL NULL, which matches no RLS policy.
@@ -63,7 +77,8 @@ export async function applyTenantContext(client, input) {
             set_config('helmion.actor_subject', $2, true),
             set_config('helmion.actor_role', $3, true),
             set_config('helmion.session_id', $4, true),
-            set_config('helmion.request_id', $5, true)`,
+            set_config('helmion.request_id', $5, true),
+            set_config('statement_timeout', '${TENANT_STATEMENT_TIMEOUT_MS}', true)`,
     [
       context.tenantId,
       context.actorSubject,

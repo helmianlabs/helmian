@@ -1,0 +1,42 @@
+-- 088: Index for the envoy agentWork config scan (envoy 504 fix,
+-- bite 1, 2026-11-13).
+--
+-- Every agent-work poll (GET /api/admin/envoy/agent-work, the Oregon
+-- worker every 4 seconds) opens its dispatch transaction with the
+-- channel config scan in src/cloud/envoy-mesh.mjs (agentWork):
+--
+--   select distinct on (channel_id) channel_id, body
+--   from helmion.envoy_messages
+--   where tenant_id=$1 and author_subject=$2
+--   order by channel_id, created_at desc, id desc
+--
+-- with $2 the channel-config subject. The two existing indexes on
+-- envoy_messages do not serve it: sql/009 keys
+-- (tenant_id, channel_id, created_at desc) and sql/068 keys
+-- (tenant_id, channel_id, id); neither carries author_subject, so
+-- the scan filters the tenant's whole message history and sorts,
+-- inside the transaction, on every poll, and it grows with the
+-- tenant's history. During the 2026-11-13 full-round incident these
+-- long poll transactions held the mesh pool's clients while reply
+-- posts queued behind them into 60 second platform timeouts (504).
+--
+-- This index matches the scan exactly: equality on tenant_id and
+-- author_subject, then channel_id in the DISTINCT ON grouping
+-- order, then created_at desc, id desc in the within-group order,
+-- so the newest config row per channel is the first row of each
+-- group with no separate sort. Config rows are a tiny fraction of
+-- the table; the index still spans all of the tenant's messages,
+-- which is the cost of serving the predicate as written. Changing
+-- the scan itself is a later bite; this bite only gives the query
+-- as it stands an index to run on.
+--
+-- Numbering: 088 is the next free number after 087 on main at build
+-- time (2026-11-13). Independently idempotent (create index if not
+-- exists), like its neighbours. NOT applied by the build; it is
+-- applied on the box road, where the migration runner records it in
+-- helmion.schema_migrations with the sha256 of this file's
+-- CRLF-canonicalised text (src/adapters/neon.mjs loadMigrations).
+-- Until it lands the scan simply keeps running unindexed: no code
+-- depends on the index being present.
+create index if not exists envoy_messages_config_scan_idx
+  on helmion.envoy_messages (tenant_id, author_subject, channel_id, created_at desc, id desc);
