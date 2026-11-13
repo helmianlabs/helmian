@@ -73,6 +73,7 @@ test('the content scripts load in the order guard.js depends on', () => {
   assert.deepEqual(manifest.content_scripts[0].js, [
     'content/prompt-risk.js',
     'content/sanitize.js',
+    'generated/helmion-injection.content.js',
     'content/flags.js',
     'content/extract.js',
     'content/stream-watch.js',
