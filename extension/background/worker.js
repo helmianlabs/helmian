@@ -48,6 +48,14 @@ import {
   signInToApprovals,
 } from './approvals-client.js';
 import {
+  PC_APPROVALS_ALARM,
+  badgeTextFor as pcBadgeText,
+  decidePcApproval,
+  getPcApprovalsState,
+  pcApprovalsView,
+  pollPcApprovals,
+} from './pc-approvals-client.js';
+import {
   getNudgeSettings, queuePending, readNudgeLog, runNudges, setNudgeSettings, noteTab, siteForHost,
 } from './nudge-policy.js';
 import { scanProse } from './claims.js';
@@ -200,6 +208,8 @@ const PRIVILEGED_TYPES = new Set([
   'helmion:approvals-view',
   'helmion:approvals-signin',
   'helmion:approvals-decide',
+  'helmion:pc-approvals-view',
+  'helmion:pc-approvals-decide',
 ]);
 
 function isFromOwnPopup(sender) {
@@ -226,17 +236,8 @@ async function syncScribeAlarm() {
     const s = await getScribeSettings(ledger);
     if (!chrome.alarms) return;
     if (scribeConfigured(s)) chrome.alarms.create(SCRIBE_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
-    else { chrome.alarms.clear(SCRIBE_ALARM); setScribeBadge(0); }
+    else { chrome.alarms.clear(SCRIBE_ALARM); await refreshGlobalBadge(); }
   } catch (error) { console.warn('[Helmion Guard] scribe alarm sync failed:', error.message); }
-}
-function setScribeBadge(unread) {
-  try {
-    chrome.action.setBadgeText({ text: badgeFor(unread) });
-    if (unread > 0) {
-      chrome.action.setBadgeBackgroundColor({ color: SCRIBE_BADGE });
-      chrome.action.setTitle({ title: `Helmion Guard: ${unread} unread Scribe letter(s)` });
-    }
-  } catch { /* badge is best effort */ }
 }
 async function notifyFresh(fresh) {
   if (!fresh || !fresh.length || !chrome.notifications) return;
@@ -264,7 +265,9 @@ export async function runScribePoll(opts = {}) {
   const idle = (await idleState()) !== 'active';
   const result = await pollScribe(ledger, { online, idle, ...opts });
   // 0.6.0: the badge and notices are off by default (Troy: no doorbell to click).
-  if (typeof result.unread === 'number') setScribeBadge(result.showBadge ? result.unread : 0);
+  // The poll only records state; the badge arbiter below paints, and it
+  // honours the same showBadge switch when it reaches the mail tier.
+  if (typeof result.unread === 'number') await refreshGlobalBadge();
   if (result.fresh) await notifyFresh(result.fresh);
   await runAutoNudge(result).catch((error) => console.warn('[Helmion Guard] auto-nudge pass failed:', error && error.message));
   return result;
@@ -285,25 +288,87 @@ async function syncApprovalsAlarm() {
     else chrome.alarms.clear(APPROVALS_ALARM);
   } catch (error) { console.warn('[Helmion Guard] approvals alarm sync failed:', error.message); }
 }
-async function paintApprovalsBadge() {
+// ─── THE GLOBAL BADGE: ONE ARBITER ─────────────────────────────────────────
+// Three features want the icon's global (tab-less) badge text: PC approvals,
+// the Scribe door approvals, and Scribe unread mail. They used to paint it
+// independently and overwrite each other: a mail poll landing after an
+// approvals poll wiped the waiting count Troy was meant to see, and the door
+// painter had to keep a badgeOwned flag just to know whether clearing was
+// safe. Now the polls only record their state (each client already does, in
+// storage) and this one function paints, in a fixed priority:
+//
+//   1. PC approvals waiting: a decision Troy owes outranks everything.
+//   2. Scribe door approvals waiting. The door state's badgeOwned flag is
+//      kept truthful by this function: it is true exactly while the badge
+//      is showing the door count.
+//   3. Scribe unread mail, and only when the badge is switched on in the
+//      Scribe settings (off by default; see runScribePoll).
+//
+// Zero everywhere paints empty. The PER-TAB badge is a different surface:
+// setBadge() above always passes a tabId, so it never writes the global
+// text, and this arbiter never writes a tab's. Chrome shows a focused tab
+// its own badge in place of the global one; that is existing behaviour
+// and unchanged.
+const PC_BADGE = '#c77700'; // the door approvals amber: a decision waiting reads the same on both roads
+async function refreshGlobalBadge() {
   try {
-    const s = await getApprovalsState(ledger);
-    const text = approvalsBadgeText(s.session === 'in' ? s.count : 0);
-    if (!text && !s.badgeOwned) return;
-    chrome.action.setBadgeText({ text });
-    if (text) {
-      chrome.action.setBadgeBackgroundColor({ color: APPROVALS_BADGE });
-      chrome.action.setTitle({ title: `Helmian Guard: ${s.count} approval(s) waiting for your decision` });
-      await setApprovalsBadgeOwned(ledger, true);
-    } else {
+    const pc = await getPcApprovalsState(ledger);
+    const pcText = pc.session === 'in' ? pcBadgeText(pc.count) : '';
+    if (pcText) {
+      chrome.action.setBadgeText({ text: pcText });
+      chrome.action.setBadgeBackgroundColor({ color: PC_BADGE });
+      chrome.action.setTitle({ title: `Helmian Guard: ${pc.count} PC approval(s) waiting for your decision` });
       await setApprovalsBadgeOwned(ledger, false);
+      return;
+    }
+    const door = await getApprovalsState(ledger);
+    const doorText = approvalsBadgeText(door.session === 'in' ? door.count : 0);
+    if (doorText) {
+      chrome.action.setBadgeText({ text: doorText });
+      chrome.action.setBadgeBackgroundColor({ color: APPROVALS_BADGE });
+      chrome.action.setTitle({ title: `Helmian Guard: ${door.count} approval(s) waiting for your decision` });
+      await setApprovalsBadgeOwned(ledger, true);
+      return;
+    }
+    if (door.badgeOwned) await setApprovalsBadgeOwned(ledger, false);
+    const settings = await getScribeSettings(ledger);
+    const inbox = settings.showBadge ? await inboxView(ledger) : null;
+    const mailText = inbox ? badgeFor(inbox.unread) : '';
+    chrome.action.setBadgeText({ text: mailText });
+    if (mailText) {
+      chrome.action.setBadgeBackgroundColor({ color: SCRIBE_BADGE });
+      chrome.action.setTitle({ title: `Helmion Guard: ${inbox.unread} unread Scribe letter(s)` });
     }
   } catch { /* badge is best effort */ }
 }
 export async function runApprovalsPoll(opts = {}) {
   const result = await pollApprovals(ledger, opts);
-  await paintApprovalsBadge();
+  await refreshGlobalBadge();
   if (result.session === 'out') await syncApprovalsAlarm();
+  return result;
+}
+// ─── PC APPROVALS (approvals pop-up build, Bite 2) ─────────────────────────
+// The Helmian app's own approvals (background/pc-approvals-client.js): the
+// actions an agent asked the Executive Guard to run on Troy's PC, decided
+// through Helmian's proxy — this extension holds no Guard credential for
+// this road. Wiring only: the pop-up section is Bite 3, the notification
+// knock is Bite 4, the approvals window is Bite 5.
+//
+// One difference from the door poll above: this alarm is never cleared for
+// being signed out. The door's sign-in happens inside the extension, so its
+// poll can afford to stop; this sign-in happens on the website, so a poll
+// that stopped at the first 401 could never notice Troy signing back in.
+// The client folds a 401 to its signed-out state and keeps its 60-second
+// cadence; its badge contribution simply reads zero while signed out.
+async function syncPcApprovalsAlarm() {
+  try {
+    if (!chrome.alarms) return;
+    chrome.alarms.create(PC_APPROVALS_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
+  } catch (error) { console.warn('[Helmion Guard] pc approvals alarm sync failed:', error.message); }
+}
+export async function runPcApprovalsPoll(opts = {}) {
+  const result = await pollPcApprovals(ledger, opts);
+  await refreshGlobalBadge();
   return result;
 }
 // ─── SCRIBE AUTO-NUDGE (0.6.0, off by default) ─────────────────────────────
@@ -345,6 +410,7 @@ if (chrome.alarms && chrome.alarms.onAlarm) {
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm && alarm.name === SCRIBE_ALARM) runScribePoll().catch(() => {});
     if (alarm && alarm.name === APPROVALS_ALARM) runApprovalsPoll().catch(() => {});
+    if (alarm && alarm.name === PC_APPROVALS_ALARM) runPcApprovalsPoll().catch(() => {});
   });
 }
 if (chrome.notifications && chrome.notifications.onClicked) {
@@ -355,8 +421,8 @@ if (chrome.notifications && chrome.notifications.onClicked) {
     try { chrome.notifications.clear(id); } catch { /* ignore */ }
   });
 }
-if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => { syncScribeAlarm(); syncApprovalsAlarm(); });
-if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(() => { syncScribeAlarm(); syncApprovalsAlarm(); });
+if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => { syncScribeAlarm(); syncApprovalsAlarm(); syncPcApprovalsAlarm(); });
+if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(() => { syncScribeAlarm(); syncApprovalsAlarm(); syncPcApprovalsAlarm(); });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   try {
@@ -612,7 +678,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       signInToApprovals(ledger, String(message.passphrase || ''))
         .then(async (result) => {
           await syncApprovalsAlarm();
-          await paintApprovalsBadge();
+          await refreshGlobalBadge();
           sendResponse(result);
         })
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
@@ -622,8 +688,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (type === 'helmion:approvals-decide') {
       decideApproval(ledger, String(message.id || ''), message.verdict === 'approve' ? 'approve' : 'deny')
         .then(async (result) => {
-          await paintApprovalsBadge();
+          await refreshGlobalBadge();
           if (result.view && result.view.session === 'out') await syncApprovalsAlarm();
+          sendResponse(result);
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:pc-approvals-view') {
+      const force = message.options && message.options.force === true;
+      runPcApprovalsPoll({ force })
+        .then(async () => sendResponse({ ok: true, view: pcApprovalsView(await getPcApprovalsState(ledger)) }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:pc-approvals-decide') {
+      // The decision goes to Helmian's own decide route through the client,
+      // which confirms it by refresh before calling it done; the badge is
+      // repainted from the refreshed state either way.
+      decidePcApproval(ledger, String(message.id || ''), message.verdict === 'approve' ? 'approve' : 'deny')
+        .then(async (result) => {
+          await refreshGlobalBadge();
           sendResponse(result);
         })
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
