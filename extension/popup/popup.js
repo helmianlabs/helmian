@@ -553,6 +553,16 @@ $('pcSignInBtn').addEventListener('click', () => {
   } catch { /* the status line above already says what to do */ }
 });
 
+// The approvals window (Bite 5): the worker opens it, or brings the one
+// already standing forward — there is only ever one. This button only
+// asks; opening the window decides nothing, and neither does closing it.
+$('pcWindowBtn').addEventListener('click', async () => {
+  const r = await ask('helmion:pc-approvals-open-window');
+  if (!r || !r.ok) {
+    $('pcApprovalsStatus').textContent = (r && r.error) || 'The approvals window could not be opened.';
+  }
+});
+
 // The knock's permission (Bite 4). The worker knocks once when a PC
 // action starts waiting (background/worker.js), but only when the
 // notifications permission is granted — and that permission is optional,

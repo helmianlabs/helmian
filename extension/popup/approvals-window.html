@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Helmian Guard: PC approvals</title>
+  <link rel="stylesheet" href="popup.css" />
+  <link rel="stylesheet" href="approvals-window.css" />
+</head>
+<body>
+  <header>
+    <h1>PC approvals</h1>
+    <p class="muted">Actions an AI asked the Executive Guard to run on this PC. Nothing runs until you approve it.</p>
+    <p id="windowCount"></p>
+    <p id="windowUpdated" class="muted"></p>
+  </header>
+
+  <p id="windowBanner" class="banner" role="status" hidden></p>
+  <p id="windowStatus" class="muted" role="status"></p>
+  <ul id="windowList" class="alerts"></ul>
+  <div class="actions">
+    <button id="windowSignInBtn" type="button" hidden>Sign in to Helmian</button>
+  </div>
+  <p class="muted">Closing this window decides nothing. Anything you do not decide stays waiting.</p>
+
+  <script src="approvals-window.js"></script>
+</body>
+</html>

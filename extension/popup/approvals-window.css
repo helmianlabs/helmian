@@ -1,0 +1,32 @@
+/* The approvals window. popup.css carries the palette and the row
+   shapes; this file only re-sizes the page for a window that stands
+   open (420x560, set by the worker) instead of the 380px toolbar
+   pop-up, and styles the two pieces the pop-up does not have: the
+   stale banner and the approve confirmation. */
+
+body {
+  width: auto;
+  max-height: none;
+  min-height: 100vh;
+}
+
+.alerts { max-height: none; }
+
+.banner {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--note);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.approve-confirm {
+  border: 1px solid var(--note);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+}
+.approve-confirm .actions { margin-top: 8px; }
+
+.countdown { margin-top: 2px; }
