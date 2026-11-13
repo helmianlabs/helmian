@@ -11,8 +11,20 @@
     <p id="tagline">Every flag it raises is logged on this machine. Cloud upload is opt-in.</p>
   </header>
 
+  <section id="pcApprovals" aria-live="polite">
+    <h2>PC approvals</h2>
+    <p class="muted">Actions an AI asked the Executive Guard to run on this PC. Nothing runs until you approve it.</p>
+    <p id="pcApprovalsStatus" class="muted" role="status"></p>
+    <ul id="pcApprovalsList" class="alerts"></ul>
+    <div class="actions">
+      <button id="pcSignInBtn" type="button" hidden>Sign in to Helmian</button>
+      <button id="pcWindowBtn" type="button" disabled>Open approvals window</button>
+    </div>
+    <p class="muted">The approvals window is not built yet; it comes with a later piece. Until then, PC actions are decided in this list or on the Helmian approvals page.</p>
+  </section>
+
   <section id="approvals" aria-live="polite">
-    <h2>Approvals</h2>
+    <h2>Approvals through Scribe</h2>
     <p class="muted">Actions your AIs take through Scribe wait for your decision here. Nothing runs until you approve it.</p>
     <div id="approvalsSignIn">
       <label class="row">Scribe passphrase <input id="approvalsPassphrase" type="password" autocomplete="off" placeholder="Your Scribe passphrase"></label>
