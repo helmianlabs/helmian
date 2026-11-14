@@ -243,11 +243,32 @@ export function effectiveToolAnnotation(annotation) {
 }
 
 /**
+ * The declared destructive flag from a tools/list result's annotations
+ * object (M3 DESIGN §3): destructiveHint carried verbatim when the
+ * server declared a boolean, undefined when it declared nothing.
+ * Undefined is NOT "non-destructive" — a turn treats a missing flag
+ * as "asks" under the low-risk posture (absence is not safety).
+ */
+export function deriveToolDestructiveHint(annotations) {
+  if (!annotations || typeof annotations !== 'object') return undefined;
+  return typeof annotations.destructiveHint === 'boolean' ? annotations.destructiveHint : undefined;
+}
+
+/**
  * Plan a frozen snapshot from a raw tools/list result: per-tool
- * {name, description, inputSchemaHash, annotation} (a caller-supplied
- * annotation in the §2.3 enum wins; otherwise it is derived from the
- * tool's annotations), sorted by name, plus the hash over the whole
- * list. The raw schemas are hashed and dropped — never stored.
+ * {name, description, inputSchemaHash, annotation, destructiveHint?}
+ * (a caller-supplied annotation in the §2.3 enum wins; otherwise it
+ * is derived from the tool's annotations — and likewise a
+ * caller-supplied destructiveHint boolean wins over the annotations
+ * object), sorted by name, plus the hash over the whole list. The
+ * raw schemas are hashed and dropped — never stored. The
+ * destructiveHint field is present only when the server actually
+ * declared one: it is the frozen fact the low-risk posture tier
+ * reads at turn time (M3 DESIGN §3), so a turn never has to consult
+ * the live list for it (§2.3). It deliberately stays OUT of the
+ * snapshot hash and the §1.7 diff — the reconciliation behaviour
+ * (hash match, held-for-review) is unchanged by its presence; the
+ * next re-freeze of an old snapshot simply fills the field in.
  */
 export function planToolSnapshot(tools) {
   if (!Array.isArray(tools)) throw badRequest('a tool snapshot needs the tools/list result array');
@@ -261,11 +282,15 @@ export function planToolSnapshot(tools) {
     const annotation = CONNECTOR_TOOL_ANNOTATIONS.includes(tool.annotation)
       ? tool.annotation
       : deriveToolAnnotation(tool.annotations);
+    const destructiveHint = typeof tool.destructiveHint === 'boolean'
+      ? tool.destructiveHint
+      : deriveToolDestructiveHint(tool.annotations);
     return {
       name,
       description: typeof tool.description === 'string' ? tool.description : '',
       inputSchemaHash: hashToolInputSchema(tool.inputSchema),
       annotation,
+      ...(destructiveHint !== undefined ? { destructiveHint } : {}),
     };
   });
   planned.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));

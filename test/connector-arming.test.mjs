@@ -32,7 +32,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { catalogEntryById, LIVE_SEATS } from '../src/cloud/connector-catalog.mjs';
-import { createConnectorLibraryStore, buildConnectorTokenRef, planToolSnapshot } from '../src/cloud/connector-library.mjs';
+import { createConnectorLibraryStore, buildConnectorTokenRef, planToolSnapshot, hashToolInputSchema } from '../src/cloud/connector-library.mjs';
 import { resolveTurnAttachments, postureRequiresApproval } from '../src/agent/attachments.mjs';
 import { buildConnectorArming, sanitizeArmingRecords } from '../src/agent/connector-arming.mjs';
 import { armingPairsForDispatch, resolveArmingRecord, resolveDispatchArming } from '../src/cloud/connector-arming-dispatch.mjs';
@@ -890,7 +890,7 @@ test('g4 pipe: an unreachable server unarms connect-failed, honestly', async () 
   await resolved.dispose();
 });
 
-test('g4 pipe: records arm the seats and turn kinds Pattern A cannot — the chatgpt seat and a CLI turn', async () => {
+test('g4 pipe: records arm the seats Pattern A cannot — the chatgpt seat', async () => {
   const chatgpt = await resolveTurnAttachments({
     metadata: { connectors: [{ seatId: 'chatgpt', entryId: 'helmian-github' }] },
     providerId: 'openai',
@@ -901,12 +901,120 @@ test('g4 pipe: records arm the seats and turn kinds Pattern A cannot — the cha
   assert.ok(chatgpt.toolNames.length > 0);
   await chatgpt.dispose();
 
+  // The CLI-turn half this test used to assert (a record arming on
+  // a subscription turn) encoded the premise G5 Step-0 disproved:
+  // a CLI turn's provider call carries no tool definitions, so
+  // those tools could never be called and the arm was a false
+  // claim. The honest outcome is asserted by the g5 cli-turn gate
+  // test below instead.
+});
+
+// ================================================================
+// G5: the CLI-turn honesty gate + the frozen destructive flag.
+// ================================================================
+
+test('g5 cli gate: a connected record on a CLI turn unarms cli-turn and claims no callable tools', async () => {
+  const remote = fakeRemoteClientFactory();
   const cli = await resolveTurnAttachments({
     metadata: NATIVE_TOGGLE, providerId: 'anthropic', credentialType: 'cli',
+    connectorArming: buildConnectorArming([CONNECTED_RECORD]), createRemoteMcpClientImpl: remote,
+  });
+  assert.equal(cli.connectorOutcomes[0].armed, false);
+  assert.equal(cli.connectorOutcomes[0].reason, 'cli-turn');
+  assert.deepEqual(cli.toolNames, []);
+  assert.deepEqual(cli.mcpServers, []);
+  // The connector's server is not even contacted on a CLI turn.
+  assert.deepEqual(remote.seen, []);
+  assert.match(cli.contextText, /subscription sign-in, which carries no provider tools at all/);
+  assert.match(cli.contextText, /NOT armed for this turn/);
+  assert.doesNotMatch(cli.contextText, /callable tool\(s\)/);
+  await cli.dispose();
+
+  // Control: the same record on an ordinary turn arms — the gate
+  // is the turn kind, not the record.
+  const api = await resolveTurnAttachments({
+    metadata: NATIVE_TOGGLE, providerId: 'anthropic',
     connectorArming: buildConnectorArming([CONNECTED_RECORD]), createRemoteMcpClientImpl: fakeRemoteClientFactory(),
   });
-  assert.equal(cli.connectorOutcomes[0].armed, true);
-  await cli.dispose();
+  assert.equal(api.connectorOutcomes[0].armed, true);
+  assert.ok(api.toolNames.length > 0);
+  await api.dispose();
+});
+
+test('g5 snapshot: the declared destructive flag is frozen by the plan and survives dispatch and the runner door', async () => {
+  // The plan freezes the declaration, and only the declaration:
+  // declared true stays true, declared false stays false, and a
+  // tool that declared nothing carries no field at all.
+  const byName = new Map(GH_PLAN.tools.map((t) => [t.name, t]));
+  assert.equal(byName.get('get_repo').destructiveHint, false);
+  assert.equal(byName.get('create_issue').destructiveHint, false);
+  assert.equal(byName.get('delete_repo').destructiveHint, true);
+  assert.ok(!('destructiveHint' in byName.get('mystery_tool')));
+  // A caller-supplied boolean wins over the annotations object,
+  // the same rule the annotation itself follows.
+  const caller = planToolSnapshot([{ name: 'x_tool', description: '', inputSchema: { type: 'object' }, annotations: { readOnlyHint: false, destructiveHint: true }, destructiveHint: false }]);
+  assert.equal(caller.tools[0].destructiveHint, false);
+  // The flag stays out of the snapshot hash: freezing the same
+  // list with the declarations stripped hashes identically, so
+  // reconciliation behaviour (hash match, held-for-review) is
+  // unchanged by the field's presence.
+  const noFlags = planToolSnapshot(GH_TOOLS.map(({ annotations, ...rest }) => ({ ...rest, annotations: { readOnlyHint: annotations?.readOnlyHint } })));
+  assert.equal(noFlags.snapshotHash, GH_PLAN.snapshotHash);
+
+  // Dispatch carries the frozen flags into the arming record.
+  const store = fakeArmingStore({ entry: GH_ENTRY, connection: GH_CONNECTION, snapshot: GH_SNAPSHOT });
+  const record = await resolveArmingRecord({ store, credentials: CREDS_OK, listTools: NO_LIST, operatorTokens: {}, tenantId: 't', personId: 'user:troy', seatId: 'claude', entryId: 'helmian-github' });
+  const recByName = new Map(record.snapshotTools.map((t) => [t.name, t]));
+  assert.equal(recByName.get('delete_repo').destructiveHint, true);
+  assert.equal(recByName.get('create_issue').destructiveHint, false);
+  assert.ok(!('destructiveHint' in recByName.get('mystery_tool')));
+
+  // The runner's door keeps a declared boolean and drops anything
+  // that is not one — a dropped flag reads as "asks", never "safe".
+  const [clean] = sanitizeArmingRecords([record]);
+  const cleanByName = new Map(clean.snapshotTools.map((t) => [t.name, t]));
+  assert.equal(cleanByName.get('delete_repo').destructiveHint, true);
+  assert.equal(cleanByName.get('create_issue').destructiveHint, false);
+  const [weird] = sanitizeArmingRecords([{ seatId: 'claude', entryId: 'helmian-github', state: 'connected', snapshotTools: [{ name: 'w', annotation: 'write', destructiveHint: 'yes' }] }]);
+  assert.ok(!('destructiveHint' in weird.snapshotTools[0]));
+});
+
+test('g5 pipe: the low-risk decision reads the frozen flag — live annotations cannot move it, and tools/list is not consulted again at call time', async () => {
+  // A frozen set that DISAGREES with the live list on purpose:
+  // create_issue frozen destructive (the live list says false),
+  // delete_repo frozen non-destructive (the live list says true),
+  // mystery_tool frozen with no flag at all.
+  const frozenTools = [
+    { name: 'create_issue', annotation: 'write', inputSchemaHash: hashToolInputSchema(GH_TOOLS[1].inputSchema), destructiveHint: true },
+    { name: 'delete_repo', annotation: 'write', inputSchemaHash: hashToolInputSchema(GH_TOOLS[2].inputSchema), destructiveHint: false },
+    { name: 'mystery_tool', annotation: 'undeclared', inputSchemaHash: hashToolInputSchema(GH_TOOLS[3].inputSchema) },
+  ];
+  const record = { ...CONNECTED_RECORD, posture: 'low-risk', snapshotTools: frozenTools, toolEnableMap: {} };
+  // tools/list answers exactly once (the reconciliation); a second
+  // call — any decision reaching for the live list at call time —
+  // throws, and the turn must still decide from the frozen flags.
+  let listCalls = 0;
+  const factory = async () => ({
+    async listTools() { listCalls += 1; if (listCalls > 1) throw new Error('tools/list must not be consulted again'); return GH_TOOLS; },
+    async callTool(name) { factory.calls.push(name); return { content: [{ type: 'text', text: `ran ${name}` }] }; },
+    textOf(result) { return (result?.content ?? []).filter((b) => b?.type === 'text').map((b) => b.text ?? '').join('\n'); },
+    async close() {},
+  });
+  factory.calls = [];
+  // No approver wired: a call the posture gates lands "not run".
+  const seam = buildConnectorArming([record]);
+  const resolved = await resolveTurnAttachments({ metadata: NATIVE_TOGGLE, providerId: 'anthropic', connectorArming: seam, createRemoteMcpClientImpl: factory });
+  assert.equal(resolved.connectorOutcomes[0].armed, true);
+  assert.equal(listCalls, 1);
+  // Frozen destructive (live said safe): asks, never reaches the server.
+  assert.match(await resolved.extraTools.mcp_helmian_github_github_create_issue.execute({}), /Not run:/);
+  // Frozen non-destructive (live said destructive): runs free.
+  assert.equal(await resolved.extraTools.mcp_helmian_github_github_delete_repo.execute({}), 'ran delete_repo');
+  // No frozen flag: absence is not safety — asks.
+  assert.match(await resolved.extraTools.mcp_helmian_github_github_mystery_tool.execute({}), /Not run:/);
+  assert.deepEqual(factory.calls, ['delete_repo']);
+  assert.equal(listCalls, 1); // still one: no decision consulted the live list
+  await resolved.dispose();
 });
 
 test('g4 posture table: postureRequiresApproval says exactly what DESIGN \u00a73 says', () => {

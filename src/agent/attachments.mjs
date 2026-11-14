@@ -30,7 +30,14 @@
 //               the frozen snapshot, drops the tools the person
 //               switched off, and registers the survivors as
 //               extraTools whose calls pass the connection's posture
-//               gate (M3 DESIGN §3). When the seam carries no record
+//               gate (M3 DESIGN §3). One turn kind the record road
+//               itself refuses, record or no record: a subscription
+//               (CLI) turn, whose provider call carries no tool
+//               definitions at all — its tools could never be
+//               called, so the toggle unarms with the same cli-turn
+//               honesty the Pattern-A road applies below, and no
+//               turn text ever claims callable tools for it (M3 G5).
+//               When the seam carries no record
 //               for the pair (a turn dispatch did not compose), the
 //               older Pattern-A road below applies unchanged: the
 //               server descriptor rides OUT as `mcpServers` for the
@@ -122,8 +129,9 @@ export function seatIdForProviderId(providerId) {
  * connection's posture, a tool's class ('read' | 'write' — the
  * frozen annotation through effectiveToolAnnotation, so undeclared
  * is already 'write'), and the tool's declared destructive hint
- * from the live tools/list, does this call need a human approval
- * before it runs?
+ * as frozen in the snapshot (never read live at turn time — SPEC
+ * §2.3; a snapshot carrying no flag passes undefined here), does
+ * this call need a human approval before it runs?
  *
  *   ask      → every call asks.
  *   read     → reads run free; writes ask.
@@ -382,6 +390,20 @@ export async function resolveTurnAttachments({ metadata = null, plugins = [], co
       : null;
     if (armingRecord) {
       const recordName = armingRecord.entryName ?? entry?.name ?? toggle.entryId;
+      if (credentialType === 'cli') {
+        // The CLI-turn honesty gate (M3 G5), mirroring the
+        // Pattern-A gate below: a subscription turn's provider
+        // call carries no tool definitions at all (providers.mjs
+        // routes it to the vendor CLI with flattened text and
+        // always returns zero tool calls), so tools registered
+        // here could never be called — the record road must not
+        // claim them, and the connector is not even contacted.
+        // The gate sits ahead of the record's own states, the
+        // same order the Pattern-A road checks the turn kind
+        // before the connection.
+        unarm('cli-turn', `Connector armed for this message: ${recordName}. This turn runs on a subscription sign-in, which carries no provider tools at all, so it was NOT armed for this turn. Do not claim you used it.`);
+        continue;
+      }
       if (armingRecord.state !== 'connected') {
         outcome.reason = armingRecord.reason ?? `connection-${armingRecord.state}`;
         if (armingRecord.detail) outcome.detail = armingRecord.detail;
@@ -422,7 +444,18 @@ export async function resolveTurnAttachments({ metadata = null, plugins = [], co
           if (typeof snap.inputSchemaHash === 'string' && hashToolInputSchema(tool.inputSchema) !== snap.inputSchemaHash) { held.push(tool.name); continue; }
           if (enableMap[tool.name] === false) continue;
           const toolClass = effectiveToolAnnotation(snap.annotation);
-          const destructiveHint = tool.annotations?.destructiveHint;
+          // The destructive axis reads the FROZEN snapshot, never
+          // the live list (SPEC §2.3: a turn's rules arrive with
+          // the record): planToolSnapshot froze the server's
+          // declared destructiveHint at review time and it rode
+          // the arming record here. A record without the flag —
+          // a snapshot frozen before the flag existed, or a tool
+          // that never declared one — reads undefined, and
+          // postureRequiresApproval treats that as "asks" under
+          // low-risk: absence is not safety (DESIGN §3). The live
+          // list above supplies only schemas and the
+          // name/hash reconciliation; no decision reads it.
+          const destructiveHint = snap.destructiveHint;
           const name = mcpToolName(toggle.entryId, serverSegment, tool.name);
           if (extraTools[name]) continue;
           extraTools[name] = {

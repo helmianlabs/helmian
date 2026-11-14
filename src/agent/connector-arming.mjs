@@ -82,6 +82,10 @@ export function sanitizeArmingRecords(input) {
           name: tool.name,
           annotation: typeof tool.annotation === 'string' ? tool.annotation : 'undeclared',
           ...(typeof tool.inputSchemaHash === 'string' && tool.inputSchemaHash ? { inputSchemaHash: tool.inputSchemaHash } : {}),
+          // The frozen destructive flag (M3 G5) survives the door
+          // only as a declared boolean; anything else drops the
+          // field, and the turn reads the absence as "asks".
+          ...(typeof tool.destructiveHint === 'boolean' ? { destructiveHint: tool.destructiveHint } : {}),
         })),
       toolEnableMap: record.toolEnableMap && typeof record.toolEnableMap === 'object' && !Array.isArray(record.toolEnableMap)
         ? Object.fromEntries(Object.entries(record.toolEnableMap).filter(([, value]) => typeof value === 'boolean'))
