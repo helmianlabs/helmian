@@ -87,6 +87,58 @@
 //     shared_memory_read takes the numeric id a search returned;
 //     an id that belongs to another tenant answers exactly like an
 //     id that does not exist — no existence leak.
+//
+// BITE 3 (2026-11-14) adds two tools, each behind its Step-0 gate,
+// and leaves one out on its gate's evidence:
+//
+//   - workspace_state, REDUCED at the gate: the plan half of the
+//     planned tool cannot be served, because no plan fact exists in
+//     cloud data at all. helmion.tenants (sql/004) records only
+//     tenant_id, display_name and created_at; no billing,
+//     subscription or plan table exists anywhere in the schema;
+//     signup (src/cloud/signup.mjs) writes only the id and the
+//     display name; and no code reads or writes a Helmian plan in
+//     Stripe (the name appears only in the outbound connector
+//     catalogue, about other products' plans). So the tool serves
+//     exactly what the server does record: the workspace row
+//     itself, the agent roster's size and presence count, and the
+//     connected tool account NAMES across both scopes of the tool
+//     connections store (agent and workspace; sql/061), and its
+//     plan field answers not_recorded with that reason in plain
+//     words. A dressed-up guess would be worse than the admission.
+//   - server_status, REDUCED at the gate: the Hillsboro box's
+//     systemd service states, disk and memory never flow into
+//     cloud data (the standing watch reads them over SSH, and
+//     nothing on the box posts them), so the tool does not claim
+//     them and names them in its notRecorded list. What DOES flow
+//     from the devices into cloud data is served, each item
+//     carrying the time it was recorded and its age at answer
+//     time: the registered runners and their last-used stamps
+//     (helmion.desktop_links, sql/043; the link's code and token
+//     hashes are never selected), the runner presence heartbeat
+//     rollup (the freshest report, and how many providers stand
+//     connected), and the session executor's live browser pages
+//     (helmion.watch_offers, sql/086; unexpired at read time and
+//     filtered again at assembly). helmion.bridge_plugin_reports
+//     (sql/089) is deliberately not read: the bridge's sender hop
+//     is unbuilt, so no report has ever flowed into it and the
+//     table cannot speak yet.
+//   - guard_status, OUT at the gate: a tenant's Guard settings do
+//     not live server-side. The browser extension keeps its own
+//     settings in extension storage on the customer's PC
+//     (extension/background/nudge-policy.js, the
+//     helmion.nudge.settings key); the Site Guard's screening
+//     posture is code, imported kernels plus an in-process rate
+//     limiter (src/cloud/site-guard.mjs); the Executive Guard's
+//     approver list is deployment environment
+//     (src/cloud/guard-pc-approvals.mjs). The only per-tenant
+//     Guard data in cloud storage is the findings feed and its
+//     acknowledgements (sql/047): events, not settings. The plan's
+//     own rule for this case is to leave the tool out of version
+//     1, so tools/list does not offer it. The smallest honest road
+//     back is a server-side per-tenant Guard settings store that
+//     the extension or the app writes; until one exists there is
+//     no settings state to read.
 import { createHash, randomBytes } from 'node:crypto';
 import { Pool } from 'pg';
 import { AGENT_NAMES, AGENT_PROVIDERS, normalizeProvider } from './envoy-agents.mjs';
@@ -96,7 +148,7 @@ import { renderNotebookValue } from './envoy-notebook.mjs';
 export const MUSE_CONNECTOR_PATH = '/mcp';
 export const MUSE_CONNECTOR_KEY_PREFIX = 'hlm_muse_';
 export const MUSE_CONNECTOR_PROTOCOL_VERSION = '2025-03-26';
-export const MUSE_CONNECTOR_SERVER_INFO = Object.freeze({ name: 'helmian-muse-connector', version: '1.1.0' });
+export const MUSE_CONNECTOR_SERVER_INFO = Object.freeze({ name: 'helmian-muse-connector', version: '1.2.0' });
 // Shared memory bounds (Bite 2): a search answers at most this many
 // entries, and a search snippet carries at most this many characters
 // of the entry's rendered value around the match. Both bounds are
@@ -140,6 +192,16 @@ export const MUSE_CONNECTOR_TOOLS = Object.freeze([
       required: Object.freeze(['id']),
       additionalProperties: false,
     }),
+  }),
+  Object.freeze({
+    name: 'workspace_state',
+    description: 'Read your workspace as the Helmian server records it: the workspace name and when it was created, how many agents it holds and how many are present right now, and the connected tool account names across the workspace and its agents. No plan is reported, because Helmian records no plan or subscription for a workspace on the server; the answer says so plainly instead of guessing. Takes no arguments; the workspace is fixed by the connection.',
+    inputSchema: Object.freeze({ type: 'object', properties: Object.freeze({}), additionalProperties: false }),
+  }),
+  Object.freeze({
+    name: 'server_status',
+    description: 'Read the state of your Helmian computers and server-side runners as recorded in Helmian cloud data: each registered computer with when it was linked and when it last checked in, the freshest runner heartbeat and how many providers stand connected, and any agent browser pages live on the server right now, each item with its recorded time and age. Service states, disk and memory are not recorded in cloud data and are named as not recorded. Takes no arguments; the workspace is fixed by the connection.',
+    inputSchema: Object.freeze({ type: 'object', properties: Object.freeze({}), additionalProperties: false }),
   }),
 ]);
 const TOOL_NAMES = new Set(MUSE_CONNECTOR_TOOLS.map((tool) => tool.name));
@@ -320,6 +382,58 @@ export function createMuseConnectorData(pool) {
         [String(tenantId), id]);
       return rows[0] ?? null;
     },
+
+    // The workspace row itself (sql/004), for workspace_state. The
+    // projection is the whole record the table keeps: a display
+    // name and a creation time. There is no plan column to
+    // project; that absence is the Bite 3 gate's finding, and the
+    // assembly reports it instead of working around it. The read
+    // names the key's tenant in the predicate, so a key can only
+    // ever read its own workspace's row. A missing table or row
+    // reads as null, the store family's fail-soft.
+    async workspace(tenantId) {
+      const rows = await safeRows(pool,
+        'select display_name, created_at from helmion.tenants where tenant_id = $1',
+        [String(tenantId)]);
+      return rows[0] ?? null;
+    },
+
+    // The workspace-scope half of the tool accounts store
+    // (sql/061), for workspace_state. The snapshot above reads the
+    // agent scope; this reads the same store at scope_kind =
+    // 'workspace', with the same projection discipline: service,
+    // account NAME and state only, never the server or credential
+    // references the store also carries.
+    async workspaceToolAccounts(tenantId) {
+      return withTenant(pool, tenantId, (client) => safeRows(client,
+        'select scope_id, service_id, account_label, state from helmion.tool_connections where tenant_id = current_setting(\'helmion.tenant_id\', true) and scope_kind = \'workspace\' order by service_id', []));
+    },
+
+    // The device-origin state server_status serves, in one read.
+    // The presence half rides the same presence store list_agents
+    // reads. The stored half runs in the tenant transaction and
+    // every query ALSO names the tenant in its predicate: the
+    // registered runners (helmion.desktop_links, sql/043; label
+    // and stamps only, the link's code and token hashes are never
+    // selected) and the session executor's live browser offers
+    // (helmion.watch_offers, sql/086; unexpired at read time, and
+    // the assembly filters expiry again so no reader can hand
+    // over a dead page as live).
+    async serverStatus(tenantId) {
+      const [presence, stored] = await Promise.all([
+        presenceStore.list(tenantId),
+        withTenant(pool, tenantId, async (client) => {
+          const links = await safeRows(client,
+            'select label, created_at, linked_at, last_used_at, revoked_at from helmion.desktop_links where tenant_id = $1 order by created_at',
+            [String(tenantId)]);
+          const offers = await safeRows(client,
+            'select provider_name, url, updated_at, expires_at from helmion.watch_offers where tenant_id = $1 and expires_at > clock_timestamp() order by provider_name',
+            [String(tenantId)]);
+          return { links, offers };
+        }),
+      ]);
+      return { presence, links: stored.links, offers: stored.offers };
+    },
   });
 }
 
@@ -472,6 +586,116 @@ export function parseMemoryId(raw) {
   return null;
 }
 
+// --- the Bite 3 tools' assembly (pure) ---
+
+const isoOrNull = (value) => (value ? new Date(value).toISOString() : null);
+
+// The age of a recorded time at answer time, in whole seconds,
+// never negative: a stamp a breath in the future is a clock's
+// rounding, not a negative age. Null when there is no stamp to age.
+export function recordedAgeSeconds(stamp, now) {
+  if (!stamp) return null;
+  const at = new Date(stamp).getTime();
+  if (!Number.isFinite(at)) return null;
+  return Math.max(0, Math.round((now - at) / 1000));
+}
+
+// Workspace state in the reduced, gate-honest shape: what the
+// server records, plus the plan admission where a plan would go.
+// `snapshot` is the Bite 1 snapshot (the roster and the agent-scope
+// accounts); `workspaceAccounts` are the workspace-scope rows of
+// the same store. Account entries carry names only, exactly as
+// agent_health serves them, plus which scope holds the account and,
+// for the agent scope, which agent. Duplicates across scopes are
+// kept apart by the scope in the dedupe key: the same account name
+// held by the workspace and by an agent is two facts, not one.
+export function assembleWorkspaceState({ workspace = null, snapshot = {}, workspaceAccounts = [] } = {}) {
+  const agents = assembleAgents(snapshot);
+  const accounts = [];
+  const seen = new Set();
+  const push = (row, scope, agent) => {
+    const entry = {
+      serviceId: String(row?.service_id ?? ''),
+      accountLabel: row?.account_label ?? null,
+      state: String(row?.state ?? ''),
+      scope,
+      agent,
+    };
+    const key = `${entry.scope}|${entry.agent ?? ''}|${entry.serviceId}|${entry.accountLabel ?? ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    accounts.push(entry);
+  };
+  for (const row of snapshot?.toolAccounts ?? []) {
+    const agent = normalizeProvider(row?.scope_id) ?? String(row?.scope_id ?? '').trim().toLowerCase();
+    push(row, 'agent', agent || null);
+  }
+  for (const row of workspaceAccounts ?? []) push(row, 'workspace', null);
+  return {
+    workspace: {
+      name: workspace?.display_name ? String(workspace.display_name) : null,
+      createdAt: isoOrNull(workspace?.created_at),
+    },
+    // The gate's verdict, served as data: no plan or subscription
+    // is recorded for any workspace in cloud data (the header has
+    // the evidence), so the field reports the absence instead of
+    // inventing a tier.
+    plan: {
+      state: 'not_recorded',
+      detail: 'Helmian records no plan or subscription for a workspace on the server. Every workspace is created the same way at signup, and no billing record exists in cloud data, so there is no plan fact to report.',
+    },
+    agents: {
+      total: agents.length,
+      present: agents.filter((agent) => agent.present).length,
+    },
+    connectedAccounts: accounts,
+  };
+}
+
+// Server status in the reduced, gate-honest shape: only the
+// device-origin state that already flows into cloud data, each
+// item carrying when it was recorded and its age at answer time
+// (`now` is injected so proofs are deterministic). Expired watch
+// offers are filtered here as well as at read time: an offer past
+// its expiry is not a live page, whatever a reader handed over.
+export function assembleServerStatus({ presence = [], links = [], offers = [] } = {}, now = Date.now()) {
+  const stamps = (presence ?? [])
+    .map((row) => row?.updatedAt)
+    .filter(Boolean)
+    .map((value) => new Date(value).getTime())
+    .filter(Number.isFinite);
+  const freshest = stamps.length ? Math.max(...stamps) : null;
+  return {
+    recordedAt: new Date(now).toISOString(),
+    heartbeat: {
+      lastReportAt: freshest ? new Date(freshest).toISOString() : null,
+      ageSeconds: freshest ? Math.max(0, Math.round((now - freshest) / 1000)) : null,
+      providersReporting: (presence ?? []).length,
+      providersConnected: (presence ?? []).filter((row) => row?.connected === true).length,
+    },
+    devices: (links ?? []).map((row) => ({
+      label: row?.label ?? null,
+      createdAt: isoOrNull(row?.created_at),
+      linkedAt: isoOrNull(row?.linked_at),
+      lastUsedAt: isoOrNull(row?.last_used_at),
+      lastUsedAgeSeconds: recordedAgeSeconds(row?.last_used_at, now),
+      revoked: Boolean(row?.revoked_at),
+    })),
+    liveBrowserPages: (offers ?? [])
+      .filter((row) => row?.expires_at && new Date(row.expires_at).getTime() > now)
+      .map((row) => ({
+        provider: String(row?.provider_name ?? ''),
+        url: row?.url ?? null,
+        updatedAt: isoOrNull(row?.updated_at),
+        ageSeconds: recordedAgeSeconds(row?.updated_at, now),
+        expiresAt: isoOrNull(row?.expires_at),
+      })),
+    // Collected by the standing watch over SSH and never written
+    // to cloud data: named here, never claimed.
+    notRecorded: ['systemd service states', 'disk space', 'memory'],
+  };
+}
+
 // --- the JSON-RPC surface (MCP streamable HTTP, stateless) ---
 
 const rpcError = (id, code, message) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
@@ -562,6 +786,17 @@ export function createMuseConnectorRpc({ data } = {}) {
               return { status: 200, body: rpcError(id, -32602, 'No shared memory entry with that id exists in this workspace.') };
             }
             payload = { entry };
+          } else if (name === 'workspace_state') {
+            if (typeof data.workspace !== 'function' || typeof data.workspaceToolAccounts !== 'function') throw Object.assign(new Error('workspace state is not available'), { status: 503 });
+            const [snapshot, workspace, workspaceAccounts] = await Promise.all([
+              data.snapshot(tenantId),
+              data.workspace(tenantId),
+              data.workspaceToolAccounts(tenantId),
+            ]);
+            payload = assembleWorkspaceState({ workspace, snapshot, workspaceAccounts });
+          } else if (name === 'server_status') {
+            if (typeof data.serverStatus !== 'function') throw Object.assign(new Error('server status is not available'), { status: 503 });
+            payload = assembleServerStatus(await data.serverStatus(tenantId), Date.now());
           } else {
             const snapshot = await data.snapshot(tenantId);
             if (name === 'list_agents') {
