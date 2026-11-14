@@ -32,8 +32,8 @@ window.HELMION_SITE_CONFIG = Object.freeze({
     },
   },
   downloads: {
-    chromium: { label: 'Chromium package', status: 'v0.2.4 · Package ready', href: '/downloads/helmian-guard-chromium-0.2.4.zip' },
-    firefox: { label: 'Firefox package', status: 'v0.2.4 · Unsigned package — temporary load only', href: '/downloads/helmian-guard-firefox-0.2.4.zip' },
+    chromium: { label: 'Chromium package', status: 'v0.7.0 · Package ready', href: '/downloads/helmian-guard-chromium-0.7.0.zip' },
+    firefox: { label: 'Firefox package', status: 'v0.7.0 · Unsigned package — temporary load only', href: '/downloads/helmian-guard-firefox-0.7.0.zip' },
   },
   billing: {
     products: { individual: 'helmian_individual', guard: 'helmian_guard', bundle: 'helmian_bundle' },
