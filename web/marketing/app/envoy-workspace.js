@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=b8a29b0fd79eec58';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=b8a29b0fd79eec58';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=b8a29b0fd79eec58';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=b8a29b0fd79eec58';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=b8a29b0fd79eec58';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=b8a29b0fd79eec58';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=b8a29b0fd79eec58';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=b8a29b0fd79eec58';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=b8a29b0fd79eec58';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=b8a29b0fd79eec58';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=b8a29b0fd79eec58';
-import { createConnectFields } from './connect-fields.mjs?v=b8a29b0fd79eec58';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=b8a29b0fd79eec58';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=b8a29b0fd79eec58';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=606b84c580271b8a';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=606b84c580271b8a';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=606b84c580271b8a';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=606b84c580271b8a';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=606b84c580271b8a';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=606b84c580271b8a';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=606b84c580271b8a';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=606b84c580271b8a';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=606b84c580271b8a';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=606b84c580271b8a';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=606b84c580271b8a';
+import { createConnectFields } from './connect-fields.mjs?v=606b84c580271b8a';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=606b84c580271b8a';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=606b84c580271b8a';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -444,6 +444,49 @@ export function watchStepText(offer) {
 }
 export function watchOfferSignature(offers) {
   return (offers ?? []).map((o) => `${o.seat}:${o.url ?? ''}`).join(',');
+}
+
+// ---------- crew-list screen icon (live browser view, icon bite) ----------
+// Troy's shape (2026-11-14): a tiny computer-screen icon next to
+// each browser agent's name in the crew list. The icon itself is
+// the door, with no settings toggle. It marks that the agent has a
+// browser screen; while the agent is working in it the icon shows
+// live, and clicking it opens that agent's live screen in the
+// workbench Browser tab (the existing watch). State comes from
+// the same watch offers feed the pane reads: an agent's screen is
+// live exactly when an unexpired offer names its seat. The pure
+// mapping is here; the glyph, the row wiring and the presence-poll
+// patch live with the crew rail below.
+//
+// One seat's icon truth: null for any agent with no browser (only
+// WATCH_SEATS ever get an icon), else the idle marker or the live
+// door, with the words its title and accessible name carry. The
+// sig changes only when the visible state changes (idle, or live
+// on a given page), so the row patch writes nothing on a poll
+// where nothing moved.
+export function crewWatchIconState(seat, offers, now = Date.now()) {
+  if (!WATCH_SEATS.includes(seat)) return null;
+  const name = NAMES[seat] ?? seat;
+  const offer = (offers ?? []).find((o) => o?.seat === seat && Date.parse(o?.expiresAt ?? '') > now) ?? null;
+  if (!offer) {
+    const title = `${name} works in a browser. Nothing is open right now.`;
+    return { seat, state: 'idle', sig: `${seat}|idle`, title, ariaLabel: title };
+  }
+  const step = watchStepText({ ...offer, name: offer.name ?? name });
+  return {
+    seat,
+    state: 'live',
+    sig: `${seat}|live|${offer.url ?? ''}`,
+    title: `${step}. Click to watch.`,
+    ariaLabel: `Watch ${name} live. ${step}.`,
+  };
+}
+// The click decision, kept pure: opening a seat already being
+// watched only brings the Browser tab forward (crewWatchClick's
+// 'focus'); any other seat starts its watch, and startWatch
+// itself stops a watch running for a different seat first.
+export function crewWatchClick(seat, watchingSeat) {
+  return watchingSeat === seat ? 'focus' : 'start';
 }
 
 // ---------- take control (live browser view, Bite 4) ----------
@@ -2269,12 +2312,93 @@ function syncCrewSelection() {
     row.setAttribute('aria-pressed', String(on));
   }
 }
-function crewRow({ key, name, faceImg, status, motionStage, title }) {
+// The icon's glyph: one small inline SVG monitor (a screen on a
+// stand), drawn with createElementNS the way app.js draws its own
+// SVG (the h() helper builds HTML elements only). Styling lives
+// in envoy.css: the screen is outline weight while idle and fills
+// with the accent color while live; both states ride currentColor
+// so the class on the span is the whole state.
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function crewWatchGlyph() {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '14');
+  svg.setAttribute('height', '14');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  const screen = document.createElementNS(SVG_NS, 'rect');
+  screen.setAttribute('x', '3');
+  screen.setAttribute('y', '4.5');
+  screen.setAttribute('width', '18');
+  screen.setAttribute('height', '12');
+  screen.setAttribute('rx', '2');
+  screen.setAttribute('class', 'ew-crew-watch-screen');
+  const stand = document.createElementNS(SVG_NS, 'path');
+  stand.setAttribute('d', 'M12 16.5v3M8.5 21h7');
+  stand.setAttribute('class', 'ew-crew-watch-stand');
+  svg.append(screen, stand);
+  return svg;
+}
+// Write one icon state onto its span: class, title and accessible
+// name, plus the control dressing only while live (a live icon is
+// a named, keyboard-reachable control; an idle one is a marker).
+// The span's own dataset carries the last signature written, so a
+// state that did not change writes nothing at all.
+function applyCrewWatchIcon(node, iconState) {
+  if (!node || !iconState) return;
+  if (node.dataset.sig === iconState.sig) return;
+  node.dataset.sig = iconState.sig;
+  node.dataset.state = iconState.state;
+  node.className = `ew-crew-watch ${iconState.state}`;
+  node.title = iconState.title;
+  node.setAttribute('aria-label', iconState.ariaLabel);
+  if (iconState.state === 'live') { node.setAttribute('role', 'button'); node.setAttribute('tabindex', '0'); }
+  else { node.removeAttribute('role'); node.removeAttribute('tabindex'); }
+}
+// The icon node for one row. It is a span, never a button: the
+// crew row itself is a button and buttons cannot nest. Its click
+// (and Enter/Space) stops propagation before the row's own
+// handler can retarget the composer, and fires only while the
+// icon stands live; an idle icon opens nothing and mints
+// nothing, it only keeps the click from falling through.
+function crewWatchIconNode(seat, iconState) {
+  const node = h('span', { class: 'ew-crew-watch' }, crewWatchGlyph());
+  node.dataset.state = iconState.state;
+  applyCrewWatchIcon(node, iconState);
+  const fire = (event) => {
+    event.stopPropagation();
+    if (event.type === 'keydown') {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+    }
+    if (node.dataset.state !== 'live') return;
+    openCrewWatch(seat);
+  };
+  node.addEventListener('click', fire);
+  node.addEventListener('keydown', fire);
+  return node;
+}
+// A live icon click opens the agent's screen: the workbench comes
+// forward on its Browser tab, then the existing per-watch road
+// runs (startWatch mints from the signed-in session, exactly as
+// the watch bar's button does). The offer is re-read at click
+// time, so a stale live face can never open an empty watch; a
+// seat already being watched is only brought forward, never
+// re-minted or restarted.
+function openCrewWatch(seat) {
+  if (crewWatchIconState(seat, liveWatchOffers())?.state !== 'live') return;
+  openBench('browser');
+  if (crewWatchClick(seat, watchView.seat) === 'start') void startWatch(seat);
+}
+
+function crewRow({ key, name, faceImg, status, motionStage, title, watchIcon }) {
   const selected = crewRowSelected(key, crewLeadingTargets());
+  const nameKids = [h('span', { class: 'ew-crew-name-text' }, name)];
+  if (watchIcon) nameKids.push(crewWatchIconNode(key, watchIcon));
   return h('button', { type: 'button', class: `ew-crew-row${selected ? ' selected' : ''}`, 'data-provider': key, 'aria-pressed': String(selected), title, onclick: () => setCrewTarget(key) },
     crewFaceNode(faceImg, status.kind, motionStage),
     h('span', { class: 'ew-crew-text' },
-      h('span', { class: 'ew-crew-name' }, name),
+      h('span', { class: 'ew-crew-name' }, ...nameKids),
       h('span', { class: 'ew-crew-line' }, status.line)));
 }
 
@@ -2329,6 +2453,7 @@ function crewRowDispose(entry) {
 // only the face child is rebuilt, inside the same shell.
 function crewRowSync(entry, spec) {
   if (entry.name !== spec.name) { entry.name = spec.name; entry.nameEl.textContent = spec.name; }
+  if (entry.watchIconEl) applyCrewWatchIcon(entry.watchIconEl, spec.watchIcon);
   if (entry.title !== spec.title) { entry.title = spec.title; entry.row.setAttribute('title', spec.title); }
   if (entry.statusKind !== spec.status.kind) { entry.statusKind = spec.status.kind; entry.dot.className = `ew-crew-dot ${spec.status.kind}`; }
   if (entry.line !== spec.status.line) { entry.line = spec.status.line; entry.lineEl.textContent = spec.status.line; }
@@ -2354,13 +2479,14 @@ function crewRowSync(entry, spec) {
   }
 }
 function crewRowEntry(spec) {
-  const row = crewRow({ key: spec.key, name: spec.name, faceImg: spec.buildFace(), status: spec.status, motionStage: spec.stage, title: spec.title });
+  const row = crewRow({ key: spec.key, name: spec.name, faceImg: spec.buildFace(), status: spec.status, motionStage: spec.stage, title: spec.title, watchIcon: spec.watchIcon });
   const entry = {
     row,
     shell: row.querySelector('.ew-crew-face'),
     dot: row.querySelector('.ew-crew-dot'),
-    nameEl: row.querySelector('.ew-crew-name'),
+    nameEl: row.querySelector('.ew-crew-name-text'),
     lineEl: row.querySelector('.ew-crew-line'),
+    watchIconEl: row.querySelector('.ew-crew-watch'),
     name: spec.name, title: spec.title, statusKind: spec.status.kind, line: spec.status.line,
     faceStamp: spec.faceStamp, selected: row.classList.contains('selected'),
   };
@@ -2375,12 +2501,14 @@ function renderCrew(roster, customList, states, desk) {
   if (titleEl && titleEl.textContent !== titleText) titleEl.textContent = titleText;
   const still = emojiStill();
   const specs = [];
+  const offers = liveWatchOffers();
   roster.forEach((p, i) => {
     const status = crewStatus(p, states[p].state !== 'offline');
     const stage = activityMotionStage(ws.activity, p, ws.channelId);
     specs.push({ cacheKey: `seat:${p}`, key: p, rank: CREW_RANK[status.kind], order: i, name: NAMES[p], status, stage,
       faceStamp: `${still ? 'still' : 'clip'}:${crewFaceSlug(p)}`,
       buildFace: () => crewSeatFaceClip(p, stage),
+      watchIcon: crewWatchIconState(p, offers),
       title: desk ? `Dispatch to ${NAMES[p]} — your message goes to this seat` : `Target ${NAMES[p]} — your message goes to this seat` });
   });
   customList.forEach((ca, i) => {
@@ -2418,6 +2546,25 @@ function renderCrew(roster, customList, states, desk) {
   const activeKey = document.activeElement?.classList?.contains('ew-crew-row') ? document.activeElement.getAttribute('data-provider') : null;
   reconcileChildren(list, desired);
   if (activeKey && document.activeElement?.getAttribute?.('data-provider') !== activeKey) for (const row of list.querySelectorAll('.ew-crew-row')) if (row.getAttribute('data-provider') === activeKey) { row.focus({ preventScroll: true }); break; }
+}
+
+// The screen icons patch from the presence poll itself, not only
+// from the crew render: loadPresence refreshes the watch offers
+// and re-renders the watch bar on that same arrival, but the crew
+// rows are only re-rendered by renderAgents on the message poll,
+// so without this pass an offer could stand in the bar while its
+// icon still showed idle (or the reverse) until the next message
+// poll landed. The pass walks the kept rows only and writes
+// through the same apply the keyed render uses, so the two roads
+// can never disagree, and a state that did not change writes
+// nothing.
+function syncCrewWatchIcons() {
+  const offers = liveWatchOffers();
+  for (const entry of crewRowCache.values()) {
+    if (!entry.watchIconEl) continue;
+    const seat = entry.row.getAttribute('data-provider');
+    applyCrewWatchIcon(entry.watchIconEl, crewWatchIconState(seat, offers));
+  }
 }
 
 // The add-pills under the rail get the same keyed treatment (the
@@ -5762,7 +5909,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=b8a29b0fd79eec58');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=606b84c580271b8a');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -6342,6 +6489,7 @@ async function loadPresence() {
   try { const body = await ws.ctx.api('/api/admin/envoy/runner/presence'); ws.presenceRows = Array.isArray(body.presence) ? body.presence : []; ws.online = new Set((body.presence ?? []).filter((p) => p.connected !== false).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n === 'ollama' ? 'qwen' : n; })); ws.activity = Array.isArray(body.activity) ? body.activity : []; ws.watchOffers = watchOffersFrom(body); }
   catch { ws.online = new Set(); /* the last good presence rows and activity feed stay — activity events expire on their own stamps */ }
   syncWatchBar();
+  syncCrewWatchIcons();
   syncActivityViews();
 }
 
