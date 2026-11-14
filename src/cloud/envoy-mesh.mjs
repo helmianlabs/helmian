@@ -69,9 +69,14 @@ function getPool() {
     // transaction is the agentWork dispatch, seconds on a healthy
     // database) and far below the platform limit, so a stuck poll
     // fails fast, logs, and lets the worker's next 4 second poll try
-    // instead of stacking. Pool size aligned at 5 with the other
-    // pools on this path (live-admin.mjs, api/helmian-admin.js).
-    sharedPool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 5, connectionTimeoutMillis: 5_000, query_timeout: 15_000, statement_timeout: 15_000 });
+    // instead of stacking. Pool size 10 (envoy 504 fix, bite D):
+    // this is the one pool the agent-work polls and the agent-message
+    // posts share, and a round's burst is overlapping polls against
+    // up to ten simultaneous posts, so at 5 a post could still starve
+    // behind polls even with every wait bounded. The sibling pools
+    // on this path (live-admin.mjs, api/helmian-admin.js) stay at 5:
+    // they serve short single reads, not the dispatch transactions.
+    sharedPool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 10, connectionTimeoutMillis: 5_000, query_timeout: 15_000, statement_timeout: 15_000 });
   }
   return sharedPool;
 }

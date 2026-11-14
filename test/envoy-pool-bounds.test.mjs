@@ -25,7 +25,20 @@ test('every pool on the envoy path bounds its waits', async () => {
     assert.match(source, /connectionTimeoutMillis: 5_000/, `${path}: connect/checkout bound`);
     assert.match(source, /query_timeout: 15_000/, `${path}: query bound`);
     assert.match(source, /statement_timeout: 15_000/, `${path}: statement bound`);
-    assert.match(source, /max: 5\b/, `${path}: pool size aligned at 5`);
+  }
+});
+
+// Envoy 504 fix, bite D: with every wait bounded (bite 1), the mesh
+// pool — the one pool the agent-work polls and the agent-message
+// posts share — is sized for a round's burst at 10. The sibling
+// pools on the path stay at 5: they serve short single reads, and
+// no timeout evidence names them.
+test('pool sizes: the mesh pool is 10, its siblings on the path stay 5', async () => {
+  const mesh = await read('src/cloud/envoy-mesh.mjs');
+  assert.match(mesh, /max: 10, connectionTimeoutMillis: 5_000/, 'mesh pool sized at 10 with its bounds intact');
+  for (const path of ['src/cloud/live-admin.mjs', 'web/marketing/api/helmian-admin.js']) {
+    const source = await read(path);
+    assert.match(source, /max: 5\b/, `${path}: sibling pool stays at 5`);
   }
 });
 
