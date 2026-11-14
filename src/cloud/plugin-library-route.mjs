@@ -1,13 +1,19 @@
 // Plugin library routes (plugin-install bite, 2026-11-09): the
 // cloud plugin shelf's install / uninstall / read API —
 //
-//   GET  /api/admin/plugins            → { valid: true, plugins: [row], unavailable: [..], shelf: [bundle] }
+//   GET  /api/admin/plugins            → { valid: true, plugins: [row], unavailable: [..], shelf: [bundle], bridgeReport?: { reportedAt, ageMs } }
 //     The workspace's plugins, BOTH truths in one list: the cloud
 //     bundles installed from Helmian's shelf (the install records,
-//     sql/080) and the PC bridge's installed plugins (the read
-//     installed-plugins.mjs has always served — the bridge list is
-//     read through the same loader here, so shadowing the admin
-//     plane's own handler for this path loses nothing). A cloud row
+//     sql/080) and the PC bridge's installed plugins. The bridge
+//     half prefers the tenant's stored bridge report (M3 G7,
+//     bridge-plugin-report.mjs, sql/089) when one exists — the
+//     bridge's own claim about its shelf, with its age riding
+//     beside the rows as `bridgeReport` — and falls back to the
+//     local read installed-plugins.mjs has always served (the
+//     same loader, read here, so shadowing the admin plane's own
+//     handler for this path loses nothing) when no report exists:
+//     the desktop/local case, where the serving process and the
+//     bridge are the same machine and the local read is true. A cloud row
 //     carries the bundle's declared entries with their LIVE
 //     connection state joined from the connector library, and its
 //     declared skills with their presence in the skill library.
@@ -72,6 +78,7 @@ import {
 import { createToolConnectionsStore } from './tool-connections.mjs';
 import { createEnvoyStore } from './envoy-chat.mjs';
 import { listInstalledPlugins, installedPluginsWorkspace } from './installed-plugins.mjs';
+import { createBridgePluginReportStore, bridgeReportPluginList } from './bridge-plugin-report.mjs';
 
 export const PLUGINS_PATH = '/api/admin/plugins';
 export const PLUGIN_INSTALL_PATH = '/api/admin/plugins/install';
@@ -389,7 +396,18 @@ function productionDeps() {
     skills: createSkillLibraryStore(pool),
     entryExists: catalogEntryExists,
     entryStates: (tenantId, actor, entryIds) => productionEntryStates(pool, tenantId, actor, entryIds),
-    bridgeList: async () => listInstalledPlugins({ workspace: installedPluginsWorkspace(process.env) }),
+    // The bridge half of the read: the tenant's stored bridge
+    // report when one exists (bridge-plugin-report.mjs), else the
+    // local read. A store error answers as "no report" here — the
+    // local list still serves the menu — while sql/089 not having
+    // landed yet is the store's own null, the same shape.
+    bridgeList: async (tenantId) => {
+      if (tenantId) {
+        const fromReport = await bridgeReportPluginList(createBridgePluginReportStore(pool), tenantId).catch(() => null);
+        if (fromReport) return fromReport;
+      }
+      return listInstalledPlugins({ workspace: installedPluginsWorkspace(process.env) });
+    },
     shelf: PLUGIN_SHELF,
   };
 }
@@ -484,7 +502,7 @@ export async function handlePluginLibraryRoute({
       }));
       let bridge = { plugins: [], unavailable: [] };
       try {
-        bridge = await deps.bridgeList();
+        bridge = await deps.bridgeList(actor.tenantId);
       } catch {
         bridge = { plugins: [], unavailable: [{ name: null, message: 'the bridge plugin list could not be read' }] };
       }
@@ -494,6 +512,9 @@ export async function handlePluginLibraryRoute({
         valid: true,
         plugins: [...cloudRows, ...bridgeRows],
         unavailable: bridge.unavailable ?? [],
+        // The report's age rides only when a stored report supplied
+        // the bridge rows; the local read's answer is unchanged.
+        ...(bridge.bridgeReport ? { bridgeReport: bridge.bridgeReport } : {}),
         shelf: deps.shelf.map((bundle) => ({
           name: bundle.pluginJson.name,
           version: bundle.pluginJson.version,
