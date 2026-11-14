@@ -10,8 +10,8 @@ test('get-started page exists and prompts sign-up', () => {
   const js = readFileSync(new URL('../get-started/get-started.js', import.meta.url), 'utf8');
   assert.match(js, /mountSignUp/u);
   assert.match(js, /\/api\/signup/u);
-  assert.ok(existsSync(new URL('../downloads/helmian-guard-chromium-0.2.4.zip', import.meta.url)));
-  assert.ok(existsSync(new URL('../downloads/helmian-guard-firefox-0.2.4.zip', import.meta.url)));
+  assert.ok(existsSync(new URL('../downloads/helmian-guard-chromium-0.7.0.zip', import.meta.url)));
+  assert.ok(existsSync(new URL('../downloads/helmian-guard-firefox-0.7.0.zip', import.meta.url)));
 });
 
 test('picks exe asset from a GitHub release, else unavailable', async () => {

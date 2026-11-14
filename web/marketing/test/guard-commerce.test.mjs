@@ -24,15 +24,15 @@ test('Guard page exposes reviewed package slots and honest checkout handoff', ()
 });
 
 test('Guard page download cards point at the served packages with honest status', () => {
-  assert.match(page, /href="\/downloads\/helmian-guard-chromium-0\.2\.4\.zip"/u);
-  assert.match(page, /href="\/downloads\/helmian-guard-firefox-0\.2\.4\.zip"/u);
-  assert.match(page, /v0\.2\.4 · Package ready/u);
+  assert.match(page, /href="\/downloads\/helmian-guard-chromium-0\.7\.0\.zip"/u);
+  assert.match(page, /href="\/downloads\/helmian-guard-firefox-0\.7\.0\.zip"/u);
+  assert.match(page, /v0\.7\.0 · Package ready/u);
   assert.match(page, /Unsigned package — temporary load only/u);
   assert.match(page, /AMO signing is not done yet/u);
   assert.doesNotMatch(page, /Artifact pending review/u);
   assert.doesNotMatch(page, /aria-disabled="true" title="AMO-signed/u);
-  assert.match(config, /helmian-guard-chromium-0\.2\.4\.zip/u);
-  assert.match(config, /helmian-guard-firefox-0\.2\.4\.zip/u);
+  assert.match(config, /helmian-guard-chromium-0\.7\.0\.zip/u);
+  assert.match(config, /helmian-guard-firefox-0\.7\.0\.zip/u);
 });
 
 test('checkout hands off to free sign-up while paid checkout is off', async () => {
