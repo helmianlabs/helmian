@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=5f0051b89a3c34d0';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=5f0051b89a3c34d0';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=5f0051b89a3c34d0';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=5f0051b89a3c34d0';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=5f0051b89a3c34d0';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=5f0051b89a3c34d0';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=5f0051b89a3c34d0';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=5f0051b89a3c34d0';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=5f0051b89a3c34d0';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=5f0051b89a3c34d0';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=5f0051b89a3c34d0';
-import { createConnectFields } from './connect-fields.mjs?v=5f0051b89a3c34d0';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=5f0051b89a3c34d0';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=5f0051b89a3c34d0';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=367e1171b51fe067';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=367e1171b51fe067';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=367e1171b51fe067';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=367e1171b51fe067';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=367e1171b51fe067';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=367e1171b51fe067';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=367e1171b51fe067';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=367e1171b51fe067';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=367e1171b51fe067';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=367e1171b51fe067';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=367e1171b51fe067';
+import { createConnectFields } from './connect-fields.mjs?v=367e1171b51fe067';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=367e1171b51fe067';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=367e1171b51fe067';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -1074,7 +1074,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configChannelId: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], reportAgeMs: null, loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configChannelId: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], reportAgeMs: null, loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, refreshing: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -2828,7 +2828,7 @@ export function resetLibrarySession(ctx) {
   ws.libraryFactsFetchedAt = 0;
   ws.libraryWriteAt = 0;
   ws.libraryPreloadStarted = false;
-  ws.toolAccess = { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' };
+  ws.toolAccess = { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, refreshing: false, error: '' };
   ws.keyForm = { openFor: null, model: null, saving: false, error: '', known: {} };
   ws.tenantPairForm = { openFor: null, model: null, row: null, saving: false, error: '', note: '' };
   ws.customForm = { open: false, seatId: null, model: null, saving: false, error: '', created: null };
@@ -3803,7 +3803,10 @@ async function ingestGithubBody(which, body, note) {
 // state the write itself returned — never an optimistic flip.
 // Entries with no connection carry no controls: posture belongs to
 // a connection, so their row states the truth ("Connect first" /
-// "Reconnect first") and is not a button. The key/token form is a
+// "Reconnect first") and is not a button. Under the Tools subhead
+// the face also carries the refresh review (DESIGN §4.1(3)): a
+// check that names drifted tools without saving anything, and a
+// save that freezes the checked list. The key/token form is a
 // sibling bite — it expands under the connector's own row in the
 // Connectors list (keyFormNode above), following this face's
 // expand-in-place pattern. The add-a-custom form (panel-native
@@ -3870,6 +3873,47 @@ async function saveToolAccessTool(which, tool) {
   ta.saving = false;
   if (ws.pickerFor === which) renderPicker(which);
 }
+// The review act's two halves (DESIGN §4.1(3)). The check posts
+// the refresh preview: the server lists the connector's tools
+// fresh, diffs them against the saved list, and saves NOTHING —
+// the model's diff is all that changes, and the section under
+// Tools names what drifted. The save posts the confirm: the
+// server lists again and freezes that list (new and changed
+// tools land off), and the face then re-reads, so what renders
+// is the read's own state of the new saved list.
+async function checkToolAccessChanges(which) {
+  const ta = ws.toolAccess;
+  if (!ta.model || ta.saving || ta.refreshing) return;
+  ta.refreshing = true;
+  try {
+    const next = await previewToolAccessRefresh({ post: (path, body) => ws.ctx.post(path, body), model: ta.model });
+    if (next) ta.model = next;
+    ta.error = '';
+  } catch { ta.error = 'The tool changes could not be checked. Try again.'; }
+  ta.refreshing = false;
+  if (ws.pickerFor === which) renderPicker(which);
+}
+async function saveToolAccessRefresh(which) {
+  const ta = ws.toolAccess;
+  if (!ta.model || ta.saving || ta.refreshing) return;
+  ta.refreshing = true;
+  try {
+    const next = await confirmToolAccessRefresh({ post: (path, body) => ws.ctx.post(path, body), model: ta.model });
+    if (next) {
+      ta.model = next;
+      // Same set rule as the writes above: the freeze landed on
+      // the workspace set's connection, so every seat's cached
+      // library is stale from here.
+      invalidateAllSeatLibraries();
+      // The re-read is the face's canonical state: the new saved
+      // list, its switches, and a spent review.
+      await refreshToolAccess(which);
+    }
+    ta.error = '';
+  } catch { ta.error = 'The new tool list could not be saved. Try again.'; }
+  ta.refreshing = false;
+  if (ws.pickerFor === which) renderPicker(which);
+}
 function toolAccessNode(which, row) {
   const ta = ws.toolAccess;
   const open = row.open === true;
@@ -3931,6 +3975,38 @@ function toolAccessNode(which, row) {
         h('span', { class: `ew-picker-state ${option.selected ? 'on' : 'off'}` }, option.selected ? 'In use' : 'Use')));
     }
     children.push(h('div', { class: 'ew-subhead' }, 'Tools'));
+    // The review act (DESIGN §4.1(3)): check the connector's own
+    // tool list against the saved one. Checking saves nothing —
+    // the diff is named tool by tool, and only the save button
+    // freezes the checked list (new and changed tools then stand
+    // in the switches below, off until the person turns them on).
+    const diff = model.refreshDiff;
+    if (!diff) {
+      children.push(h('button', { type: 'button', class: 'ew-picker-row', disabled: ta.saving || ta.refreshing, title: 'Compare the tools this connector offers now with the saved list — checking saves nothing', onclick: () => { void checkToolAccessChanges(which); } },
+        h('span', { class: 'ew-lib-text' }, h('span', { class: 'ew-lib-name' }, 'Check for tool changes')),
+        h('span', { class: 'ew-picker-state off' }, ta.refreshing ? 'Checking…' : 'Check')));
+    } else if (!diff.hasDrift) {
+      children.push(h('p', { class: 'ew-note' }, 'No changes — the saved tool list matches what this connector offers now.'));
+    } else {
+      for (const name of diff.added) {
+        children.push(h('div', { class: 'ew-picker-row ew-lib-row' },
+          h('span', { class: 'ew-lib-text' }, h('span', { class: 'ew-lib-name' }, name), h('span', { class: 'ew-lib-line' }, 'New since the saved list — stays off until you turn it on')),
+          h('span', { class: 'ew-picker-state off' }, 'New')));
+      }
+      for (const name of diff.changed) {
+        children.push(h('div', { class: 'ew-picker-row ew-lib-row' },
+          h('span', { class: 'ew-lib-text' }, h('span', { class: 'ew-lib-name' }, name), h('span', { class: 'ew-lib-line' }, 'Changed since the saved list — stays off until you turn it on')),
+          h('span', { class: 'ew-picker-state off' }, 'Changed')));
+      }
+      for (const name of diff.removed) {
+        children.push(h('div', { class: 'ew-picker-row ew-lib-row' },
+          h('span', { class: 'ew-lib-text' }, h('span', { class: 'ew-lib-name' }, name), h('span', { class: 'ew-lib-line' }, 'This connector no longer offers it — saving takes it off the list')),
+          h('span', { class: 'ew-picker-state off' }, 'Gone')));
+      }
+      children.push(h('button', { type: 'button', class: 'ew-picker-row', disabled: ta.saving || ta.refreshing, title: 'Save the checked list — new and changed tools stay off until you turn them on', onclick: () => { void saveToolAccessRefresh(which); } },
+        h('span', { class: 'ew-lib-text' }, h('span', { class: 'ew-lib-name' }, 'Save the checked tool list')),
+        h('span', { class: 'ew-picker-state off' }, ta.refreshing ? 'Saving…' : 'Save')));
+    }
     if (!model.tools.length) {
       children.push(h('p', { class: 'ew-note' }, model.hasSnapshot ? 'This connection has no tools.' : 'No tool list has been saved for this connection yet.'));
     }
@@ -5632,7 +5708,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=5f0051b89a3c34d0');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=367e1171b51fe067');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
