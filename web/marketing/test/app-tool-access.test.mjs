@@ -3,14 +3,21 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import {
   TOOL_ACCESS_POSTURES,
+  TOOL_ACCESS_TOOL_REFRESH_PATH,
   applyToolAccessWrite,
+  applyToolRefreshConfirm,
+  applyToolRefreshPreview,
+  confirmToolAccessRefresh,
   loadToolAccess,
   pickToolAccessEntry,
   postureWriteBody,
+  previewToolAccessRefresh,
   toolAccessEntries,
   toolAccessModel,
   toolAccessReadUrl,
   toolEnableWriteBody,
+  toolRefreshDiffModel,
+  toolRefreshWriteBody,
   writeToolAccessPosture,
   writeToolAccessTool,
 } from '../app/connector-tool-access.mjs';
@@ -31,10 +38,15 @@ import { plusMenuLevel2Model } from '../app/envoy-workspace.js';
 //        { seatId, entryId, posture } → { status:'posture-set', connection }
 //   POST /api/admin/connector-library/tool-enable
 //        { seatId, entryId, toolEnableMap } → { status:'tool-map-set', connection }
+//   POST /api/admin/connector-library/tool-refresh
+//        { seatId, entryId, preview:true } → { status:'tool-refresh-preview', diff, hasSnapshot }
+//        { seatId, entryId, confirm:true } → { status:'tools-refreshed', diff, snapshot, connection }
 // (src/cloud/connector-library-read-route.mjs's productionToolAccess
 // and connector-library-write-route.mjs's posture/tool-enable
 // actions; the store refuses tools the frozen snapshot does not
-// name and merges partial maps — connector-library.mjs.)
+// name and merges partial maps — connector-library.mjs. The
+// refresh is M3 G8: preview names the drift and writes nothing;
+// confirm re-freezes, new and changed tools OFF.)
 
 // ---- fixtures: library reads in the Level 2 model's input shape ----
 const libRow = (seatId, entryId, name, over = {}) => ({
@@ -237,6 +249,126 @@ test('round trip: open the face, change the posture, flip a tool — the writes 
   const refused = await writeToolAccessTool({ post, model, toolName: 'not_in_snapshot', enabled: true });
   assert.equal(refused, null, 'flipping a tool the snapshot does not hold sends nothing');
   assert.equal(calls.length, 3, 'no extra road was called');
+});
+
+// ---- the refresh review (M3 G8) ----
+const REFRESH_READ = {
+  valid: true, seatId: 'claude', entryId: 'helmian-github',
+  connected: true, posture: 'ask',
+  tools: [
+    { name: 'list_repos', description: 'List repositories', annotation: 'read', effectiveAnnotation: 'read', enabled: true },
+    { name: 'create_issue', description: 'Open an issue', annotation: 'write', effectiveAnnotation: 'write', enabled: true },
+    { name: 'old_tool', description: 'The retired tool', annotation: 'read', effectiveAnnotation: 'read', enabled: true },
+  ],
+  snapshotTakenAt: '2026-11-12T00:00:00.000Z', snapshotHash: 'abc123',
+};
+const DRIFT = { added: ['delete_repo'], removed: ['old_tool'], changed: ['create_issue'] };
+
+test('refresh wire shapes: the preview and confirm bodies are exactly the server contract', () => {
+  assert.equal(TOOL_ACCESS_TOOL_REFRESH_PATH, '/api/admin/connector-library/tool-refresh');
+  assert.deepEqual(toolRefreshWriteBody({ seatId: 'claude', entryId: 'helmian-github' }),
+    { seatId: 'claude', entryId: 'helmian-github', preview: true }, 'the default call is the preview — the check that saves nothing');
+  assert.deepEqual(toolRefreshWriteBody({ seatId: 'claude', entryId: 'helmian-github', confirm: true }),
+    { seatId: 'claude', entryId: 'helmian-github', confirm: true });
+  assert.equal(toolRefreshWriteBody({ seatId: 'claude' }), null);
+  assert.equal(toolRefreshWriteBody({ entryId: 'helmian-github' }), null);
+});
+
+test('refresh diff model: drift present carries the three name lists; no drift and no answer carry none', () => {
+  const drift = toolRefreshDiffModel(DRIFT);
+  assert.deepEqual(drift.added, ['delete_repo']);
+  assert.deepEqual(drift.removed, ['old_tool']);
+  assert.deepEqual(drift.changed, ['create_issue']);
+  assert.equal(drift.hasDrift, true);
+  assert.equal(toolRefreshDiffModel({ added: [], removed: [], changed: [] }).hasDrift, false);
+  assert.equal(toolRefreshDiffModel(null).hasDrift, false);
+  assert.equal(toolRefreshDiffModel({ added: [42, 'real_tool', ''] }).added.length, 1, 'names the server did not send as names are never invented');
+
+  const model = toolAccessModel(REFRESH_READ, { seatId: 'claude', entryId: 'helmian-github' });
+  assert.equal(model.refreshDiff, null, 'a fresh read starts unreviewed — no section until a check runs');
+  const noAnswer = applyToolRefreshPreview(model, { status: 'tool-refresh-preview' });
+  assert.equal(noAnswer, model, 'a preview answer with no diff in it changes nothing');
+});
+
+test('refresh round trip: preview names the drift and saves nothing; confirm folds the new frozen set; a confirmed tool then enables', async () => {
+  const calls = [];
+  let stored = connection({ posture: 'ask', toolEnableMap: {} });
+  const post = async (path, body) => {
+    calls.push(['POST', path, body]);
+    if (path === '/api/admin/connector-library/tool-refresh' && body.preview === true) {
+      return { status: 'tool-refresh-preview', diff: DRIFT, hasSnapshot: true };
+    }
+    if (path === '/api/admin/connector-library/tool-refresh' && body.confirm === true) {
+      stored = connection({ posture: 'ask', toolEnableMap: { create_issue: false, delete_repo: false }, toolSnapshotRef: 'snap-2' });
+      return {
+        status: 'tools-refreshed', diff: DRIFT,
+        snapshot: {
+          id: 'snap-2', takenAt: '2026-11-13T00:00:00.000Z', snapshotHash: 'def456',
+          tools: [
+            { name: 'list_repos', description: 'List repositories', annotation: 'read' },
+            { name: 'create_issue', description: 'Open an issue', annotation: 'write' },
+            { name: 'delete_repo', description: 'Delete a repository', annotation: 'write' },
+          ],
+        },
+        connection: stored,
+      };
+    }
+    if (path === '/api/admin/connector-library/tool-enable') {
+      stored = connection({ ...stored, toolEnableMap: { ...stored.toolEnableMap, ...body.toolEnableMap } });
+      return { status: 'tool-map-set', connection: stored };
+    }
+    throw new Error(`unexpected road ${path}`);
+  };
+
+  let model = toolAccessModel(REFRESH_READ, { seatId: 'claude', entryId: 'helmian-github' });
+  model = await previewToolAccessRefresh({ post, model });
+  assert.deepEqual(calls[0], ['POST', '/api/admin/connector-library/tool-refresh', { seatId: 'claude', entryId: 'helmian-github', preview: true }]);
+  assert.equal(model.refreshDiff.hasDrift, true, 'the review section now has its drift');
+  assert.deepEqual(model.refreshDiff.added, ['delete_repo']);
+  assert.deepEqual(model.tools.map((t) => [t.name, t.enabled]), [
+    ['list_repos', true], ['create_issue', true], ['old_tool', true],
+  ], 'the preview saved nothing: the face still shows the old frozen set, exactly as it stood');
+  assert.equal(model.snapshotHash, 'abc123');
+
+  model = await confirmToolAccessRefresh({ post, model });
+  assert.deepEqual(calls[1], ['POST', '/api/admin/connector-library/tool-refresh', { seatId: 'claude', entryId: 'helmian-github', confirm: true }]);
+  assert.equal(model.refreshDiff, null, 'the review is spent once the checked list is saved');
+  assert.equal(model.snapshotHash, 'def456');
+  assert.equal(model.hasSnapshot, true);
+  assert.deepEqual(model.tools.map((t) => [t.name, t.enabled]), [
+    ['list_repos', true], ['create_issue', false], ['delete_repo', false],
+  ], 'the new frozen set: the kept tool kept its setting, the changed and the new stand OFF, the removed tool is gone');
+
+  model = await writeToolAccessTool({ post, model, toolName: 'delete_repo', enabled: true });
+  assert.deepEqual(calls[2], ['POST', '/api/admin/connector-library/tool-enable', { seatId: 'claude', entryId: 'helmian-github', toolEnableMap: { delete_repo: true } }],
+    'enabling a tool the confirm froze sends the one-entry map — the frozen set is what the face can flip');
+  assert.equal(model.tools.find((t) => t.name === 'delete_repo').enabled, true);
+  const gone = await writeToolAccessTool({ post, model, toolName: 'old_tool', enabled: true });
+  assert.equal(gone, null, 'a tool the confirm dropped out of the set can no longer be flipped');
+  assert.equal(calls.length, 3);
+});
+
+test('refresh confirm folding: an answer with no snapshot proves no freeze — the review stands', () => {
+  const model = toolAccessModel(REFRESH_READ, { seatId: 'claude', entryId: 'helmian-github' });
+  const reviewed = applyToolRefreshPreview(model, { status: 'tool-refresh-preview', diff: DRIFT, hasSnapshot: true });
+  const unproven = applyToolRefreshConfirm(reviewed, { status: 'tools-refreshed', diff: DRIFT, connection: null });
+  assert.equal(unproven, reviewed, 'no snapshot and no connection in the answer — nothing the face can prove changed');
+});
+
+test('face wiring: the panel carries the review act under the Tools subhead', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  for (const needle of [
+    'function checkToolAccessChanges',
+    'function saveToolAccessRefresh',
+    'previewToolAccessRefresh({ post:',
+    'confirmToolAccessRefresh({ post:',
+    'Check for tool changes',
+    'Save the checked tool list',
+    'model.refreshDiff',
+  ]) assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  const node = js.slice(js.indexOf('function toolAccessNode'), js.indexOf('function plusMenuRowNode'));
+  assert.ok(node.indexOf("'Tools'") < node.indexOf('Check for tool changes'), 'the review act renders under the Tools subhead');
+  assert.ok(node.indexOf('Check for tool changes') < node.indexOf('model.tools'), 'the review section stands before the tool switches it can change');
 });
 
 test('face wiring: the panel renders the face in place and never funnels Tool access to the Agents tab', async () => {

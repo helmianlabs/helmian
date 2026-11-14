@@ -58,6 +58,14 @@
 //     a send.
 //   POST /api/admin/connector-library/tool-enable    {seatId, entryId, toolEnableMap}
 //     Per-tool on/off against the connection's frozen snapshot.
+//   POST /api/admin/connector-library/tool-refresh   {seatId, entryId, preview|confirm}
+//     The Tool access review act (m3-github DESIGN §4.1(3)): preview
+//     lists the server's tools fresh and answers the diff against
+//     the frozen snapshot by name, writing nothing; confirm lists
+//     again and re-freezes (new and changed tools land OFF). The
+//     fresh list rides the caller's brokered token — or, for custom
+//     entries, the gate probe's uncredentialed list, never a
+//     credentialed one.
 //   POST /api/admin/connector-library/entry-state    {seatId, entryId, state}   owner/admin
 //   POST /api/admin/connector-library/entries        add a custom entry         owner/admin
 //   POST /api/admin/connector-library/entries/install-report                    owner/admin
@@ -94,8 +102,8 @@
 // Gating follows the library read route: an active workspace member,
 // tenant from the membership, person from the actor's subject — a
 // body naming another tenant or person is refused (400). Personal
-// acts (connect, disconnect, posture) act on the caller's own
-// connection only. Workspace acts (entry-state, add/remove custom)
+// acts (connect, disconnect, posture, tool-enable, tool-refresh) act
+// on the caller's own connection only. Workspace acts (entry-state, add/remove custom)
 // are owner/admin. Auditors never write (skill-route precedent).
 //
 // THE WORKSPACE SET (SYNC S1): "the caller's own connection" is the
@@ -129,7 +137,9 @@ import pg from 'pg';
 import {
   buildConnectorTokenRef,
   createConnectorLibraryStore,
+  diffToolSnapshots,
   planPromptSnapshot,
+  planToolSnapshot,
   validateVaultTokenRef,
   CONNECTOR_POSTURES,
 } from './connector-library.mjs';
@@ -1241,6 +1251,68 @@ export function createConnectorLibraryWriteHandler({
         if (!map || typeof map !== 'object' || Array.isArray(map)) throw failure(400, 'toolEnableMap must be an object keyed by tool name');
         const connection = await store.setToolEnableMap(tenantId, key, map, personId);
         sendJson(200, { status: 'tool-map-set', connection });
+        return true;
+      }
+
+      if (action === 'tool-refresh') {
+        // The Tool access review act (m3-github DESIGN §4.1(3)):
+        // list the server's tools fresh, diff them against the
+        // frozen snapshot by name, and — only on the person's
+        // confirm — re-freeze (the freeze's own §1.7 merge lands
+        // new and changed tools OFF, keeps the person's setting on
+        // unchanged tools, and drops removed ones). One action,
+        // two calls: { preview: true } lists and diffs and writes
+        // NOTHING; { confirm: true } lists and diffs again — the
+        // freeze must be honest about the list it froze — then
+        // freezes and answers the diff, the new snapshot, and the
+        // connection. The diff is computed on the call and never
+        // stored; the panel's review section is this preview.
+        //
+        // The fresh list rides the roads this file already holds.
+        // Stocked entries: the caller's own brokered token
+        // (brokeredToken above) plus the prompts wire client's
+        // listTools — brokeredToken's refusals ARE this act's
+        // (vendor-brokered → VENDOR_MANAGED, unconnected →
+        // NOT_CONNECTED). CUSTOM entries: the gate probe's
+        // uncredentialed list (runGateProbe, the road the callback
+        // freeze and freezeGateBaseline ride) — a custom entry's
+        // frozen set is never a list taken with the person's
+        // credential.
+        refuseCredentialValues(body);
+        const preview = body.preview === true;
+        const confirm = body.confirm === true;
+        if (preview === confirm) throw failure(400, 'tool-refresh takes exactly one of preview or confirm — preview lists what changed and saves nothing; confirm saves the checked list');
+        const entry = await store.getEntry(tenantId, seatId, entryId, { personId });
+        if (!entry) throw failure(404, 'connector entry not found in this seat’s library');
+        let freshTools;
+        if (entry.kind === 'custom') {
+          const connection = await store.getConnection(tenantId, key);
+          if (!connection || connection.state !== 'connected') {
+            throw failure(409, 'connect this connector first — its tool list is refreshed for the person connected to it', { code: 'NOT_CONNECTED' });
+          }
+          const probe = await runGateProbe({ tenantId, entry });
+          if (probe?.state !== 'verified' || !Array.isArray(probe.tools)) {
+            throw failure(502, 'this connector’s safety check could not take a fresh tool list, so nothing was refreshed');
+          }
+          freshTools = probe.tools;
+        } else {
+          const { accessToken, endpointUrl } = await brokeredToken(entry);
+          const listed = await resolvePrompts().listTools({ endpoint: endpointUrl, accessToken });
+          if (!listed?.supported || !Array.isArray(listed.tools)) {
+            throw failure(502, 'the connector’s server did not answer a tools list, so nothing was refreshed');
+          }
+          freshTools = listed.tools;
+        }
+        const current = await store.getCurrentSnapshot(tenantId, key);
+        const plan = planToolSnapshot(freshTools);
+        const diff = diffToolSnapshots(current?.tools ?? [], plan.tools);
+        if (preview) {
+          sendJson(200, { status: 'tool-refresh-preview', diff, hasSnapshot: Boolean(current) });
+          return true;
+        }
+        const snapshot = await store.freezeSnapshot(tenantId, key, freshTools, personId);
+        const connection = await store.getConnection(tenantId, key);
+        sendJson(200, { status: 'tools-refreshed', diff, snapshot, connection });
         return true;
       }
 
