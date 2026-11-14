@@ -26,6 +26,17 @@
 //     Per-tool on/off against the connection's frozen snapshot; the
 //     store refuses any tool the snapshot does not name, and partial
 //     maps merge over the stored one.
+//   POST /api/admin/connector-library/tool-refresh
+//     { seatId, entryId, preview:true } → { status:'tool-refresh-preview', diff, hasSnapshot }
+//     { seatId, entryId, confirm:true } → { status:'tools-refreshed', diff, snapshot, connection }
+//     The review act (m3-github DESIGN §4.1(3)): the preview lists
+//     the server's tools fresh and answers the diff against the
+//     frozen snapshot BY NAME — added / removed / changed — and
+//     writes nothing, so the face can show the review before
+//     anything is saved. The confirm lists again and re-freezes:
+//     new and changed tools land OFF until the person turns them
+//     on here, unchanged tools keep their setting, removed tools
+//     drop out. The diff is computed on the call, never stored.
 //
 // TRUTH RULES (flywheel R52 §3, restated for this face):
 // - The face reads its state from the tool-access read when it
@@ -42,16 +53,18 @@
 //   product (connector-panel.mjs's mirror law) — so they never
 //   appear in this face's entry list at all.
 //
-// SCOPE: posture + per-tool switches ONLY. The key/token form and
-// the add-a-custom form are sibling bites; if they ever share this
-// face's container, that container is the panel section this face
-// renders in (envoy-workspace.js's tool-access section in the "+"
-// panel) — named here, not built here.
+// SCOPE: posture + per-tool switches + the tool-refresh review.
+// The key/token form and the add-a-custom form are sibling bites;
+// if they ever share this face's container, that container is the
+// panel section this face renders in (envoy-workspace.js's
+// tool-access section in the "+" panel) — named here, not built
+// here.
 
 // The server roads, named once.
 export const TOOL_ACCESS_READ_PATH = '/api/admin/connector-library/tool-access';
 export const TOOL_ACCESS_POSTURE_PATH = '/api/admin/connector-library/posture';
 export const TOOL_ACCESS_TOOL_ENABLE_PATH = '/api/admin/connector-library/tool-enable';
+export const TOOL_ACCESS_TOOL_REFRESH_PATH = '/api/admin/connector-library/tool-refresh';
 
 // The posture values the server accepts (connector-library.mjs's
 // CONNECTOR_POSTURES), in the server's own order, each with the
@@ -145,6 +158,9 @@ export function toolAccessModel(raw, { seatId = null, entryId = null } = {}) {
     hasSnapshot: typeof raw?.snapshotHash === 'string' && raw.snapshotHash !== '',
     snapshotTakenAt: raw?.snapshotTakenAt ?? null,
     snapshotHash: raw?.snapshotHash ?? null,
+    // The tool-refresh review's diff, once the person has checked:
+    // null until a preview answers (a fresh read starts unreviewed).
+    refreshDiff: null,
   });
 }
 
@@ -174,6 +190,69 @@ export function applyToolAccessWrite(model, connection) {
   });
 }
 
+// -------------------------------------------------- the refresh review
+// The preview's diff, normalised for the face: the three name
+// lists the server answered (added / removed / changed against
+// the frozen snapshot), nothing else. A name the server did not
+// send is never invented; an answer with no diff in it is no
+// review at all (the callers keep the model's standing diff).
+
+export function toolRefreshDiffModel(raw) {
+  const names = (list) => Object.freeze((Array.isArray(list) ? list : []).filter((n) => typeof n === 'string' && n !== ''));
+  const added = names(raw?.added);
+  const removed = names(raw?.removed);
+  const changed = names(raw?.changed);
+  return Object.freeze({
+    added,
+    removed,
+    changed,
+    hasDrift: added.length + removed.length + changed.length > 0,
+  });
+}
+
+/**
+ * The face after a refresh PREVIEW: only the diff changes. The
+ * preview wrote nothing server-side, so the tools, the posture,
+ * and the snapshot facts all stand exactly as the read left
+ * them — the review is a statement about what a confirm WOULD
+ * freeze, never a state the face pretends was saved.
+ */
+export function applyToolRefreshPreview(model, raw) {
+  if (!model || !raw || typeof raw !== 'object' || !raw.diff || typeof raw.diff !== 'object') return model;
+  return Object.freeze({ ...model, refreshDiff: toolRefreshDiffModel(raw.diff) });
+}
+
+/**
+ * The face after a refresh CONFIRM: the answer carries the new
+ * frozen snapshot and the connection it landed on, and the face
+ * re-derives from THOSE — the tool rows are the new snapshot's
+ * tools with the connection's stored on/off map over them (new
+ * and changed tools OFF, the freeze's own merge), the snapshot
+ * facts are the new snapshot's, and the review is spent. An
+ * answer with no snapshot in it proves no freeze landed, so
+ * only the connection folds (applyToolAccessWrite's rule) and
+ * the review stands.
+ */
+export function applyToolRefreshConfirm(model, raw) {
+  if (!model || !raw || typeof raw !== 'object') return model;
+  const folded = applyToolAccessWrite(model, raw.connection ?? null);
+  const snapTools = Array.isArray(raw.snapshot?.tools) ? raw.snapshot.tools : null;
+  if (!snapTools) return folded;
+  const map = raw.connection?.toolEnableMap && typeof raw.connection.toolEnableMap === 'object' && !Array.isArray(raw.connection.toolEnableMap)
+    ? raw.connection.toolEnableMap
+    : {};
+  return Object.freeze({
+    ...folded,
+    tools: Object.freeze(snapTools
+      .map((tool) => toolModel({ ...(tool ?? {}), enabled: map[tool?.name] !== false }))
+      .filter(Boolean)),
+    hasSnapshot: typeof raw.snapshot?.snapshotHash === 'string' && raw.snapshot.snapshotHash !== '',
+    snapshotTakenAt: raw.snapshot?.takenAt ?? null,
+    snapshotHash: raw.snapshot?.snapshotHash ?? null,
+    refreshDiff: null,
+  });
+}
+
 // ------------------------------------------------------------ wire shapes
 // The exact bodies/URLs the server contracts demand. Builders refuse
 // (null) rather than send a shape the server would refuse: an
@@ -196,8 +275,15 @@ export function toolEnableWriteBody({ seatId, entryId, toolName, enabled, knownT
   return Object.freeze({ seatId, entryId, toolEnableMap: Object.freeze({ [toolName]: enabled === true }) });
 }
 
+export function toolRefreshWriteBody({ seatId, entryId, confirm = false } = {}) {
+  if (!seatId || !entryId) return null;
+  return Object.freeze(confirm === true
+    ? { seatId, entryId, confirm: true }
+    : { seatId, entryId, preview: true });
+}
+
 // ------------------------------------------------------------ the round trip
-// The face's three roads, driven through transport functions the
+// The face's roads, driven through transport functions the
 // caller supplies ({ api, post } — the workspace's own, in the
 // panel; shaped stubs, in tests). Each returns the face model the
 // caller should render: the read's model on open, and the write's
@@ -223,4 +309,18 @@ export async function writeToolAccessTool({ post, model, toolName, enabled } = {
   if (!body || typeof post !== 'function') return null;
   const out = await post(TOOL_ACCESS_TOOL_ENABLE_PATH, body);
   return applyToolAccessWrite(model, out?.connection ?? null);
+}
+
+export async function previewToolAccessRefresh({ post, model } = {}) {
+  const body = model ? toolRefreshWriteBody({ seatId: model.seatId, entryId: model.entryId }) : null;
+  if (!body || typeof post !== 'function') return null;
+  const out = await post(TOOL_ACCESS_TOOL_REFRESH_PATH, body);
+  return applyToolRefreshPreview(model, out);
+}
+
+export async function confirmToolAccessRefresh({ post, model } = {}) {
+  const body = model ? toolRefreshWriteBody({ seatId: model.seatId, entryId: model.entryId, confirm: true }) : null;
+  if (!body || typeof post !== 'function') return null;
+  const out = await post(TOOL_ACCESS_TOOL_REFRESH_PATH, body);
+  return applyToolRefreshConfirm(model, out);
 }
