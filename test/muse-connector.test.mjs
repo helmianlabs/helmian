@@ -12,6 +12,8 @@ import {
   assembleAgents,
   assembleMemoryEntry,
   assembleMemorySearchResults,
+  assembleServerStatus,
+  assembleWorkspaceState,
   createMuseConnectorData,
   createMuseConnectorKeyStore,
   createMuseConnectorRpc,
@@ -19,6 +21,7 @@ import {
   hashMuseConnectorKey,
   isMuseConnectorKeyShape,
   parseMemoryId,
+  recordedAgeSeconds,
   sharedMemorySnippet,
 } from '../src/cloud/muse-connector.mjs';
 
@@ -163,14 +166,15 @@ test('key store fails soft (503) before sql/087 is applied', async () => {
 
 // --- the RPC surface ---
 
-test('tools/list returns exactly the four read tools, with no tenant parameter anywhere', async () => {
+test('tools/list returns exactly the six read tools, with no tenant parameter anywhere', async () => {
   const { rpc } = makeRpc();
   const { status, body } = await call(rpc, TROY, 'tools/list');
   assert.equal(status, 200);
   const names = body.result.tools.map((tool) => tool.name);
-  assert.deepEqual(names, ['list_agents', 'agent_health', 'shared_memory_search', 'shared_memory_read']);
+  assert.deepEqual(names, ['list_agents', 'agent_health', 'shared_memory_search', 'shared_memory_read', 'workspace_state', 'server_status']);
   assert.deepEqual(body.result.tools, [...MUSE_CONNECTOR_TOOLS]);
   assert.ok(!JSON.stringify(body.result.tools).includes('tenant'), 'no tool may take a tenant parameter');
+  assert.ok(!names.includes('guard_status'), 'guard_status stays out of version 1: its gate failed (settings live in the extension, not server-side)');
   const search = body.result.tools.find((tool) => tool.name === 'shared_memory_search');
   assert.match(search.description, /20/, 'the search bound is named in the tool description');
 });
@@ -384,6 +388,234 @@ test('memory assembly helpers shape store rows directly', () => {
   assert.equal(parseMemoryId(2.5), null);
   assert.equal(parseMemoryId('1e3'), null);
   assert.equal(parseMemoryId('9007199254740993'), null, 'beyond the safe range is refused');
+});
+
+// --- the Bite 3 tools: workspace_state and server_status ---
+//
+// Fixtures in the shapes the data reader returns: the workspace row
+// as sql/004 stores it, tool account rows as sql/061 stores them,
+// presence rows in the presence store's camelCase shape (the same
+// fixture Bite 1 uses), and desktop link / watch offer rows in
+// their pg shapes (snake_case, as the connector's own SQL selects
+// them). Tenant B holds lookalike rows whose labels must never
+// cross into Troy's answers.
+
+const WORKSPACE_ROWS = {
+  [TROY]: { display_name: 'Helmian', created_at: new Date('2026-07-27T00:00:00Z') },
+  [OTHER]: { display_name: 'Tenant B workspace', created_at: new Date('2026-08-01T00:00:00Z') },
+};
+
+const WORKSPACE_ACCOUNT_ROWS = {
+  [TROY]: [
+    { scope_id: 'workspace', service_id: 'notion', account_label: 'troy-notion', state: 'verified' },
+  ],
+  [OTHER]: [
+    { scope_id: 'workspace', service_id: 'github', account_label: 'tenant-b-must-not-leak', state: 'verified' },
+  ],
+};
+
+function fixtureServerStatus(tenantId) {
+  if (tenantId === OTHER) {
+    return {
+      presence: fixtureSnapshot(OTHER).presence,
+      links: [
+        { label: 'Tenant B PC', created_at: new Date('2026-08-01T00:00:00Z'), linked_at: new Date('2026-08-01T01:00:00Z'), last_used_at: new Date(Date.now() - 120_000), revoked_at: null },
+      ],
+      offers: [],
+    };
+  }
+  return {
+    presence: fixtureSnapshot(TROY).presence,
+    links: [
+      { label: 'Studio PC', created_at: new Date('2026-10-01T00:00:00Z'), linked_at: new Date('2026-10-01T01:00:00Z'), last_used_at: new Date(Date.now() - 60_000), revoked_at: null },
+      { label: 'Old laptop', created_at: new Date('2026-09-01T00:00:00Z'), linked_at: new Date('2026-09-01T01:00:00Z'), last_used_at: null, revoked_at: new Date('2026-10-15T00:00:00Z') },
+    ],
+    offers: [
+      { provider_name: 'mistral', url: 'https://chat.mistral.ai/chat', updated_at: new Date(Date.now() - 5_000), expires_at: new Date(Date.now() + 40_000) },
+      { provider_name: 'grok', url: 'https://grok.com/', updated_at: new Date(Date.now() - 90_000), expires_at: new Date(Date.now() - 45_000) },
+    ],
+  };
+}
+
+function makeRpc3() {
+  const seen = [];
+  const rpc = createMuseConnectorRpc({
+    data: {
+      snapshot: async (tenantId) => { seen.push(['snapshot', tenantId]); return fixtureSnapshot(tenantId); },
+      searchMemory: async () => [],
+      readMemory: async () => null,
+      workspace: async (tenantId) => { seen.push(['workspace', tenantId]); return WORKSPACE_ROWS[tenantId] ?? null; },
+      workspaceToolAccounts: async (tenantId) => { seen.push(['workspaceAccounts', tenantId]); return WORKSPACE_ACCOUNT_ROWS[tenantId] ?? []; },
+      serverStatus: async (tenantId) => { seen.push(['serverStatus', tenantId]); return fixtureServerStatus(tenantId); },
+    },
+  });
+  return { rpc, seen };
+}
+
+test('initialize reports the widened server version', async () => {
+  const { rpc } = makeRpc();
+  const { body } = await call(rpc, TROY, 'initialize', { protocolVersion: '2025-03-26', capabilities: {} });
+  assert.equal(body.result.serverInfo.version, '1.2.0');
+});
+
+test('workspace_state serves the recorded workspace, the roster size and account names from both scopes', async () => {
+  const { rpc, seen } = makeRpc3();
+  const { status, body } = await call(rpc, TROY, 'tools/call', { name: 'workspace_state', arguments: {} });
+  assert.equal(status, 200);
+  const payload = body.result.structuredContent;
+  assert.equal(payload.workspace.name, 'Helmian');
+  assert.equal(payload.workspace.createdAt, '2026-07-27T00:00:00.000Z');
+  assert.equal(payload.agents.total, assembleAgents(fixtureSnapshot(TROY)).length);
+  assert.equal(payload.agents.present, 3, 'claude, openai and mistral stand connected in the fixture; grok does not');
+  const notion = payload.connectedAccounts.find((a) => a.serviceId === 'notion');
+  assert.deepEqual(notion, { serviceId: 'notion', accountLabel: 'troy-notion', state: 'verified', scope: 'workspace', agent: null });
+  const github = payload.connectedAccounts.find((a) => a.serviceId === 'github');
+  assert.deepEqual(github, { serviceId: 'github', accountLabel: 'fixture-account', state: 'verified', scope: 'agent', agent: 'claude' });
+  assert.deepEqual(seen.map(([kind]) => kind).sort(), ['snapshot', 'workspace', 'workspaceAccounts']);
+  assert.ok(seen.every(([, tenant]) => tenant === TROY), 'every read carries the key tenant and no other');
+});
+
+test('workspace_state plan field reports the absence plainly, never a guessed tier', async () => {
+  const { rpc } = makeRpc3();
+  const { body } = await call(rpc, TROY, 'tools/call', { name: 'workspace_state', arguments: {} });
+  const plan = body.result.structuredContent.plan;
+  assert.equal(plan.state, 'not_recorded');
+  assert.match(plan.detail, /no plan or subscription/);
+  assert.ok(!/trial|free|pro|solo/i.test(JSON.stringify(body.result.structuredContent.workspace)), 'no tier word may dress up the workspace record');
+});
+
+test('workspace_state from another tenant sees only its own workspace and accounts', async () => {
+  const { rpc } = makeRpc3();
+  const { body } = await call(rpc, OTHER, 'tools/call', { name: 'workspace_state', arguments: {} });
+  const payload = body.result.structuredContent;
+  assert.equal(payload.workspace.name, 'Tenant B workspace');
+  assert.deepEqual(payload.connectedAccounts.map((a) => a.accountLabel), ['tenant-b-must-not-leak']);
+  const whole = JSON.stringify(body);
+  assert.ok(!whole.includes('troy-notion') && !whole.includes('fixture-account'), "Troy's account names must never cross");
+  assert.ok(!whole.includes(TROY) && !whole.includes(OTHER), 'no tenant id rides an answer');
+  assert.ok(!/credential|server_ref|serverRef/.test(whole), 'no credential-shaped field may appear');
+});
+
+test('workspace_state refuses selectors and unknown arguments, reading nothing', async () => {
+  const { rpc, seen } = makeRpc3();
+  const bySelector = await call(rpc, TROY, 'tools/call', { name: 'workspace_state', arguments: { workspaceId: OTHER } });
+  assert.match(bySelector.body.error.message, /tenant selector/);
+  const byUnknown = await call(rpc, TROY, 'tools/call', { name: 'workspace_state', arguments: { plan: 'pro' } });
+  assert.match(byUnknown.body.error.message, /Unknown argument/);
+  assert.equal(seen.length, 0, 'a refused call must not read any data');
+});
+
+test('server_status serves devices, the heartbeat rollup and live browser pages, each with its age', async () => {
+  const { rpc, seen } = makeRpc3();
+  const { status, body } = await call(rpc, TROY, 'tools/call', { name: 'server_status', arguments: {} });
+  assert.equal(status, 200);
+  const payload = body.result.structuredContent;
+  assert.equal(payload.heartbeat.providersReporting, 4);
+  assert.equal(payload.heartbeat.providersConnected, 3);
+  assert.equal(payload.heartbeat.lastReportAt, '2026-11-12T23:10:00.000Z', 'the freshest fixture presence stamp');
+  assert.ok(Number.isInteger(payload.heartbeat.ageSeconds) && payload.heartbeat.ageSeconds >= 0);
+  const studio = payload.devices.find((d) => d.label === 'Studio PC');
+  assert.equal(studio.revoked, false);
+  assert.equal(studio.linkedAt, '2026-10-01T01:00:00.000Z');
+  assert.ok(studio.lastUsedAgeSeconds >= 55 && studio.lastUsedAgeSeconds <= 75, 'the last-used age is computed at answer time');
+  const old = payload.devices.find((d) => d.label === 'Old laptop');
+  assert.equal(old.revoked, true);
+  assert.equal(old.lastUsedAt, null);
+  assert.equal(old.lastUsedAgeSeconds, null);
+  assert.deepEqual(payload.liveBrowserPages.map((p) => p.provider), ['mistral'], 'the expired grok offer is not a live page, whatever the reader handed over');
+  assert.equal(payload.liveBrowserPages[0].url, 'https://chat.mistral.ai/chat');
+  assert.ok(payload.liveBrowserPages[0].ageSeconds >= 0 && payload.liveBrowserPages[0].ageSeconds <= 15);
+  assert.deepEqual(payload.notRecorded, ['systemd service states', 'disk space', 'memory']);
+  assert.deepEqual(seen, [['serverStatus', TROY]]);
+  const whole = JSON.stringify(body);
+  assert.ok(!/code_hash|token_hash/.test(whole), 'the desktop link hashes must never ride an answer');
+  assert.ok(!whole.includes('Tenant B PC') && !whole.includes(TROY), "another tenant's devices and any tenant id stay out");
+});
+
+test('server_status refuses selectors, reading nothing', async () => {
+  const { rpc, seen } = makeRpc3();
+  const { body } = await call(rpc, TROY, 'tools/call', { name: 'server_status', arguments: { tenant: OTHER } });
+  assert.match(body.error.message, /tenant selector/);
+  assert.equal(seen.length, 0);
+});
+
+test('server status assembly computes exact ages from the injected clock', () => {
+  const NOW = Date.parse('2026-11-14T12:00:00Z');
+  const payload = assembleServerStatus({
+    presence: [
+      { provider: 'claude', connected: true, updatedAt: new Date(NOW - 30_000) },
+      { provider: 'grok', connected: false, updatedAt: new Date(NOW - 90_000) },
+    ],
+    links: [
+      { label: 'PC', created_at: new Date(NOW - 86_400_000), linked_at: new Date(NOW - 86_000_000), last_used_at: new Date(NOW - 3_600_000), revoked_at: null },
+    ],
+    offers: [
+      { provider_name: 'mistral', url: 'https://chat.mistral.ai/chat', updated_at: new Date(NOW - 10_000), expires_at: new Date(NOW + 35_000) },
+      { provider_name: 'grok', url: 'https://grok.com/', updated_at: new Date(NOW - 50_000), expires_at: new Date(NOW - 5_000) },
+    ],
+  }, NOW);
+  assert.equal(payload.recordedAt, '2026-11-14T12:00:00.000Z');
+  assert.equal(payload.heartbeat.lastReportAt, '2026-11-14T11:59:30.000Z');
+  assert.equal(payload.heartbeat.ageSeconds, 30);
+  assert.equal(payload.heartbeat.providersReporting, 2);
+  assert.equal(payload.heartbeat.providersConnected, 1);
+  assert.equal(payload.devices[0].lastUsedAgeSeconds, 3600);
+  assert.deepEqual(payload.liveBrowserPages.map((p) => [p.provider, p.ageSeconds]), [['mistral', 10]]);
+  const empty = assembleServerStatus({}, NOW);
+  assert.deepEqual(empty.heartbeat, { lastReportAt: null, ageSeconds: null, providersReporting: 0, providersConnected: 0 });
+  assert.deepEqual(empty.devices, []);
+  assert.deepEqual(empty.liveBrowserPages, []);
+});
+
+test('workspace state assembly holds the reduced shape directly', () => {
+  const payload = assembleWorkspaceState({
+    workspace: null,
+    snapshot: fixtureSnapshot(TROY),
+    workspaceAccounts: [
+      { scope_id: 'workspace', service_id: 'notion', account_label: 'troy-notion', state: 'verified' },
+      { scope_id: 'workspace', service_id: 'notion', account_label: 'troy-notion', state: 'verified' },
+    ],
+  });
+  assert.equal(payload.workspace.name, null, 'a missing workspace row reads as nulls, not an invented name');
+  assert.equal(payload.workspace.createdAt, null);
+  assert.equal(payload.plan.state, 'not_recorded');
+  assert.equal(payload.connectedAccounts.filter((a) => a.serviceId === 'notion').length, 1, 'an exact duplicate row is one fact');
+  const bothScopes = assembleWorkspaceState({
+    workspace: WORKSPACE_ROWS[TROY],
+    snapshot: { presence: [], connections: [], toolAccounts: [{ scope_id: 'claude', service_id: 'notion', account_label: 'troy-notion', state: 'verified' }] },
+    workspaceAccounts: [{ scope_id: 'workspace', service_id: 'notion', account_label: 'troy-notion', state: 'verified' }],
+  });
+  assert.equal(bothScopes.connectedAccounts.length, 2, 'the same account name in both scopes is two facts, kept apart by scope');
+});
+
+test('recordedAgeSeconds ages stamps and refuses nonsense', () => {
+  const NOW = Date.parse('2026-11-14T12:00:00Z');
+  assert.equal(recordedAgeSeconds(new Date(NOW - 10_000), NOW), 10);
+  assert.equal(recordedAgeSeconds(new Date(NOW + 5_000), NOW), 0, 'a stamp in the future ages to zero, never negative');
+  assert.equal(recordedAgeSeconds(null, NOW), null);
+  assert.equal(recordedAgeSeconds('not-a-date', NOW), null);
+});
+
+test('the data reader fences the Bite 3 reads to the key tenant and never selects a secret column', async () => {
+  const recorded = [];
+  const client = {
+    query: async (text) => { recorded.push(String(text)); return { rows: [], rowCount: 0 }; },
+    release: () => {},
+  };
+  const pool = {
+    query: async (text) => { recorded.push(String(text)); return { rows: [], rowCount: 0 }; },
+    connect: async () => client,
+  };
+  const data = createMuseConnectorData(pool);
+  assert.equal(await data.workspace(TROY), null);
+  assert.deepEqual(await data.workspaceToolAccounts(TROY), []);
+  assert.deepEqual(await data.serverStatus(TROY), { presence: [], links: [], offers: [] });
+  const all = recorded.join('\n');
+  assert.match(all, /from helmion\.tenants where tenant_id = \$1/);
+  assert.match(all, /scope_kind = 'workspace'/);
+  assert.match(all, /from helmion\.desktop_links/);
+  assert.match(all, /expires_at > clock_timestamp\(\)/);
+  assert.ok(!/code_hash|token_hash|credential_reference|server_ref/.test(all), 'no Bite 3 read may select a hash or credential column');
 });
 
 // --- the HTTP route delegate ---
