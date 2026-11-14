@@ -613,7 +613,28 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           return null;
         }
       };
-      const result = await tx(actor, async (client) => {
+      // Envoy 504 fix, bite C: the poll's reads ride ONE short
+      // transaction, and no transaction is held open across the
+      // dispatch computation. The read below fetches the claim-gate
+      // state, the channel configs, and — for the channels that seat
+      // a wanted provider, the only ones whose messages were ever
+      // read — ONE bulk lateral read carrying every such channel's
+      // row and its newest 40 messages (the old loop paid two
+      // sequential queries per channel for the same data). The
+      // computation then runs with no transaction open, so the side
+      // reads it awaits (notebook, knowledge base, skills, connector
+      // arming — pool reads all) never hold a pooled connection
+      // hostage while they run. The refusal writes the computation
+      // decides on are collected as insert specs in the order the
+      // old loop wrote them and land in a second short transaction
+      // below; if the computation throws first, nothing is written
+      // at all — the same net outcome the old single transaction's
+      // rollback produced. The payload is unchanged: same due set,
+      // same order, same shape.
+      const insertSpecs = [];
+      const withheld = new Map();
+      const work = [];
+      const { state, seating } = await tx(actor, async (client) => {
         // Claim gate (tenant-agent-state.mjs): once a tenant has ANY
         // readiness signal — a registered runner, a presence report, a
         // stored connection — those signals are authoritative: work is
@@ -624,14 +645,11 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         // own runners resolve credentials locally); its claiming is
         // exactly what it was before this gate existed.
         const state = await (agentStateImpl ?? tenantAgentStateOn)(client, actor.tenantId);
-        const gate = claimGateFor(state);
-        const withheld = new Map();
         const cfgRows = await client.query(
           `select distinct on (channel_id) channel_id, body from helmion.envoy_messages where tenant_id=$1 and author_subject=$2 order by channel_id, created_at desc, id desc`,
           [actor.tenantId, CONFIG_SUBJECT],
         );
-        const since = new Date(now() - WORK_WINDOW_MS).toISOString();
-        const work = [];
+        const seating = [];
         for (const cfgRow of cfgRows.rows) {
           const config = parseConfig(cfgRow.body);
           if (!config) continue;
@@ -642,272 +660,325 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             return Boolean(c && wantedStd.includes(c.provider));
           };
           if (!config.agents.some(isWanted)) continue;
-          const channel = await channelRow(client, actor.tenantId, String(cfgRow.channel_id));
-          const recent = await client.query(
-            `select ${MSG_COLS} from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject <> $3 and created_at > $4 order by created_at desc, id desc limit 40`,
-            [actor.tenantId, channel.id, CONFIG_SUBJECT, since],
+          seating.push({ channelId: String(cfgRow.channel_id), config, customByHandle, isWanted, channel: null, rows: [] });
+        }
+        const since = new Date(now() - WORK_WINDOW_MS).toISOString();
+        // Only well-formed ids can ride the bulk read. The old
+        // per-channel read rejected a malformed id itself
+        // (ENVOY_CHANNEL_INVALID); the computation below still
+        // raises exactly that, in config order, for any seating
+        // entry the bulk read could not carry.
+        const bulkIds = seating.filter((s) => /^[0-9a-f-]{36}$/i.test(s.channelId)).map((s) => s.channelId);
+        if (bulkIds.length) {
+          const joined = await client.query(
+            `select c.id as ch_id, c.slug as ch_slug, c.title as ch_title, c.kind as ch_kind, m.id, m.channel_id, m.author_subject, m.author_kind, m.body, m.idempotency_key, m.created_at, m.metadata
+             from helmion.envoy_channels c
+             left join lateral (
+               select ${MSG_COLS} from helmion.envoy_messages
+               where tenant_id=$1 and channel_id=c.id and author_subject <> $3 and created_at > $4
+               order by created_at desc, id desc limit 40
+             ) m on true
+             where c.tenant_id=$1 and c.id = any($2::uuid[])
+             order by c.id, m.created_at desc, m.id desc`,
+            [actor.tenantId, bulkIds, CONFIG_SUBJECT, since],
           );
-          const rows = recent.rows.reverse();
-          // Librarian naming candidate: a channel still carrying a
-          // generic fallback title is named from its earliest human
-          // message in this window at this dispatch (post-commit,
-          // compare-and-swap on the observed title — a human-set
-          // name is never overwritten, and once named the title is
-          // no longer generic, so this fires once).
-          if (isGenericChannelTitle(channel.title) && !namingJobs.has(String(channel.id))) {
-            const firstHuman = rows.find((r) => r.author_kind === 'human');
-            if (firstHuman && deriveChannelName(String(firstHuman.body ?? ''))) {
-              namingJobs.set(String(channel.id), { channelId: String(channel.id), observedTitle: channel.title, fromBody: String(firstHuman.body ?? '') });
-            }
+          const byId = new Map(seating.map((s) => [s.channelId, s]));
+          for (const row of joined.rows) {
+            const entry = byId.get(String(row.ch_id));
+            if (!entry) continue;
+            if (!entry.channel) entry.channel = { id: row.ch_id, slug: row.ch_slug, title: row.ch_title, kind: row.ch_kind };
+            if (row.id !== null && row.id !== undefined) entry.rows.push(row);
           }
-          const answered = new Set(rows.filter((r) => String(r.idempotency_key).startsWith('reply:')).map((r) => `${r.author_subject}|${String(r.idempotency_key).slice(6)}`));
-          // Count consecutive agent turns since the last human message for Free-Willy debate mode.
-          let roundTurns = 0;
-          for (const r of rows) {
-            if (r.author_kind === 'human') roundTurns = 0;
-            else if (r.author_kind === 'agent') roundTurns += 1;
-          }
-          // Only messages after the agent joined count.
-          for (const row of rows) {
-            const message = messageOut(row);
-            // Guard spine bite 2: a Guard refusal record (the outcome
-            // rides in the message metadata, spread onto the message by
-            // messageOut) is terminal. It is never itself a work source,
-            // so a refusal can never route, join a debate, or be
-            // re-evaluated as an ask.
-            if (message.guard) continue;
-      // A setup question Maestro answered from the guide
-      // (helm-kb.mjs) is never work for a seat: the ask was
-      // answered, word for word, and handing it on would make a
-      // crew member answer setup the product already answered.
-      // The mark is the human message's metadata.helmKb, set by
-      // the answer hook when it posted.
-      if (message.authorKind === 'human' && message.metadata?.helmKb) continue;
-            const at = new Date(row.created_at).getTime();
-            // Maestro always-on (Troy's ruling, 2026-11-09): desk-style
-            // dispatch is how EVERY channel routes now — an unnamed
-            // human send reaches the channel's crew, a named send picks
-            // the named seat. The desk flag and the retired per-channel
-            // maestroFollow flag are no longer consulted here: a stored
-            // maestroFollow:false must not restore the old silence.
-            // A private agent room (kind 'agent') seats one agent, so
-            // its crew is that agent either way.
-            let due = agentsToAnswer(message, config.agents, {
-              desk: true,
-              room: channel.kind === 'agent',
-              debateMode: config.debateMode ?? 'off',
-              roundTurns,
-              maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
-              customAgents: config.customAgents ?? [],
-            }).filter((p) => isWanted(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
-            if (gate) {
-              const gateAllows = (p) => {
-                if (gate.has(p)) return true;
-                const c = customByHandle.get(p);
-                return Boolean(c && gate.has(c.provider));
-              };
-              for (const p of due) if (!gateAllows(p)) withheld.set(p, state.reason ?? 'no-provider');
-              due = due.filter(gateAllows);
-            }
-            if (!due.length) continue;
-            // Guard spine, bites 1 + 2: the ask is classified as a typed
-            // action (envoy-actions.mjs) and, when it is typed, evaluated
-            // through the governance kernel (envoy-guard.mjs) BEFORE the
-            // work item is handed to an executor. An allow dispatches
-            // unchanged apart from the evaluation record riding along;
-            // a refuse dispatches nothing — each due seat's reply is the
-            // refusal, written in its name with the outcome record in
-            // its metadata, which also marks the ask answered for that
-            // seat so no later poll can hand it out again. The chat
-            // (null) action is never evaluated and carries no record.
-            // Every typed outcome, allow or refuse, also becomes a
-            // Guard finding after commit (bite 3, findingJobs below).
-            const action = classifySeatAsk(message.body);
-            const evaluation = evaluateSeatAction(action, { body: message.body, workspace: guardWorkspace });
-            if (evaluation?.verdict === 'refuse') {
-              const text = guardRefusalText(evaluation);
-              for (const p of due) {
-                const { row: refusal, replayed } = await insertMessage(client, {
-                  tenantId: actor.tenantId,
-                  channelId: String(channel.id),
-                  subject: agentSubject(p, config.customAgents ?? []),
-                  kind: 'agent',
-                  body: text,
-                  key: `reply:${message.id}`,
-                  metadata: { guard: evaluation },
-                });
-                if (refusal && !replayed) refusalRows.push(refusal);
-                findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
-              }
-              // A refused ask was still dispatched — the librarian
-              // files it with the Guard's decision riding along.
-              if (message.authorKind === 'human') {
-                librarianJobs.push({ channelId: String(channel.id), channelSlug: channel.slug, channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, seats: due, guardDecision: evaluation?.verdict ?? null, excerpt: message.body, at: new Date(now()).toISOString() });
-                // …and into the knowledge base as an open incident:
-                // a refusal is a wall an ask hit; filed once per
-                // refused message (the key makes replays no-ops),
-                // categorized by the filing engine, awaiting the
-                // review that solves or supersedes it.
-                incidentJobs.push({ key: `guard-ask:${message.id}`, title: `Guard refused an ask in ${channel.title}`, mistake: message.body, actor: message.authorSubject, source: 'guard', evidence: { channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, verdict: 'refuse' } });
-              }
-              continue;
-            }
-            // Helmian Site Guard (site-guard.mjs, bite A1): the
-            // intake screen. It runs here — after the Guard spine's
-            // evaluation above, so a spine refusal keeps the spine's
-            // own record untouched, and before the work item is
-            // built, so nothing reaches a seat unscreened. Every due
-            // message is screened, whatever road it arrived by (the
-            // desk, a bridge, a debate turn): the spine judges typed
-            // asks, but content itself was never screened — a chat
-            // message carrying prompt-injection markers, or a
-            // kernel-shaped destruction the ask classifier's subset
-            // never types, passed with no record at all.
-            // A flag (the prompt-injection class) is witnessed into
-            // the Guard findings feed after commit and changes
-            // nothing about the turn. The destructive class is the
-            // one stop — the Site Guard intake stop: no work item is
-            // handed out, and each due seat's reply is the Site
-            // Guard's refusal, written in its name with the stop
-            // record in its metadata, marking the message answered
-            // for that seat exactly as a spine refusal does.
-            // Helmian Site Guard (site-guard.mjs, bite A2): the
-            // intake rate limit. Every due message is observed
-            // once, per tenant and per sender, BEFORE the content
-            // screen: volume is the cheaper signal, and a sender
-            // already over the stop line does not reach the screen
-            // at all. A spine-refused ask never arrives here (it
-            // continued above), so refused asks do not count toward
-            // a sender's rate — the limit judges delivered intake,
-            // the same set the screen judges. The flag crossing is
-            // witnessed after commit and the turn proceeds exactly
-            // as before; the stop line is the rate stop: no work
-            // item is handed out, and each due seat's reply is the
-            // Site Guard's rate refusal, written in its name with
-            // the stop record in its metadata, marking the message
-            // answered for that seat exactly as the intake stop
-            // does. Any later message from the same sender is
-            // stopped the same way while its count stands over the
-            // line, and dispatched again once the window cools.
-            const rateVerdict = siteGuardRate.observe({
-              tenantId: actor.tenantId,
-              senderKey: siteGuardSenderKey({ authorSubject: message.authorSubject, authorKind: message.authorKind }),
-            });
-            if (rateVerdict.tripped) {
-              siteGuardRateJobs.push({ verdict: rateVerdict, tenantId: actor.tenantId, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind });
-            }
-            if (rateVerdict.stopped) {
-              const text = siteGuardRateRefusalText(rateVerdict);
-              for (const p of due) {
-                const { row: refusal, replayed } = await insertMessage(client, {
-                  tenantId: actor.tenantId,
-                  channelId: String(channel.id),
-                  subject: agentSubject(p, config.customAgents ?? []),
-                  kind: 'agent',
-                  body: text,
-                  key: `reply:${message.id}`,
-                  metadata: { guard: siteGuardRateStopRecord(rateVerdict) },
-                });
-                if (refusal && !replayed) refusalRows.push(refusal);
-              }
-              continue;
-            }
-            const screening = screenIntakeContent(message.body);
-            if (screening.classes.length) {
-              siteGuardJobs.push({ screening, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind });
-              if (screening.blocked) {
-                const text = siteGuardRefusalText(screening);
-                for (const p of due) {
-                  const { row: refusal, replayed } = await insertMessage(client, {
-                    tenantId: actor.tenantId,
-                    channelId: String(channel.id),
-                    subject: agentSubject(p, config.customAgents ?? []),
-                    kind: 'agent',
-                    body: text,
-                    key: `reply:${message.id}`,
-                    metadata: { guard: siteGuardStopRecord(screening) },
-                  });
-                  if (refusal && !replayed) refusalRows.push(refusal);
-                }
-                continue;
-              }
-            }
-            const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
-            const notebook = await loadNotebook();
-            const knowledgeBase = await loadKnowledgeBase();
-            // Skills ride only when the message names them: resolve
-            // its toggles against the records this poll read, clamped
-            // to each record's own scope, for the seats due here. A
-            // failed read leaves the item skill-less (loadSkillRecords
-            // returned null); an untouched message never gains the
-            // field, so its work item is exactly what it has always
-            // been.
-            const skillToggles = Array.isArray(message.metadata?.skills) ? message.metadata.skills : [];
-            let skills;
-            if (skillToggles.length) {
-              const records = await loadSkillRecords(skillToggles.map((t) => t.skillId));
-              if (records) skills = resolveDispatchSkills(skillToggles, records, due);
-            }
-            // Connector arming rides only on human asks: the
-            // connections a turn may use are the AUTHOR's own, and
-            // an agent-authored debate row names no person whose
-            // connections they would be. The pair set is the
-            // channel's standing armed set unioned with the
-            // message's own toggles, filtered to the seats due here
-            // (connector-arming-dispatch.mjs).
-            let armingRecords;
-            if (message.authorKind === 'human') {
-              const pairs = armingPairsForDispatch({
-                armedConnectors: config.armedConnectors,
-                messageConnectors: message.metadata?.connectors,
-                dueProviders: due,
-                customAgents: config.customAgents ?? [],
-              });
-              if (pairs.length) armingRecords = await loadArmingRecords(String(channel.id), message.authorSubject, pairs);
-            }
-            work.push({
-              channel: {
-                id: String(channel.id),
-                slug: channel.slug,
-                title: channel.title,
-                linkedToDiscord: Boolean(config.discord),
-                linkedToSlack: Boolean(config.slack),
-                linkedToGithub: Boolean(config.github),
-                debateMode: config.debateMode ?? 'off',
-                maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
-              },
-              members: config.agents,
-              ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
-              ...(notebook ? { notebook } : {}),
-              ...(knowledgeBase ? { knowledgeBase } : {}),
-              ...(skills?.length ? { skills } : {}),
-              ...(armingRecords?.length ? { connectorConnections: armingRecords } : {}),
-              message,
-              action,
-              ...(evaluation ? { evaluation } : {}),
-              agents: due,
-              context,
-            });
-            if (evaluation) {
-              for (const p of due) {
-                findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
-              }
-            }
-            // Librarian: file every dispatched human ask (the chat
-            // action included — an untyped ask is still an ask the
-            // channel's memory should carry). Agent turns in debate
-            // mode are not human asks and are not filed.
-            if (message.authorKind === 'human') {
-              librarianJobs.push({ channelId: String(channel.id), channelSlug: channel.slug, channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, seats: due, guardDecision: evaluation?.verdict ?? null, excerpt: message.body, at: new Date(now()).toISOString() });
-            }
+          // The per-channel read came back newest-first and the
+          // walk runs oldest-first; keep that exact order.
+          for (const entry of seating) entry.rows.reverse();
+        }
+        return { state, seating };
+      });
+      const gate = claimGateFor(state);
+      for (const entry of seating) {
+        const { config, customByHandle, isWanted } = entry;
+        // The old per-channel read's discipline, in its order and
+        // before any refusal is written (the write transaction has
+        // not opened yet): a malformed id is a 400, a channel the
+        // bulk read did not return is a 404, and either fails the
+        // poll with nothing persisted, exactly as the old loop's
+        // rollback left it.
+        if (!/^[0-9a-f-]{36}$/i.test(entry.channelId)) throw fail(400, 'ENVOY_CHANNEL_INVALID');
+        if (!entry.channel) throw fail(404, 'ENVOY_CHANNEL_NOT_FOUND');
+        const channel = entry.channel;
+        const rows = entry.rows;
+        // Librarian naming candidate: a channel still carrying a
+        // generic fallback title is named from its earliest human
+        // message in this window at this dispatch (post-commit,
+        // compare-and-swap on the observed title — a human-set
+        // name is never overwritten, and once named the title is
+        // no longer generic, so this fires once).
+        if (isGenericChannelTitle(channel.title) && !namingJobs.has(String(channel.id))) {
+          const firstHuman = rows.find((r) => r.author_kind === 'human');
+          if (firstHuman && deriveChannelName(String(firstHuman.body ?? ''))) {
+            namingJobs.set(String(channel.id), { channelId: String(channel.id), observedTitle: channel.title, fromBody: String(firstHuman.body ?? '') });
           }
         }
-        return {
-          work: work.slice(0, 20),
-          agentState: { state: state.state, gated: state.gated },
-          ...(withheld.size ? { withheld: [...withheld].map(([provider, reason]) => ({ provider, reason })) } : {}),
-        };
-      });
+        const answered = new Set(rows.filter((r) => String(r.idempotency_key).startsWith('reply:')).map((r) => `${r.author_subject}|${String(r.idempotency_key).slice(6)}`));
+        // Count consecutive agent turns since the last human message for Free-Willy debate mode.
+        let roundTurns = 0;
+        for (const r of rows) {
+          if (r.author_kind === 'human') roundTurns = 0;
+          else if (r.author_kind === 'agent') roundTurns += 1;
+        }
+        // Only messages after the agent joined count.
+        for (const row of rows) {
+          const message = messageOut(row);
+          // Guard spine bite 2: a Guard refusal record (the outcome
+          // rides in the message metadata, spread onto the message by
+          // messageOut) is terminal. It is never itself a work source,
+          // so a refusal can never route, join a debate, or be
+          // re-evaluated as an ask.
+          if (message.guard) continue;
+    // A setup question Maestro answered from the guide
+    // (helm-kb.mjs) is never work for a seat: the ask was
+    // answered, word for word, and handing it on would make a
+    // crew member answer setup the product already answered.
+    // The mark is the human message's metadata.helmKb, set by
+    // the answer hook when it posted.
+    if (message.authorKind === 'human' && message.metadata?.helmKb) continue;
+          const at = new Date(row.created_at).getTime();
+          // Maestro always-on (Troy's ruling, 2026-11-09): desk-style
+          // dispatch is how EVERY channel routes now — an unnamed
+          // human send reaches the channel's crew, a named send picks
+          // the named seat. The desk flag and the retired per-channel
+          // maestroFollow flag are no longer consulted here: a stored
+          // maestroFollow:false must not restore the old silence.
+          // A private agent room (kind 'agent') seats one agent, so
+          // its crew is that agent either way.
+          let due = agentsToAnswer(message, config.agents, {
+            desk: true,
+            room: channel.kind === 'agent',
+            debateMode: config.debateMode ?? 'off',
+            roundTurns,
+            maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
+            customAgents: config.customAgents ?? [],
+          }).filter((p) => isWanted(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
+          if (gate) {
+            const gateAllows = (p) => {
+              if (gate.has(p)) return true;
+              const c = customByHandle.get(p);
+              return Boolean(c && gate.has(c.provider));
+            };
+            for (const p of due) if (!gateAllows(p)) withheld.set(p, state.reason ?? 'no-provider');
+            due = due.filter(gateAllows);
+          }
+          if (!due.length) continue;
+          // Guard spine, bites 1 + 2: the ask is classified as a typed
+          // action (envoy-actions.mjs) and, when it is typed, evaluated
+          // through the governance kernel (envoy-guard.mjs) BEFORE the
+          // work item is handed to an executor. An allow dispatches
+          // unchanged apart from the evaluation record riding along;
+          // a refuse dispatches nothing — each due seat's reply is the
+          // refusal, written in its name with the outcome record in
+          // its metadata, which also marks the ask answered for that
+          // seat so no later poll can hand it out again. The chat
+          // (null) action is never evaluated and carries no record.
+          // Every typed outcome, allow or refuse, also becomes a
+          // Guard finding after commit (bite 3, findingJobs below).
+          const action = classifySeatAsk(message.body);
+          const evaluation = evaluateSeatAction(action, { body: message.body, workspace: guardWorkspace });
+          if (evaluation?.verdict === 'refuse') {
+            const text = guardRefusalText(evaluation);
+            for (const p of due) {
+              insertSpecs.push({
+                tenantId: actor.tenantId,
+                channelId: String(channel.id),
+                subject: agentSubject(p, config.customAgents ?? []),
+                kind: 'agent',
+                body: text,
+                key: `reply:${message.id}`,
+                metadata: { guard: evaluation },
+              });
+              findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
+            }
+            // A refused ask was still dispatched — the librarian
+            // files it with the Guard's decision riding along.
+            if (message.authorKind === 'human') {
+              librarianJobs.push({ channelId: String(channel.id), channelSlug: channel.slug, channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, seats: due, guardDecision: evaluation?.verdict ?? null, excerpt: message.body, at: new Date(now()).toISOString() });
+              // …and into the knowledge base as an open incident:
+              // a refusal is a wall an ask hit; filed once per
+              // refused message (the key makes replays no-ops),
+              // categorized by the filing engine, awaiting the
+              // review that solves or supersedes it.
+              incidentJobs.push({ key: `guard-ask:${message.id}`, title: `Guard refused an ask in ${channel.title}`, mistake: message.body, actor: message.authorSubject, source: 'guard', evidence: { channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, verdict: 'refuse' } });
+            }
+            continue;
+          }
+          // Helmian Site Guard (site-guard.mjs, bite A1): the
+          // intake screen. It runs here — after the Guard spine's
+          // evaluation above, so a spine refusal keeps the spine's
+          // own record untouched, and before the work item is
+          // built, so nothing reaches a seat unscreened. Every due
+          // message is screened, whatever road it arrived by (the
+          // desk, a bridge, a debate turn): the spine judges typed
+          // asks, but content itself was never screened — a chat
+          // message carrying prompt-injection markers, or a
+          // kernel-shaped destruction the ask classifier's subset
+          // never types, passed with no record at all.
+          // A flag (the prompt-injection class) is witnessed into
+          // the Guard findings feed after commit and changes
+          // nothing about the turn. The destructive class is the
+          // one stop — the Site Guard intake stop: no work item is
+          // handed out, and each due seat's reply is the Site
+          // Guard's refusal, written in its name with the stop
+          // record in its metadata, marking the message answered
+          // for that seat exactly as a spine refusal does.
+          // Helmian Site Guard (site-guard.mjs, bite A2): the
+          // intake rate limit. Every due message is observed
+          // once, per tenant and per sender, BEFORE the content
+          // screen: volume is the cheaper signal, and a sender
+          // already over the stop line does not reach the screen
+          // at all. A spine-refused ask never arrives here (it
+          // continued above), so refused asks do not count toward
+          // a sender's rate — the limit judges delivered intake,
+          // the same set the screen judges. The flag crossing is
+          // witnessed after commit and the turn proceeds exactly
+          // as before; the stop line is the rate stop: no work
+          // item is handed out, and each due seat's reply is the
+          // Site Guard's rate refusal, written in its name with
+          // the stop record in its metadata, marking the message
+          // answered for that seat exactly as the intake stop
+          // does. Any later message from the same sender is
+          // stopped the same way while its count stands over the
+          // line, and dispatched again once the window cools.
+          const rateVerdict = siteGuardRate.observe({
+            tenantId: actor.tenantId,
+            senderKey: siteGuardSenderKey({ authorSubject: message.authorSubject, authorKind: message.authorKind }),
+          });
+          if (rateVerdict.tripped) {
+            siteGuardRateJobs.push({ verdict: rateVerdict, tenantId: actor.tenantId, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind });
+          }
+          if (rateVerdict.stopped) {
+            const text = siteGuardRateRefusalText(rateVerdict);
+            for (const p of due) {
+              insertSpecs.push({
+                tenantId: actor.tenantId,
+                channelId: String(channel.id),
+                subject: agentSubject(p, config.customAgents ?? []),
+                kind: 'agent',
+                body: text,
+                key: `reply:${message.id}`,
+                metadata: { guard: siteGuardRateStopRecord(rateVerdict) },
+              });
+            }
+            continue;
+          }
+          const screening = screenIntakeContent(message.body);
+          if (screening.classes.length) {
+            siteGuardJobs.push({ screening, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind });
+            if (screening.blocked) {
+              const text = siteGuardRefusalText(screening);
+              for (const p of due) {
+                insertSpecs.push({
+                  tenantId: actor.tenantId,
+                  channelId: String(channel.id),
+                  subject: agentSubject(p, config.customAgents ?? []),
+                  kind: 'agent',
+                  body: text,
+                  key: `reply:${message.id}`,
+                  metadata: { guard: siteGuardStopRecord(screening) },
+                });
+              }
+              continue;
+            }
+          }
+          const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
+          const notebook = await loadNotebook();
+          const knowledgeBase = await loadKnowledgeBase();
+          // Skills ride only when the message names them: resolve
+          // its toggles against the records this poll read, clamped
+          // to each record's own scope, for the seats due here. A
+          // failed read leaves the item skill-less (loadSkillRecords
+          // returned null); an untouched message never gains the
+          // field, so its work item is exactly what it has always
+          // been.
+          const skillToggles = Array.isArray(message.metadata?.skills) ? message.metadata.skills : [];
+          let skills;
+          if (skillToggles.length) {
+            const records = await loadSkillRecords(skillToggles.map((t) => t.skillId));
+            if (records) skills = resolveDispatchSkills(skillToggles, records, due);
+          }
+          // Connector arming rides only on human asks: the
+          // connections a turn may use are the AUTHOR's own, and
+          // an agent-authored debate row names no person whose
+          // connections they would be. The pair set is the
+          // channel's standing armed set unioned with the
+          // message's own toggles, filtered to the seats due here
+          // (connector-arming-dispatch.mjs).
+          let armingRecords;
+          if (message.authorKind === 'human') {
+            const pairs = armingPairsForDispatch({
+              armedConnectors: config.armedConnectors,
+              messageConnectors: message.metadata?.connectors,
+              dueProviders: due,
+              customAgents: config.customAgents ?? [],
+            });
+            if (pairs.length) armingRecords = await loadArmingRecords(String(channel.id), message.authorSubject, pairs);
+          }
+          work.push({
+            channel: {
+              id: String(channel.id),
+              slug: channel.slug,
+              title: channel.title,
+              linkedToDiscord: Boolean(config.discord),
+              linkedToSlack: Boolean(config.slack),
+              linkedToGithub: Boolean(config.github),
+              debateMode: config.debateMode ?? 'off',
+              maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
+            },
+            members: config.agents,
+            ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
+            ...(notebook ? { notebook } : {}),
+            ...(knowledgeBase ? { knowledgeBase } : {}),
+            ...(skills?.length ? { skills } : {}),
+            ...(armingRecords?.length ? { connectorConnections: armingRecords } : {}),
+            message,
+            action,
+            ...(evaluation ? { evaluation } : {}),
+            agents: due,
+            context,
+          });
+          if (evaluation) {
+            for (const p of due) {
+              findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
+            }
+          }
+          // Librarian: file every dispatched human ask (the chat
+          // action included — an untyped ask is still an ask the
+          // channel's memory should carry). Agent turns in debate
+          // mode are not human asks and are not filed.
+          if (message.authorKind === 'human') {
+            librarianJobs.push({ channelId: String(channel.id), channelSlug: channel.slug, channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, seats: due, guardDecision: evaluation?.verdict ?? null, excerpt: message.body, at: new Date(now()).toISOString() });
+          }
+        }
+      }
+      const result = {
+        durability: 'committed',
+        work: work.slice(0, 20),
+        agentState: { state: state.state, gated: state.gated },
+        ...(withheld.size ? { withheld: [...withheld].map(([provider, reason]) => ({ provider, reason })) } : {}),
+      };
+      // The refusal writes, in the order the computation decided
+      // them, in their own short transaction (bite C, see the read
+      // above): the rows land together or not at all, and only a
+      // row this transaction actually wrote joins the publish
+      // below — a replayed row was already published by the poll
+      // that wrote it first, exactly as the in-loop writes behaved.
+      if (insertSpecs.length) {
+        await tx(actor, async (client) => {
+          for (const spec of insertSpecs) {
+            const { row, replayed } = await insertMessage(client, spec);
+            if (row && !replayed) refusalRows.push(row);
+          }
+        });
+      }
       for (const row of refusalRows) publish(actor.tenantId, row, publishImpl);
       // Envoy 504 fix, bite B: everything from here to the return
       // used to run serially on this response path — every poll paid

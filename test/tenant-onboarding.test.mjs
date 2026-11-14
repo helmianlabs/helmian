@@ -263,6 +263,25 @@ function harnessPool(tables) {
         const rows = [...byChannel.values()].map((r) => ({ channel_id: r.channel_id, body: r.body }));
         return { rows, rowCount: rows.length };
       }
+      if (sql.includes('left join lateral')) {
+        // Bite C's bulk dispatch read: every seating channel's row
+        // joined to its newest-40 messages in the window, one
+        // null-message row for a channel whose window is empty.
+        const rows = [];
+        const channels = tables.envoy_channels
+          .filter((r) => r.tenant_id === vals[0] && vals[1].includes(r.id))
+          .sort((x, y) => x.id.localeCompare(y.id));
+        for (const ch of channels) {
+          const head = { ch_id: ch.id, ch_slug: ch.slug, ch_title: ch.title, ch_kind: ch.kind };
+          const msgs = tables.envoy_messages
+            .filter((r) => r.tenant_id === vals[0] && r.channel_id === ch.id && r.author_subject !== vals[2] && r.created_at > vals[3])
+            .sort((x, y) => y.created_at.localeCompare(x.created_at) || y.id.localeCompare(x.id))
+            .slice(0, 40);
+          if (!msgs.length) rows.push({ ...head, id: null, channel_id: null, author_subject: null, author_kind: null, body: null, idempotency_key: null, created_at: null, metadata: null });
+          else for (const m of msgs) rows.push({ ...head, ...m });
+        }
+        return { rows, rowCount: rows.length };
+      }
       if (sql.includes('from helmion.envoy_channels')) {
         const rows = tables.envoy_channels.filter((r) => r.tenant_id === vals[0] && r.id === vals[1]);
         return { rows, rowCount: rows.length };
