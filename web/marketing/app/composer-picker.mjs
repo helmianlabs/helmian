@@ -118,7 +118,7 @@
 //   store and clamps the target to the record's own scope — a message
 //   can narrow a skill, never widen it (DESIGN §2.1/§3.2). Carried
 //   only when at least one skill is armed, the same absence rule.
-import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs?v=6566fcf5c4ebf899';
+import { bestToolConnectionStatus, integrationsModel } from './app-model.mjs?v=5f0051b89a3c34d0';
 
 // Truthful attachment states (see the header): what attaching an entry
 // actually does on the turn, never just what the registry holds.
@@ -169,6 +169,23 @@ export function normalizeAgentKey(value) {
 export function agentEcosystem(value) {
   const key = normalizeAgentKey(value);
   return key ? AGENT_ECOSYSTEMS[key] : null;
+}
+
+// The plugins list's staleness rule (M3 G7): when the list comes
+// from the PC bridge's stored report (bridge-plugin-report.mjs),
+// the read carries the report's age, and past a day the surfaces
+// say the list is the last report rather than presenting it as
+// live — the bridge reports on demand, when a person opens a
+// listing on their PC, so a report older than a day no longer
+// describes the bridge a turn would meet today. One rule, shared
+// by the console picker here and the workspace plus menu
+// (envoy-workspace.mjs imports this helper).
+export const PLUGINS_REPORT_STALE_MS = 24 * 60 * 60 * 1000;
+export function pluginsReportStaleNote(ageMs) {
+  const age = Number(ageMs);
+  return Number.isFinite(age) && age > PLUGINS_REPORT_STALE_MS
+    ? 'This list is your PC bridge’s last report, over a day old.'
+    : null;
 }
 
 export const MAX_ATTACHMENTS = 8;
@@ -324,9 +341,10 @@ export function pickerModel({ connectors = {}, providers = {}, plugins = {}, too
     brings: String(p?.brings ?? ''),
     state: ATTACH_STATE.CONNECTED, stateLabel: ATTACH_STATE_LABEL[ATTACH_STATE.CONNECTED],
   })).filter((p) => p.name);
+  const pluginsStaleNote = pluginsReportStaleNote(plugins?.bridgeReport?.ageMs);
   const pluginsGroup = Object.freeze({
     id: 'plugins', title: 'Plugins', items: Object.freeze(pluginItems),
-    note: 'Plugins live on your PC bridge. Attaching one gives the agent its approved tools for this turn.',
+    note: `Plugins live on your PC bridge. Attaching one gives the agent its approved tools for this turn.${pluginsStaleNote ? ` ${pluginsStaleNote}` : ''}`,
   });
   const uploadGroup = Object.freeze({ id: 'upload', title: 'Upload a file', fileInput: true, note: UPLOAD_NOTE, items: Object.freeze([]) });
   const webSearchGroup = Object.freeze({ id: 'web-search', title: 'Web search', toggle: true, note: WEB_SEARCH_NOTE, items: Object.freeze([]) });
