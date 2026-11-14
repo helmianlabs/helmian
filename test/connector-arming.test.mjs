@@ -35,7 +35,7 @@ import { catalogEntryById, LIVE_SEATS } from '../src/cloud/connector-catalog.mjs
 import { createConnectorLibraryStore, buildConnectorTokenRef, planToolSnapshot, hashToolInputSchema } from '../src/cloud/connector-library.mjs';
 import { resolveTurnAttachments, postureRequiresApproval } from '../src/agent/attachments.mjs';
 import { buildConnectorArming, sanitizeArmingRecords } from '../src/agent/connector-arming.mjs';
-import { armingPairsForDispatch, resolveArmingRecord, resolveDispatchArming } from '../src/cloud/connector-arming-dispatch.mjs';
+import { armingPairsForDispatch, resolveArmingRecord, resolveDispatchArming, resolveKeepLoadedPairs } from '../src/cloud/connector-arming-dispatch.mjs';
 import { createConnectorOAuthClient } from '../src/cloud/connector-oauth-pending.mjs';
 import { chatWithTools, ANTHROPIC_MCP_BETA } from '../src/agent/providers.mjs';
 import { runAgentTurn } from '../src/agent/loop.mjs';
@@ -1365,4 +1365,97 @@ test('b5 refresh: a Slack-shaped bundle (no refresh token) behaves byte-for-byte
   const landed = await store.getConnection(B5_TENANT, { personId: B5_PERSON, seatId: 'claude', entryId: 'helmian-slack' });
   assert.equal(landed.state, 'connected');
   assert.equal(landed.refreshTokenRef, null);
+});
+
+// ============================================================ G6: keep-loaded
+// The channel tool-access setting's dispatch half: the pair build's
+// third source (the author's other connected connections) and the
+// enumeration that produces it — connected, Helmian-brokered only,
+// and only ever the author's own (DESIGN §4.3/§4.4).
+
+test('g6 pairs: the keep-loaded source unions, dedupes, filters to due seats, and never evicts an armed pair at the cap', () => {
+  const dueProviders = ['claude'];
+  const pairs = armingPairsForDispatch({
+    armedConnectors: [{ seatId: 'claude', entryId: 'helmian-github' }],
+    messageConnectors: [{ seatId: 'claude', entryId: 'helmian-notion' }],
+    keepLoadedPairs: [
+      { seatId: 'claude', entryId: 'helmian-github' }, // duplicate of the armed pair
+      { seatId: 'claude', entryId: 'helmian-linear' },
+      { seatId: 'grok', entryId: 'helmian-github' }, // a seat not due here
+    ],
+    dueProviders,
+  });
+  assert.deepEqual(pairs, [
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'claude', entryId: 'helmian-notion' },
+    { seatId: 'claude', entryId: 'helmian-linear' },
+  ]);
+  // No third source = exactly the pre-G6 behaviour.
+  assert.deepEqual(
+    armingPairsForDispatch({ armedConnectors: [{ seatId: 'claude', entryId: 'helmian-github' }], dueProviders }),
+    [{ seatId: 'claude', entryId: 'helmian-github' }],
+  );
+  // At the cap the keep-loaded source yields first: 16 armed pairs
+  // leave it no room at all; 15 leave room for exactly its first.
+  const armed16 = Array.from({ length: 16 }, (_, i) => ({ seatId: 'claude', entryId: `entry-${i}` }));
+  const capped = armingPairsForDispatch({
+    armedConnectors: armed16,
+    keepLoadedPairs: [{ seatId: 'claude', entryId: 'extra-1' }, { seatId: 'claude', entryId: 'extra-2' }],
+    dueProviders,
+  });
+  assert.equal(capped.length, 16);
+  assert.ok(!capped.some((p) => p.entryId.startsWith('extra-')), 'an armed pair is never evicted by a keep-loaded one');
+  const room = armingPairsForDispatch({
+    armedConnectors: armed16.slice(0, 15),
+    keepLoadedPairs: [{ seatId: 'claude', entryId: 'extra-1' }, { seatId: 'claude', entryId: 'extra-2' }],
+    dueProviders,
+  });
+  assert.equal(room.length, 16);
+  assert.deepEqual(room.at(-1), { seatId: 'claude', entryId: 'extra-1' });
+});
+
+test("g6 enumeration: connected Helmian-brokered connections only, and only ever the author's", async () => {
+  const entries = {
+    'claude|helmian-github': { brokerMode: 'helmian', mcpEndpointUrl: 'https://api.githubcopilot.com/mcp/' },
+    'claude|helmian-notion': { brokerMode: 'helmian', mcpEndpointUrl: 'https://mcp.notion.example/' },
+    'claude|vendor-thing': { brokerMode: 'vendor', mcpEndpointUrl: 'https://vendor.example/mcp' },
+    'claude|no-endpoint': { brokerMode: 'helmian', mcpEndpointUrl: null },
+  };
+  const connectionsByPerson = {
+    user_author: [
+      { seatId: 'claude', entryId: 'helmian-github', state: 'connected' },
+      { seatId: 'claude', entryId: 'helmian-notion', state: 'needs-reconnect' },
+      { seatId: 'claude', entryId: 'vendor-thing', state: 'connected' },
+      { seatId: 'claude', entryId: 'no-endpoint', state: 'connected' },
+    ],
+    user_other: [
+      { seatId: 'claude', entryId: 'helmian-github', state: 'connected' },
+      { seatId: 'claude', entryId: 'helmian-notion', state: 'connected' },
+    ],
+  };
+  const listCalls = [];
+  const store = {
+    async listConnections(tenantId, { personId, seatId }) {
+      listCalls.push({ personId, seatId });
+      return (connectionsByPerson[personId] ?? []).filter((c) => c.seatId === seatId);
+    },
+    async getEntry(tenantId, seatId, entryId) {
+      return entries[`${seatId}|${entryId}`] ?? null;
+    },
+  };
+  const pairs = await resolveKeepLoadedPairs({ tenantId: 't1', personId: 'user_author', dueProviders: ['claude'], store });
+  assert.deepEqual(pairs, [{ seatId: 'claude', entryId: 'helmian-github' }],
+    'only the connected, Helmian-brokered, endpoint-carrying connection loads — not the reconnecting, vendor-brokered, or endpoint-less ones');
+  assert.ok(listCalls.every((c) => c.personId === 'user_author'), "the enumeration only ever reads the author's connections");
+  // The other person's connections form a different set, reachable
+  // only by enumerating as them — never by widening this call.
+  const other = await resolveKeepLoadedPairs({ tenantId: 't1', personId: 'user_other', dueProviders: ['claude'], store });
+  assert.deepEqual(other, [
+    { seatId: 'claude', entryId: 'helmian-github' },
+    { seatId: 'claude', entryId: 'helmian-notion' },
+  ]);
+  // The due-seat mapping rides along: the mesh's 'openai' provider
+  // is the library's 'chatgpt' seat, where the author holds nothing.
+  const chatgptPairs = await resolveKeepLoadedPairs({ tenantId: 't1', personId: 'user_author', dueProviders: ['openai'], store });
+  assert.deepEqual(chatgptPairs, []);
 });

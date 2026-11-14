@@ -119,15 +119,19 @@ export function librarySeatForDueProvider(provider, customAgents = []) {
 
 /**
  * The pairs one work item resolves: the union of the channel's
- * standing armed set and the message's own toggles, deduped,
- * filtered to the library seats due on the message — another
- * seat's connectors are not this item's business. Pure.
+ * standing armed set, the message's own toggles, and — on a
+ * keep-loaded channel (Mirror M3, bite G6) — the author's other
+ * connected connections, deduped, filtered to the library seats
+ * due on the message — another seat's connectors are not this
+ * item's business. The keep-loaded source rides LAST, so at the
+ * cap an explicitly armed or toggled pair is never evicted by a
+ * background-loaded one. Pure.
  */
-export function armingPairsForDispatch({ armedConnectors = [], messageConnectors = [], dueProviders = [], customAgents = [] } = {}) {
+export function armingPairsForDispatch({ armedConnectors = [], messageConnectors = [], keepLoadedPairs = [], dueProviders = [], customAgents = [] } = {}) {
   const dueSeats = new Set((dueProviders ?? []).map((p) => librarySeatForDueProvider(p, customAgents)));
   const out = [];
   const seen = new Set();
-  for (const pair of [...(armedConnectors ?? []), ...(messageConnectors ?? [])]) {
+  for (const pair of [...(armedConnectors ?? []), ...(messageConnectors ?? []), ...(keepLoadedPairs ?? [])]) {
     const seatId = typeof pair?.seatId === 'string' && pair.seatId ? pair.seatId : null;
     const entryId = typeof pair?.entryId === 'string' && pair.entryId ? pair.entryId : null;
     if (!seatId || !entryId || !dueSeats.has(seatId)) continue;
@@ -554,4 +558,38 @@ export async function resolveDispatchArming({ pool, tenantId, personId, pairs, s
     }));
   }
   return records;
+}
+
+/**
+ * The keep-loaded enumeration (Mirror M3, bite G6): the extra
+ * pairs a channel set to keep-loaded adds to a turn — every
+ * CONNECTED, Helmian-brokered connection the message's author
+ * holds for the seats due on the message, armed or not (DESIGN
+ * §4.3). The set is the author's own by construction:
+ * listConnections is keyed by personId, and the only personId
+ * ever passed here is the message author's, so another person's
+ * connections can never enter the set. Pre-filtered to the two
+ * facts the resolver would re-derive anyway — the connection's
+ * state is 'connected', and its entry passes the resolver's own
+ * brokered test (brokerMode 'helmian' with an MCP endpoint) —
+ * so non-connected and vendor-brokered connections generate no
+ * records nobody armed; every pair that survives still flows
+ * through resolveArmingRecord, whose per-pair outcomes apply
+ * unchanged. Store throws propagate to the caller's fail-soft
+ * (envoy-mesh's loadKeepLoadedPairs).
+ */
+export async function resolveKeepLoadedPairs({ pool, tenantId, personId, dueProviders = [], customAgents = [], store = null } = {}) {
+  const libraryStore = store ?? createConnectorLibraryStore(pool);
+  const dueSeats = [...new Set((dueProviders ?? []).map((p) => librarySeatForDueProvider(p, customAgents)))];
+  const out = [];
+  for (const seatId of dueSeats) {
+    const connections = await libraryStore.listConnections(tenantId, { personId, seatId });
+    for (const connection of connections ?? []) {
+      if (connection?.state !== 'connected') continue;
+      const entry = await libraryStore.getEntry(tenantId, seatId, connection.entryId, { personId });
+      if (!entry || entry.brokerMode !== 'helmian' || !entry.mcpEndpointUrl) continue;
+      out.push({ seatId, entryId: connection.entryId });
+    }
+  }
+  return out;
 }

@@ -309,6 +309,39 @@ test('armedConnectors config (bite A2): the standing set round-trips, sanitizes,
   assert.deepEqual(parseConfig(notArray).armedConnectors, []);
 });
 
+test('toolAccess config (bite G6): defaults to when-used, keep-loaded round-trips, default bytes unchanged', () => {
+  const plain = emptyConfig();
+  assert.equal(plain.toolAccess, 'when-used');
+  // Byte-stability: a default channel serializes EXACTLY as before
+  // the setting existed (no "toolAccess" key in the stored body).
+  // The literal is the pre-G6 serializer's output for this config,
+  // captured at the G6 base — any drift here changes stored bytes
+  // for every channel that never opted in.
+  assert.equal(serializeConfig(plain), '{"format":"helmian.envoy.channel-config.v1","agents":[],"joined":{},"discord":null,"pendingLink":null}');
+  assert.equal(parseConfig(serializeConfig(plain)).toolAccess, 'when-used');
+  assert.equal(publicConfig(parseConfig(serializeConfig(plain))).toolAccess, 'when-used');
+  // An old stored body (no toolAccess field at all) parses as the default.
+  const oldBody = JSON.stringify({ format: 'helmian.envoy.channel-config.v1', agents: ['claude'], joined: {}, discord: null, pendingLink: null });
+  assert.equal(parseConfig(oldBody).toolAccess, 'when-used');
+  assert.equal(publicConfig(parseConfig(oldBody)).toolAccess, 'when-used');
+
+  const loaded = emptyConfig();
+  loaded.toolAccess = 'keep-loaded';
+  const body = serializeConfig(loaded);
+  assert.ok(body.includes('"toolAccess":"keep-loaded"'), 'keep-loaded is the one value ever written');
+  const back = parseConfig(body);
+  assert.equal(back.toolAccess, 'keep-loaded');
+  assert.equal(publicConfig(back).toolAccess, 'keep-loaded', 'the face reads the setting from the public config');
+
+  // A garbage value in a stored body coerces to the default, never
+  // throws; a garbage in-memory value is never written.
+  const junk = JSON.stringify({ format: 'helmian.envoy.channel-config.v1', agents: [], joined: {}, discord: null, pendingLink: null, toolAccess: 'sometimes' });
+  assert.equal(parseConfig(junk).toolAccess, 'when-used');
+  const junkMem = emptyConfig();
+  junkMem.toolAccess = 'sometimes';
+  assert.equal(serializeConfig(junkMem), serializeConfig(plain));
+});
+
 test('maestroFollow config (legacy field): round-trips for backward compatibility; routing never consults it', () => {
   const plain = emptyConfig();
   assert.equal(plain.maestroFollow, false);

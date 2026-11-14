@@ -3,7 +3,7 @@
 // Routes (hung off handleEnvoyAblyRoute; live-admin.mjs stays untouched):
 //   Signed-in members and paired desktops (session cookie or device token):
 //     GET  /api/admin/envoy/channel-config?channel_id=   agents + Discord / Slack links for one channel
-//     POST /api/admin/envoy/channel-config               add-agent | remove-agent | link-discord | unlink-discord | link-slack | unlink-slack | set-armed-connectors | (and the later actions below)
+//     POST /api/admin/envoy/channel-config               add-agent | remove-agent | link-discord | unlink-discord | link-slack | unlink-slack | set-armed-connectors | set-tool-access | (and the later actions below)
 //     GET  /api/admin/envoy/agent-work?providers=a,b     device token: messages waiting for an agent reply
 //     POST /api/admin/envoy/agent-messages               device token: post as an agent member
 //   Bridge services (Hetzner, bearer HELMIAN_ENVOY_BRIDGE_TOKEN):
@@ -37,7 +37,7 @@ import { screenIntakeContent, siteGuardRefusalText, siteGuardStopRecord, ingestS
 import { readNotebookBlock } from './envoy-notebook.mjs';
 import { createLibrarianStore, deriveChannelName, fileDispatchAsk, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
 import { createSkillLibraryStore } from './skill-library.mjs';
-import { armingPairsForDispatch, resolveDispatchArming } from './connector-arming-dispatch.mjs';
+import { armingPairsForDispatch, resolveDispatchArming, resolveKeepLoadedPairs } from './connector-arming-dispatch.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
 
 // The bot status functions live in bot-status.mjs (import-free, so the
@@ -254,7 +254,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, keepLoadedReadImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -390,6 +390,25 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // arming records for the seats due.
           if (!Array.isArray(input?.armedConnectors)) throw fail(400, 'ENVOY_ARMED_CONNECTORS_INVALID');
           config.armedConnectors = sanitizeArmedConnectors(input.armedConnectors);
+          await writeConfig(client, actor.tenantId, channelId, config);
+        } else if (action === 'set-tool-access') {
+          if (actor.role === 'auditor') throw fail(403, 'ENVOY_ROLE_FORBIDDEN');
+          // The channel's tool-loading setting (Mirror M3, bite
+          // G6): 'when-used' (the default — a turn offers only
+          // the connectors the message arms) or 'keep-loaded'
+          // (a turn additionally loads the author's other
+          // connected Helmian-brokered connections for the
+          // seats due; dispatch consults it in agentWork below).
+          // Written by the plus menu's Tool access flyout; the
+          // Manage expansion reads the same key through
+          // publicConfig (Amendment A3's face ships separately).
+          // No notice — a loading preference is composer
+          // furniture, not a room event (the set-armed-connectors
+          // precedent). A value that is not exactly 'keep-loaded'
+          // lands on the default, the set-debate-mode coercion
+          // for enum settings — and parseConfig reads it back
+          // the same way.
+          config.toolAccess = input?.toolAccess === 'keep-loaded' ? 'keep-loaded' : 'when-used';
           await writeConfig(client, actor.tenantId, channelId, config);
         } else if (action === 'set-channel-avatar') {
           if (actor.role === 'auditor') throw fail(403, 'ENVOY_ROLE_FORBIDDEN');
@@ -616,6 +635,37 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           armingReadFailed = true;
           log(`[envoy-mesh] connector arming resolution FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — work items carry no connector arming this poll; dispatch is unchanged.`);
           return null;
+        }
+      };
+      // Keep-loaded enumeration (connector-arming-dispatch.mjs,
+      // Mirror M3 bite G6): the extra pairs a channel set to
+      // keep-loaded adds to a turn — the message author's
+      // connected, Helmian-brokered connections for the seats
+      // due, enumerated beside the arming read and cached per
+      // poll by (channel, author, due set). Same fail-soft
+      // discipline as loadArmingRecords, with one difference: a
+      // failed enumeration is sticky for the poll and drops ONLY
+      // the extra pairs — the channel's armed set and the
+      // message's own toggles still resolve, because the failure
+      // is in the expansion, never in the arming itself, and a
+      // keep-loaded channel must never lose the connectors its
+      // messages explicitly arm.
+      const keepLoadedCache = new Map();
+      let keepLoadedReadFailed = false;
+      const loadKeepLoadedPairs = async (channelId, personId, dueProviders, customAgents) => {
+        if (keepLoadedReadFailed) return [];
+        const cacheKey = `${channelId}|${personId}|${(dueProviders ?? []).join(',')}|${(customAgents ?? []).map((a) => a?.handle || a?.id || '').join(',')}`;
+        if (keepLoadedCache.has(cacheKey)) return keepLoadedCache.get(cacheKey);
+        const log = armingLogImpl ?? ((...args) => console.error(...args));
+        try {
+          const pairs = await (keepLoadedReadImpl ?? ((input) => resolveKeepLoadedPairs({ pool, ...input })))({ tenantId: actor.tenantId, personId, dueProviders, customAgents });
+          const out = Array.isArray(pairs) ? pairs : [];
+          keepLoadedCache.set(cacheKey, out);
+          return out;
+        } catch (error) {
+          keepLoadedReadFailed = true;
+          log(`[envoy-mesh] keep-loaded enumeration FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — keep-loaded turns carry only their armed connectors this poll; dispatch is unchanged.`);
+          return [];
         }
       };
       // Envoy 504 fix, bite C: the poll's reads ride ONE short
@@ -916,12 +966,22 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // connections they would be. The pair set is the
           // channel's standing armed set unioned with the
           // message's own toggles, filtered to the seats due here
-          // (connector-arming-dispatch.mjs).
+          // (connector-arming-dispatch.mjs). On a channel set to
+          // keep-loaded (Mirror M3, bite G6) the author's other
+          // connected Helmian-brokered connections for the due
+          // seats join the set, armed or not; at the default
+          // (when-used, or no setting stored at all) the pair set
+          // is exactly what it has always been.
           let armingRecords;
           if (message.authorKind === 'human') {
+            let keepLoadedPairs = [];
+            if (config.toolAccess === 'keep-loaded') {
+              keepLoadedPairs = await loadKeepLoadedPairs(String(channel.id), message.authorSubject, due, config.customAgents ?? []);
+            }
             const pairs = armingPairsForDispatch({
               armedConnectors: config.armedConnectors,
               messageConnectors: message.metadata?.connectors,
+              keepLoadedPairs,
               dueProviders: due,
               customAgents: config.customAgents ?? [],
             });

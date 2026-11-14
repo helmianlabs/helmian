@@ -226,6 +226,7 @@ export function emptyConfig() {
     maxRoundTurns: DEFAULT_DEBATE_TURNS,
     avatar: null,
     armedConnectors: [],
+    toolAccess: 'when-used',
   };
 }
 
@@ -268,11 +269,15 @@ export function parseConfig(body) {
     const joined = {};
     for (const p of agents) { const t = raw.joined?.[p]; if (t && Number.isFinite(Date.parse(t))) joined[p] = String(t); }
     const debateMode = raw.debateMode === 'free-willy' ? 'free-willy' : 'off';
+    // The channel tool-loading setting (Mirror M3, bite G6): one
+    // key, two values — anything but the exact 'keep-loaded'
+    // string reads as the default, the debateMode discipline.
+    const toolAccess = raw.toolAccess === 'keep-loaded' ? 'keep-loaded' : 'when-used';
     const rawTurns = Number(raw.maxRoundTurns);
     const maxRoundTurns = Number.isFinite(rawTurns) ? Math.max(1, Math.min(MAX_DEBATE_TURNS, Math.trunc(rawTurns))) : DEFAULT_DEBATE_TURNS;
     const avatar = sanitizeChannelAvatar(raw.avatar);
     const armedConnectors = sanitizeArmedConnectors(raw.armedConnectors);
-    return { format: CONFIG_FORMAT, agents, joined, discord, slack, github, pendingLink, desk: raw.desk === true, maestroFollow: raw.maestroFollow === true, customAgents, debateMode, maxRoundTurns, avatar, armedConnectors };
+    return { format: CONFIG_FORMAT, agents, joined, discord, slack, github, pendingLink, desk: raw.desk === true, maestroFollow: raw.maestroFollow === true, customAgents, debateMode, maxRoundTurns, avatar, armedConnectors, toolAccess };
   } catch { return null; }
 }
 
@@ -307,6 +312,11 @@ export function serializeConfig(config) {
   // bytes (the avatar/desk discipline above).
   const armedConnectors = sanitizeArmedConnectors(config.armedConnectors);
   if (armedConnectors.length) stored.armedConnectors = armedConnectors;
+  // toolAccess is written only when 'keep-loaded', so every config
+  // stored before the tool-loading setting existed — and every
+  // channel left at the default — keeps its exact bytes (the
+  // armedConnectors discipline above).
+  if (config.toolAccess === 'keep-loaded') stored.toolAccess = 'keep-loaded';
   const body = JSON.stringify(stored);
   if (body.length > 4000) throw new Error('channel config is too large');
   return body;
@@ -344,6 +354,7 @@ export function publicConfig(config, now = Date.now()) {
     slack: c.slack ?? null,
     github: c.github ?? null,
     armedConnectors: sanitizeArmedConnectors(c.armedConnectors),
+    toolAccess: c.toolAccess === 'keep-loaded' ? 'keep-loaded' : 'when-used',
     pendingLink: c.pendingLink && Date.parse(c.pendingLink.expiresAt) > now ? { expiresAt: c.pendingLink.expiresAt } : null,
   };
 }

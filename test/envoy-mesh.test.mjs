@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { createEnvoyMesh, handleEnvoyMeshRoute, bridgeTokenOk, stampAgentAnswered, resolveDispatchSkills } from '../src/cloud/envoy-mesh.mjs';
 import { createRunnerPresenceStore } from '../src/cloud/runner-presence.mjs';
 import { createEnvoyStore } from '../src/cloud/envoy-chat.mjs';
+import { emptyConfig, serializeConfig } from '../src/cloud/envoy-agents.mjs';
 
 const url = process.env.HELMIAN_TEST_PG_URL;
 const skip = !url && 'HELMIAN_TEST_PG_URL not set';
@@ -584,4 +585,214 @@ test('mesh on Postgres: agentWork rides resolved skills; a failed read changes n
     await pool.query('delete from helmion.tenants where tenant_id = $1', [tenantId]).catch(() => {});
     await pool.end();
   }
+});
+
+// ---------- Channel tool-access setting (Mirror M3, bite G6) ----------
+// The write action and the dispatch consultation, driven through
+// fake pools (the envoy-pool-bounds harness shape): an in-memory
+// message log answers the config road's SQL, and the poll fake
+// answers the dispatch reads. The Postgres-gated end-to-end — a
+// real channel turn at keep-loaded — is §7's live acceptance and
+// is NOT exercised here.
+
+const G6_CHANNEL_ID = '11111111-2222-4333-8444-555555555555';
+const G6_TENANT = 'tenant-g6';
+
+function fakeConfigPool() {
+  const messages = [];
+  let seq = 0;
+  const channel = { id: G6_CHANNEL_ID, slug: 'build', title: 'Build', kind: 'team' };
+  const client = {
+    async query(text, vals = []) {
+      const sql = String(text);
+      if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 0 };
+      if (sql.includes("set_config('helmion.tenant_id'")) return { rows: [{}], rowCount: 1 };
+      if (sql.includes('tenant_memberships')) {
+        // The membership check matches the row's role against the
+        // actor's declared role: answer with each subject's own.
+        const role = vals[1] === 'user_auditor' ? 'auditor' : vals[1] === 'user_member' ? 'member' : 'owner';
+        return { rows: [{ role }], rowCount: 1 };
+      }
+      if (sql.includes('from helmion.envoy_channels')) return { rows: [channel], rowCount: 1 };
+      if (sql.includes('select body from helmion.envoy_messages')) {
+        const newest = messages.filter((m) => m.channel_id === vals[1] && m.author_subject === vals[2]).at(-1);
+        return newest ? { rows: [{ body: newest.body }], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      if (sql.startsWith('insert into helmion.envoy_messages')) {
+        const row = {
+          id: `msg-${++seq}`, tenant_id: vals[0], channel_id: vals[1], author_subject: vals[2],
+          author_kind: vals[3], body: vals[4], idempotency_key: vals[5], created_at: new Date(), metadata: null,
+        };
+        messages.push(row);
+        return { rows: [row], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  return { pool: { async connect() { return client; } }, channel };
+}
+
+test('mesh on fakes: set-tool-access writes the channel tool-loading setting (bite G6)', async () => {
+  const { pool, channel } = fakeConfigPool();
+  const mesh = createEnvoyMesh({ pool, publishImpl: async () => {} });
+  const member = { tenantId: G6_TENANT, subject: 'user_member', role: 'member' };
+  const auditor = { tenantId: G6_TENANT, subject: 'user_auditor', role: 'auditor' };
+
+  let cfg = await mesh.getConfig(member, channel.id);
+  assert.equal(cfg.config.toolAccess, 'when-used', 'a channel with no config reads the default');
+
+  // Any non-auditor member may set it (the set-armed-connectors
+  // gate); the config answer and the stored round trip carry it.
+  const set = await mesh.changeConfig(member, { action: 'set-tool-access', channelId: channel.id, toolAccess: 'keep-loaded' });
+  assert.equal(set.config.toolAccess, 'keep-loaded');
+  cfg = await mesh.getConfig(member, channel.id);
+  assert.equal(cfg.config.toolAccess, 'keep-loaded', 'the setting survives the store round trip');
+
+  // A bad value coerces to the default — the set-debate-mode rule
+  // for enum settings, and parseConfig's own coercion.
+  const bad = await mesh.changeConfig(member, { action: 'set-tool-access', channelId: channel.id, toolAccess: 'sometimes' });
+  assert.equal(bad.config.toolAccess, 'when-used');
+  cfg = await mesh.getConfig(member, channel.id);
+  assert.equal(cfg.config.toolAccess, 'when-used');
+
+  // Setting it back explicitly works too.
+  await mesh.changeConfig(member, { action: 'set-tool-access', channelId: channel.id, toolAccess: 'keep-loaded' });
+  const back = await mesh.changeConfig(member, { action: 'set-tool-access', channelId: channel.id, toolAccess: 'when-used' });
+  assert.equal(back.config.toolAccess, 'when-used');
+
+  // An auditor may not write at all, and the refused write
+  // changed nothing.
+  await assert.rejects(
+    mesh.changeConfig(auditor, { action: 'set-tool-access', channelId: channel.id, toolAccess: 'keep-loaded' }),
+    /ENVOY_ROLE_FORBIDDEN/,
+  );
+  cfg = await mesh.getConfig(member, channel.id);
+  assert.equal(cfg.config.toolAccess, 'when-used', 'the refused write changed nothing');
+
+  // Unknown actions still refuse.
+  await assert.rejects(
+    mesh.changeConfig(member, { action: 'set-tool-access-please', channelId: channel.id }),
+    /ENVOY_CONFIG_ACTION_UNSUPPORTED/,
+  );
+});
+
+// One channel, one unanswered human ask that arms nothing. The
+// poll answers come from the config body the case supplies.
+function fakeWorkPool({ configBody }) {
+  const ask = {
+    id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', channel_id: G6_CHANNEL_ID, author_subject: 'user_author',
+    author_kind: 'human', body: 'What is the capital of Norway?', idempotency_key: 'g6-ask-1',
+    created_at: new Date(), metadata: null,
+  };
+  const client = {
+    async query(text, vals = []) {
+      const sql = String(text);
+      if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 0 };
+      if (sql.includes("set_config('helmion.tenant_id'")) return { rows: [{}], rowCount: 1 };
+      if (sql.includes('tenant_memberships')) return { rows: [{ role: 'owner' }], rowCount: 1 };
+      if (sql.includes('from helmion.desktop_links')) return { rows: [{ n: 0 }], rowCount: 1 };
+      if (sql.includes('runner_provider_presence')) return { rows: [], rowCount: 0 };
+      if (sql.includes('provider_connections')) return { rows: [], rowCount: 0 };
+      if (sql.includes('distinct on (channel_id)')) return { rows: [{ channel_id: G6_CHANNEL_ID, body: configBody }], rowCount: 1 };
+      if (sql.includes('lateral')) {
+        return { rows: [{ ch_id: G6_CHANNEL_ID, ch_slug: 'build', ch_title: 'Build', ch_kind: 'team', ...ask }], rowCount: 1 };
+      }
+      if (sql.includes('from helmion.envoy_channels')) return { rows: [{ id: G6_CHANNEL_ID, slug: 'build', title: 'Build', kind: 'team' }], rowCount: 1 };
+      if (sql.includes('limit 40')) return { rows: [ask], rowCount: 1 };
+      if (sql.startsWith('insert into helmion.envoy_messages')) return { rows: [], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  return { pool: { async connect() { return client; } } };
+}
+
+function g6Mesh(pool, extra = {}) {
+  return createEnvoyMesh({
+    pool,
+    publishImpl: async () => {},
+    notebookImpl: async () => null,
+    kbImpl: async () => null,
+    librarianImpl: {
+      async fileAsk() { return { filed: true }; },
+      async renameChannelIfGeneric() { return true; },
+      async fileIncident() { return { filed: true }; },
+    },
+    armingLogImpl: () => {},
+    ...extra,
+  });
+}
+
+const G6_DEVICE = { tenantId: G6_TENANT, subject: 'user_author', role: 'owner', viaDeviceToken: true };
+const echoArming = (calls) => async (input) => {
+  calls.push(input);
+  return input.pairs.map((p) => ({ ...p, state: 'connected' }));
+};
+
+test("mesh on fakes: keep-loaded dispatch loads the author's connected GitHub record for a message that arms nothing (bite G6)", async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  config.toolAccess = 'keep-loaded';
+  const { pool } = fakeWorkPool({ configBody: serializeConfig(config) });
+  const keepLoadedCalls = [];
+  const armingCalls = [];
+  const mesh = g6Mesh(pool, {
+    keepLoadedReadImpl: async (input) => { keepLoadedCalls.push(input); return [{ seatId: 'claude', entryId: 'helmian-github' }]; },
+    armingReadImpl: echoArming(armingCalls),
+  });
+  const result = await mesh.agentWork(G6_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(result.work.length, 1);
+  assert.equal(keepLoadedCalls.length, 1, 'the enumeration ran once for the poll');
+  assert.equal(keepLoadedCalls[0].personId, 'user_author', "the enumeration is keyed to the message author's own subject");
+  assert.equal(keepLoadedCalls[0].tenantId, G6_TENANT);
+  assert.deepEqual(armingCalls.map((c) => c.pairs), [[{ seatId: 'claude', entryId: 'helmian-github' }]],
+    'the resolver received exactly the keep-loaded pair — the message itself armed nothing');
+  assert.deepEqual(result.work[0].connectorConnections, [{ seatId: 'claude', entryId: 'helmian-github', state: 'connected' }],
+    "the author's GitHub arming record rides the work item");
+});
+
+test('mesh on fakes: when-used and unconfigured channels never enumerate (bite G6)', async () => {
+  const explicit = emptyConfig();
+  explicit.agents = ['claude'];
+  explicit.toolAccess = 'when-used';
+  const cases = [
+    ['explicit when-used', serializeConfig(explicit)],
+    ['no key stored', JSON.stringify({ format: 'helmian.envoy.channel-config.v1', agents: ['claude'], joined: {}, discord: null, pendingLink: null })],
+  ];
+  for (const [label, body] of cases) {
+    const { pool } = fakeWorkPool({ configBody: body });
+    let keepLoadedCalls = 0;
+    let armingCalls = 0;
+    const mesh = g6Mesh(pool, {
+      keepLoadedReadImpl: async () => { keepLoadedCalls += 1; return [{ seatId: 'claude', entryId: 'helmian-github' }]; },
+      armingReadImpl: async () => { armingCalls += 1; return []; },
+    });
+    const result = await mesh.agentWork(G6_DEVICE, 'claude');
+    await mesh.drainFilingTail();
+    assert.equal(result.work.length, 1, label);
+    assert.equal(keepLoadedCalls, 0, `${label}: no enumeration runs`);
+    assert.equal(armingCalls, 0, `${label}: no pairs, so the resolver never runs`);
+    assert.ok(!('connectorConnections' in result.work[0]), `${label}: no arming field on the work item`);
+  }
+});
+
+test('mesh on fakes: a failed keep-loaded enumeration drops only the extra pairs (bite G6)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  config.toolAccess = 'keep-loaded';
+  config.armedConnectors = [{ seatId: 'claude', entryId: 'helmian-github' }];
+  const { pool } = fakeWorkPool({ configBody: serializeConfig(config) });
+  const armingCalls = [];
+  const mesh = g6Mesh(pool, {
+    keepLoadedReadImpl: async () => { throw new Error('library read exploded'); },
+    armingReadImpl: echoArming(armingCalls),
+  });
+  const result = await mesh.agentWork(G6_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(result.work.length, 1, 'the turn still dispatches');
+  assert.deepEqual(armingCalls.map((c) => c.pairs), [[{ seatId: 'claude', entryId: 'helmian-github' }]],
+    'the standing armed set still resolves — the failure was in the expansion, not the arming');
+  assert.deepEqual(result.work[0].connectorConnections, [{ seatId: 'claude', entryId: 'helmian-github', state: 'connected' }]);
 });
