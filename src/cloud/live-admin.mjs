@@ -25,6 +25,7 @@ import { createGuardStore } from './guard-findings.mjs';
 import { createEvidenceStore, handleEvidenceRoute, EVIDENCE_HANDOFFS_PATH, EVIDENCE_CHECKPOINTS_PATH, EVIDENCE_RUNS_LEDGER_PATH, EVIDENCE_LEASES_POSTURE_PATH } from './evidence.mjs';
 import { handleEnvoyAblyRoute } from './envoy-ably.mjs';
 import { INSTALLED_PLUGINS_PATH, installedPluginsWorkspace, listInstalledPlugins } from './installed-plugins.mjs';
+import { createBridgePluginReportStore, bridgeReportPluginList } from './bridge-plugin-report.mjs';
 import { createCanvasStore, handleCanvasRoute } from './workspace-canvas.mjs';
 import { handleBrowserRoute } from './browser-launcher.mjs';
 import { handleAgentIconRoute } from './workspace-agent-icons.mjs';
@@ -400,10 +401,21 @@ export async function createLiveHelmianCloudAdminHandler({
   const artifactExecution = suppliedArtifactExecutionRepository ?? createArtifactExecutionRepository(pool);
   const approvals = suppliedApprovalInboxRepository ?? createApprovalInboxRepository(pool);
   const connectorRegistrations = suppliedConnectorRegistrationRepository ?? createConnectorRegistrationRepository(pool);
-  // The composer's plugin list: the enabled plugins of the workspace this
-  // process serves, read through the install ledger's gate — never a
-  // second, ungated view of what is installed (installed-plugins.mjs).
-  const pluginLister = suppliedPluginLister ?? (async () => listInstalledPlugins({ workspace: installedPluginsWorkspace(env) }));
+  // The composer's plugin list: the tenant's stored bridge report
+  // when one exists (M3 G7, bridge-plugin-report.mjs — the same
+  // preference the plugin-library delegate applies, so both
+  // deployments of this path agree), its age riding as bridgeReport;
+  // otherwise the enabled plugins of the workspace this process
+  // serves, read through the install ledger's gate — never a second,
+  // ungated view of what is installed (installed-plugins.mjs).
+  const pluginLister = suppliedPluginLister ?? (async (actor) => {
+    const tenantId = actor?.tenantId;
+    if (tenantId) {
+      const fromReport = await bridgeReportPluginList(createBridgePluginReportStore(pool), tenantId).catch(() => null);
+      if (fromReport) return fromReport;
+    }
+    return listInstalledPlugins({ workspace: installedPluginsWorkspace(env) });
+  });
   const personalPreferences = suppliedPersonalPreferencesRepository ?? createCoraPersonalPreferencesRepository(pool);
   const organizationDatabase = suppliedOrganizationDatabaseRepository ?? createOrganizationDatabaseRepository(pool);
   const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);

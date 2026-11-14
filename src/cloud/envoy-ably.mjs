@@ -14,6 +14,7 @@
 import { handleEnvoyMeshRoute } from './envoy-mesh.mjs';
 import { createHmac, randomBytes } from 'node:crypto';
 import { handleRunnerPresenceRoute } from './runner-presence.mjs';
+import { handleBridgePluginReportRoute } from './bridge-plugin-report.mjs';
 import { handleProfileSyncRoute } from './profile-sync.mjs';
 import { handleCredentialConnectRoute } from './credential-connect.mjs';
 import { handleToolConnectionsRoute } from './tool-connections-read.mjs';
@@ -266,6 +267,7 @@ export async function handleEnvoyAblyRoute({
     return true;
   }
   if (await handleRunnerPresenceRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
+  if (await handleBridgePluginReportRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleProfileSyncRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleCredentialConnectRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleToolConnectionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
