@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=6566fcf5c4ebf899';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=6566fcf5c4ebf899';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=6566fcf5c4ebf899';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=6566fcf5c4ebf899';
-import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=6566fcf5c4ebf899';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=6566fcf5c4ebf899';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=6566fcf5c4ebf899';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=6566fcf5c4ebf899';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=6566fcf5c4ebf899';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=6566fcf5c4ebf899';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=6566fcf5c4ebf899';
-import { createConnectFields } from './connect-fields.mjs?v=6566fcf5c4ebf899';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=6566fcf5c4ebf899';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=6566fcf5c4ebf899';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=5f0051b89a3c34d0';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=5f0051b89a3c34d0';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=5f0051b89a3c34d0';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=5f0051b89a3c34d0';
+import { loadToolAccess, pickToolAccessEntry, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=5f0051b89a3c34d0';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=5f0051b89a3c34d0';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=5f0051b89a3c34d0';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=5f0051b89a3c34d0';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=5f0051b89a3c34d0';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=5f0051b89a3c34d0';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=5f0051b89a3c34d0';
+import { createConnectFields } from './connect-fields.mjs?v=5f0051b89a3c34d0';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=5f0051b89a3c34d0';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=5f0051b89a3c34d0';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -1074,7 +1074,7 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configChannelId: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configChannelId: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], reportAgeMs: null, loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -3351,7 +3351,7 @@ export function pluginsUnavailableNote(count) {
   return n ? `${n} plugin${n === 1 ? '' : 's'} could not be loaded.` : null;
 }
 
-export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false, skills = null, plugins = null, pluginsUnavailable = [], skillAttach = [], attachments = [], projects = null, activeProjectKey = null, toolAccess = null } = {}) {
+export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conversationId = '', webSearchOn = false, skills = null, plugins = null, pluginsUnavailable = [], pluginsReportAgeMs = null, skillAttach = [], attachments = [], projects = null, activeProjectKey = null, toolAccess = null } = {}) {
   const definition = menuForSeat(seatId);
   if (!definition) return null;
   const byId = new Map();
@@ -3403,9 +3403,16 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
     if (item.feed === 'bridge-plugins') {
       if (!Array.isArray(plugins)) { out.push({ kind: 'note', text: 'Loading plugins...' }); return out; }
       const unavailableNote = pluginsUnavailableNote(Array.isArray(pluginsUnavailable) ? pluginsUnavailable.length : 0);
+      // The report's age, when a stored bridge report supplied the
+      // list: past a day the menu says the list is the last report
+      // instead of presenting it as live (M3 G7, the shared rule in
+      // composer-picker.mjs).
+      const staleNote = pluginsReportStaleNote(pluginsReportAgeMs);
       // The empty note stands only when the read is truly empty —
-      // no plugins AND none that failed to load (fix B).
-      if (!plugins.length && !unavailableNote) { out.push({ kind: 'note', text: 'No plugins are installed.' }); return out; }
+      // no plugins AND none that failed to load (fix B) AND no
+      // stale report behind the emptiness: an empty last report is
+      // the report's emptiness, not "no plugins are installed".
+      if (!plugins.length && !unavailableNote && !staleNote) { out.push({ kind: 'note', text: 'No plugins are installed.' }); return out; }
       for (const p of plugins) {
         const name = String(p?.name ?? '').trim().toLowerCase();
         if (!name) continue;
@@ -3417,6 +3424,7 @@ export function plusMenuLevel2Model({ seatId, library = null, toggles = {}, conv
         out.push({ kind: 'plugin', name, brings: String(p?.brings ?? ''), toolCount: Number.isSafeInteger(p?.toolCount) ? p.toolCount : null, on: (attachments ?? []).some((a) => a.kind === 'plugin' && a.name === name) });
       }
       if (unavailableNote) out.push({ kind: 'note', text: unavailableNote });
+      if (staleNote) out.push({ kind: 'note', text: staleNote });
       return out;
     }
     out.push({ kind: 'note', text: 'Nothing here yet.' });
@@ -3580,6 +3588,7 @@ function renderPlusMenuLevel2(which) {
     skills: ws.skills.loaded ? ws.skills.list : null,
     plugins: ws.plugins.loaded ? ws.plugins.list : null,
     pluginsUnavailable: ws.plugins.loaded ? ws.plugins.unavailable : [],
+    pluginsReportAgeMs: ws.plugins.loaded ? ws.plugins.reportAgeMs : null,
     skillAttach: ws.skillAttach[which] ?? [],
     attachments: ws.attach[which] ?? [],
     projects: ws.projects.loaded ? ws.projects.list : null,
@@ -4273,18 +4282,20 @@ function invalidateSkills() {
 }
 // The plugin list (bite M2): the Plugins submenu binds to
 // GET /api/admin/plugins — the plugins whose tools join a seat's
-// turns. The read answers from the serving process's own workspace
-// and carries { plugins, unavailable }: `unavailable` names every
-// plugin that failed to load, and it is kept on the state so the
-// menu can surface it (fix B) — an empty list with failures behind
-// it is not "no plugins installed". A failed read leaves the list
-// null and the next open tries again, the same shape as the Skills
-// loader above.
+// turns. The read prefers the workspace's stored bridge report
+// (M3 G7) and carries { plugins, unavailable }: `unavailable` names
+// every plugin that failed to load, and it is kept on the state so
+// the menu can surface it (fix B) — an empty list with failures
+// behind it is not "no plugins installed". When a report supplied
+// the list its age rides as `bridgeReport` and is kept beside the
+// list, so the menu can say the list is the last report when it
+// is stale. A failed read leaves the list null and the next open
+// tries again, the same shape as the Skills loader above.
 async function loadBridgePlugins() {
   if (ws.plugins.loaded) return ws.plugins.list;
   if (!ws.plugins.loading) {
     ws.plugins.loading = ws.ctx.api('/api/admin/plugins')
-      .then((body) => { ws.plugins.list = Array.isArray(body?.plugins) ? body.plugins : []; ws.plugins.unavailable = Array.isArray(body?.unavailable) ? body.unavailable : []; ws.plugins.loaded = true; })
+      .then((body) => { ws.plugins.list = Array.isArray(body?.plugins) ? body.plugins : []; ws.plugins.unavailable = Array.isArray(body?.unavailable) ? body.unavailable : []; ws.plugins.reportAgeMs = Number.isFinite(body?.bridgeReport?.ageMs) ? body.bridgeReport.ageMs : null; ws.plugins.loaded = true; })
       .catch(() => { ws.plugins.list = null; })
       .finally(() => { ws.plugins.loading = null; });
   }
@@ -5621,7 +5632,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=6566fcf5c4ebf899');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=5f0051b89a3c34d0');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
