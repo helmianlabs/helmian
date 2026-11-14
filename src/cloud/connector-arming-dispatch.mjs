@@ -20,7 +20,7 @@
 //                                            // install's facts instead
 //                                            // of an endpoint (sql/080)
 //     accountIdentity?, posture?,            // connected records
-//     snapshotTools?: [{ name, annotation, inputSchemaHash }],
+//     snapshotTools?: [{ name, annotation, inputSchemaHash, destructiveHint? }],
 //     toolEnableMap?, accessToken?, tokenSource? }
 //
 // Records ride the work item under `connectorConnections` — the
@@ -506,6 +506,11 @@ export async function resolveArmingRecord({ store, credentials = null, listTools
       name: tool.name,
       annotation: tool.annotation,
       inputSchemaHash: tool.inputSchemaHash,
+      // The frozen destructive flag rides with the set (M3 G5):
+      // the turn's low-risk decision reads it from here, never
+      // from a live list. Absent on snapshots frozen before the
+      // flag existed — the turn treats the absence as "asks".
+      ...(typeof tool.destructiveHint === 'boolean' ? { destructiveHint: tool.destructiveHint } : {}),
     })),
     toolEnableMap: settled.toolEnableMap ?? {},
     accessToken,
