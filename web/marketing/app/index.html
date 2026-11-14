@@ -8,15 +8,15 @@
        the stylesheets land so a light-theme user never gets a dark
        flash. It is an external file because the /app CSP allows
        external scripts only; an inline block here cannot run. -->
-  <script src="/app/theme-init.js?v=606b84c580271b8a"></script>
+  <script src="/app/theme-init.js?v=3941897bff464b82"></script>
   <title>Helmian</title>
   <link rel="icon" type="image/png" href="/assets/helmian-logo.png">
   <link rel="manifest" href="/app/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/assets/helmian-logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="/app/app.css?v=606b84c580271b8a">
-  <link rel="stylesheet" href="/app/envoy.css?v=606b84c580271b8a">
-  <script type="module" src="/app/app.js?v=606b84c580271b8a"></script>
+  <link rel="stylesheet" href="/app/app.css?v=3941897bff464b82">
+  <link rel="stylesheet" href="/app/envoy.css?v=3941897bff464b82">
+  <script type="module" src="/app/app.js?v=3941897bff464b82"></script>
 </head>
 <body>
 <div id="shell" class="shell" data-view="desktop">
@@ -180,6 +180,7 @@
           <div class="ew-net-switch" role="tablist" aria-label="Chat network">
             <button type="button" id="ew-net-envoy" class="ew-net-seg on" role="tab" aria-selected="true">Envoy</button>
             <button type="button" id="ew-net-discord" class="ew-net-seg" role="tab" aria-selected="false"><span class="ew-discord-mark" aria-hidden="true"></span>Discord<span id="ew-net-discord-count" class="ew-net-count" hidden></span></button>
+            <button type="button" id="ew-net-slack" class="ew-net-seg" role="tab" aria-selected="false"><span class="ew-slack-mark" aria-hidden="true"></span>Slack<span id="ew-net-slack-count" class="ew-net-count" hidden></span></button>
           </div>
           <nav id="ew-channel-list" class="ew-channel-list" aria-label="Envoy channels"></nav>
           <form id="ew-new-channel" class="ew-new-channel" hidden>

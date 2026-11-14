@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=606b84c580271b8a';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=606b84c580271b8a';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=606b84c580271b8a';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=606b84c580271b8a';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=606b84c580271b8a';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=606b84c580271b8a';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=606b84c580271b8a';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=606b84c580271b8a';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=606b84c580271b8a';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=606b84c580271b8a';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=606b84c580271b8a';
-import { createConnectFields } from './connect-fields.mjs?v=606b84c580271b8a';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=606b84c580271b8a';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=606b84c580271b8a';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=3941897bff464b82';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=3941897bff464b82';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=3941897bff464b82';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=3941897bff464b82';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=3941897bff464b82';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=3941897bff464b82';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=3941897bff464b82';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=3941897bff464b82';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=3941897bff464b82';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=3941897bff464b82';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=3941897bff464b82';
+import { createConnectFields } from './connect-fields.mjs?v=3941897bff464b82';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=3941897bff464b82';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=3941897bff464b82';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -1171,7 +1171,10 @@ function inline(text, into, onLink, linkTitle) {
   appendText(into, text.slice(at));
 }
 
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: ls.get('netMode', 'envoy') === 'discord' ? 'discord' : 'envoy', config: null, configChannelId: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], reportAgeMs: null, loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, refreshing: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+// The stored network mode restores only as a mode the switch knows;
+// anything else falls back to Envoy. Pure; unit tested.
+export const netModeFor = (stored) => (stored === 'discord' || stored === 'slack' ? stored : 'envoy');
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: netModeFor(ls.get('netMode', 'envoy')), config: null, configChannelId: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], reportAgeMs: null, loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, refreshing: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -1712,33 +1715,42 @@ function openNewChannel() {
   setPane('channels', true);
   $('ew-new-channel').hidden = false; $('ew-add-channel').hidden = true; renderNewChannelAvatar(); $('ew-new-channel-name').focus();
 }
-// ---------- network flip: Envoy ⇄ Discord ----------
-// One chat surface, two networks (Troy's ruling + the Slack/Discord UX
-// research): a labelled two-segment switch at the top of the channels
-// pane — both names always visible, never icon-only — swaps the channel
-// list and the chat context with identical geometry. Linked channels
-// are distinguishable through the link fields the channels API now
-// carries per channel (applyChannelLinks above turns them into the
-// _discord flag); the open channel's config load still refreshes its
-// own flag and the chanMeta cache.
+// ---------- network flip: Envoy ⇄ Discord ⇄ Slack ----------
+// One chat surface, three networks (Troy's ruling + the Slack/Discord UX
+// research): a labelled three-segment switch at the top of the channels
+// pane, all three names always visible, never icon-only, swaps the
+// channel list and the chat context with identical geometry. Linked
+// channels are distinguishable through the link fields the channels
+// API now carries per channel (applyChannelLinks above turns them
+// into the _discord and _slack flags); the open channel's config load
+// still refreshes its own flag and the chanMeta cache.
 export const linkedChannels = (channels = ws.channels) => channels.filter((c) => c._discord);
-const slackLinkedChannels = (channels = ws.channels) => channels.filter((c) => c._slack);
+export const slackLinkedChannels = (channels = ws.channels) => channels.filter((c) => c._slack);
 const githubLinkedChannels = (channels = ws.channels) => channels.filter((c) => c._github);
-const modeChannels = () => (ws.mode === 'discord' ? linkedChannels() : ws.channels);
+export const channelsForMode = (mode, channels = ws.channels) => (mode === 'discord' ? linkedChannels(channels) : mode === 'slack' ? slackLinkedChannels(channels) : channels);
+const modeChannels = () => channelsForMode(ws.mode);
 function renderNetSwitch() {
-  const envoy = $('ew-net-envoy'); const discord = $('ew-net-discord'); if (!envoy || !discord) return;
+  const envoy = $('ew-net-envoy'); const discord = $('ew-net-discord'); const slack = $('ew-net-slack'); if (!envoy || !discord || !slack) return;
   const dOn = ws.mode === 'discord';
-  envoy.classList.toggle('on', !dOn); envoy.setAttribute('aria-selected', String(!dOn));
+  const sOn = ws.mode === 'slack';
+  envoy.classList.toggle('on', !dOn && !sOn); envoy.setAttribute('aria-selected', String(!dOn && !sOn));
   discord.classList.toggle('on', dOn); discord.setAttribute('aria-selected', String(dOn));
+  slack.classList.toggle('on', sOn); slack.setAttribute('aria-selected', String(sOn));
   // Inactive-side badge: the one count the data model honestly has is
   // the linked-channel count (no unread/mention counts exist client-
   // side), so it rides the Discord segment while Envoy is active, in a
-  // neutral chip — never the red mention style it does not mean.
+  // neutral chip, never the red mention style it does not mean. The
+  // Slack segment carries the same chip for its own linked count.
   const n = linkedChannels().length;
   const chip = $('ew-net-discord-count');
   chip.hidden = dOn || n === 0;
   chip.textContent = String(n);
   discord.title = n ? `Discord — ${n} linked channel${n === 1 ? '' : 's'}` : 'Discord';
+  const m = slackLinkedChannels().length;
+  const sChip = $('ew-net-slack-count');
+  sChip.hidden = sOn || m === 0;
+  sChip.textContent = String(m);
+  slack.title = m ? `Slack · ${m} linked channel${m === 1 ? '' : 's'}` : 'Slack';
 }
 // Anti-mis-send strip directly above the composer: names the network
 // and channel a message will land in, in both modes. The wording is a
@@ -1751,6 +1763,9 @@ export function netStripText({ mode, channel, config = null } = {}) {
   if (mode === 'discord') {
     return channel ? `You're posting to Discord · #${channel.discord?.channelName || config?.discord?.channelName || title}` : "You're in Discord · no channel linked yet";
   }
+  if (mode === 'slack') {
+    return channel ? `You're posting to Slack · #${channel.slack?.channelName || config?.slack?.channelName || title}` : "You're in Slack · no channel linked yet";
+  }
   // Maestro always-on (2026-11-09): every Envoy channel dispatches as
   // Maestro — there is no plain posting mode left to name.
   if (isDeskChannel(channel)) {
@@ -1762,8 +1777,11 @@ function renderNetStrip() {
   const strip = $('ew-net-strip'); if (!strip) return;
   const ch = ws.channels.find((c) => c.id === ws.channelId);
   const dOn = ws.mode === 'discord';
+  const sOn = ws.mode === 'slack';
   strip.classList.toggle('discord', dOn);
+  strip.classList.toggle('slack', sOn);
   $('ew-chat').classList.toggle('net-discord', dOn);
+  $('ew-chat').classList.toggle('net-slack', sOn);
   strip.textContent = netStripText({ mode: ws.mode, channel: ch, config: ws.config });
 }
 function setComposer(on) {
@@ -1774,6 +1792,9 @@ function setComposer(on) {
 export const discordEmptyText = (bot = ws.discordBot) => bot?.configured
   ? 'No channels are linked to Discord yet. Flip to Envoy, open a channel and use Link Discord to mirror it here.'
   : 'The Helmian Discord bot is not connected yet. Once it is, linked channels mirror here.';
+export const slackEmptyText = (bot = ws.slackBot) => bot?.configured
+  ? 'No channels are linked to Slack yet. Flip to Envoy, open a channel and use Link Slack to mirror it here.'
+  : 'The Helmian Slack bot is not connected yet. Once it is, linked channels mirror here.';
 // ---------- opening the desk channel ----------
 // The desk channel is resolved once: from the channel list when it
 // already exists, otherwise the server creates it (and seeds its
@@ -1804,23 +1825,24 @@ async function openDeskChannel() {
   else ws.ctx.toast('The desk is not reachable yet. Try again.');
 }
 async function setNetMode(mode) {
-  if (mode !== 'envoy' && mode !== 'discord') return;
+  if (mode !== 'envoy' && mode !== 'discord' && mode !== 'slack') return;
   if (ws.mode === mode) { renderNetSwitch(); return; }
   if (ws.channelId) ls.set(`netChannel.${ws.mode}`, ws.channelId);
   ws.mode = mode; ls.set('netMode', mode);
   // Channel creation is an Envoy-side act; hide its affordances here.
   $('ew-new-channel').hidden = true;
-  $('ew-add-channel').hidden = mode === 'discord';
+  $('ew-add-channel').hidden = mode !== 'envoy';
   const pool = modeChannels();
   const saved = ls.get(`netChannel.${mode}`, null);
   const target = pool.some((c) => c.id === saved) ? saved : pool[0]?.id ?? null;
   renderNetSwitch(); renderChannels(); renderNetStrip();
   if (target) { await selectChannel(target); return; }
-  // Discord mode with nothing linked: honest empty state, no fake chat.
+  // Discord or Slack mode with nothing linked: honest empty state,
+  // no fake chat.
   ws.channelId = null; ws.config = null; ws.messages = []; ws.sig = null;
   renderChannels(); renderHeader(); renderNetStrip();
-  $('ew-channel-title').textContent = 'Discord';
-  $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, discordEmptyText()));
+  $('ew-channel-title').textContent = mode === 'slack' ? 'Slack' : 'Discord';
+  $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, mode === 'slack' ? slackEmptyText() : discordEmptyText()));
   setComposer(false);
 }
 
@@ -1830,14 +1852,23 @@ function renderChannels() {
     chatAvatar(c, 'sm'), h('span', { class: 'name' }, c.title || c.slug),
     h('span', { class: 'tags' }, c._discord ? h('span', { class: 'ew-mini discord', title: 'Linked to Discord' }) : null, c._slack ? h('span', { class: 'ew-mini slack', title: 'Linked to Slack' }) : null, c._agents ? h('span', { class: 'ew-mini agents', title: `${c._agents} agent(s)` }) : null, c.kind === 'agent' ? h('span', { class: 'ew-mini room', title: 'Private agent room' }) : null));
   renderNetSwitch();
-  list.setAttribute('aria-label', ws.mode === 'discord' ? 'Discord channels' : 'Envoy channels');
-  $('ew-add-channel').hidden = ws.mode === 'discord' || !$('ew-new-channel').hidden;
+  list.setAttribute('aria-label', ws.mode === 'discord' ? 'Discord channels' : ws.mode === 'slack' ? 'Slack channels' : 'Envoy channels');
+  $('ew-add-channel').hidden = ws.mode !== 'envoy' || !$('ew-new-channel').hidden;
   const linked = linkedChannels();
   const bot = ws.discordBot;
+  const slackLinked = slackLinkedChannels();
+  const slackBot = ws.slackBot;
   if (ws.mode === 'discord') {
     list.replaceChildren(
       h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-discord-mark', 'aria-hidden': 'true' }), 'DISCORD'),
       ...(linked.length ? linked.map(row) : [h('p', { class: 'ew-note' }, bot?.configured ? 'No channels linked yet. Flip to Envoy, open a channel and use + Link Discord in the channel list to mirror it here.' : 'Bot not connected yet. Linked channels mirror here.')])
+    );
+    return;
+  }
+  if (ws.mode === 'slack') {
+    list.replaceChildren(
+      h('div', { class: 'ew-src-head' }, h('span', { class: 'ew-slack-mark', 'aria-hidden': 'true' }), 'SLACK'),
+      ...(slackLinked.length ? slackLinked.map(row) : [h('p', { class: 'ew-note' }, slackBot?.configured ? 'No channels linked yet. Flip to Envoy, open a channel and use + Link Slack in the channel list to mirror it here.' : 'Bot not connected yet. Linked channels mirror here.')])
     );
     return;
   }
@@ -1897,6 +1928,7 @@ function renderChannels() {
       'SLACK',
       h('button', { type: 'button', class: 'ew-icon sm', title: 'Link a Slack channel to this channel', 'aria-label': 'Link Slack channel', style: 'margin-left:auto;', onclick: (e) => { e.stopPropagation(); if (narrow()) closeSheets(); linkSlack(); } }, '+')
     ),
+    ...(slackLinked.length ? slackLinked.map(row) : [h('p', { class: 'ew-note' }, slackBot?.configured ? 'No channels linked yet.' : 'Bot not connected yet. Linked channels mirror here.')]),
     ws.config?.slack
       ? h('button', { type: 'button', class: 'ew-channel', title: `This channel mirrors with Slack #${ws.config.slack.channelName || ws.config.slack.channelId} — click to manage`, onclick: () => { if (narrow()) closeSheets(); linkSlack(); } },
           h('span', { class: 'ew-slack-mark', 'aria-hidden': 'true' }),
@@ -2055,7 +2087,7 @@ export function maestroHeaderState({ desk = false } = {}) {
 // The composer placeholder for the open channel. Every Envoy channel
 // carries the dispatch wording: an unnamed message reaches the crew.
 export function composerPlaceholderText({ mode, title, hasAgents = false, narrowScreen = false } = {}) {
-  if (mode === 'discord') return `Message #${title}`;
+  if (mode === 'discord' || mode === 'slack') return `Message #${title}`;
   return `Message #${title} · Maestro follows you here — @name for one agent, no name for everyone`;
 }
 // The empty-channel line. Every channel with a crew carries the
@@ -5006,7 +5038,7 @@ function readFileAsBase64(file) {
 
 // ---------- messages ----------
 async function loadMessages() {
-  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); return; }
+  const id = ws.channelId; if (!id) { $('ew-messages').replaceChildren(h('div', { class: 'ew-empty' }, ws.mode === 'discord' ? discordEmptyText() : ws.mode === 'slack' ? slackEmptyText() : 'No channel yet. Ask the workspace owner to create one.')); setComposer(false); return; }
   const body = await ws.ctx.api(`/api/admin/envoy/messages?channel_id=${encodeURIComponent(id)}&limit=100`);
   if (id !== ws.channelId) return;
   const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -5909,7 +5941,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=606b84c580271b8a');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=3941897bff464b82');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -6392,6 +6424,7 @@ function wire() {
   $('ew-add-channel').addEventListener('click', openNewChannel);
   $('ew-net-envoy').addEventListener('click', () => setNetMode('envoy'));
   $('ew-net-discord').addEventListener('click', () => setNetMode('discord'));
+  $('ew-net-slack').addEventListener('click', () => setNetMode('slack'));
   renderNetSwitch(); renderNetStrip();
   $('ew-chat-ava').addEventListener('click', openAvatarModal);
   wireSwipe();

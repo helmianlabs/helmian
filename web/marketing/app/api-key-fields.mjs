@@ -19,7 +19,7 @@
 // this, a connected card showed no form at all. In change mode the
 // same fields render for an already-connected provider and the same
 // submit stores over the old record through the same route.
-import { CREDENTIAL_CONNECT_PATH, CONNECT_FIELDS_TIMEOUT_MS, connectFailureText } from './connect-fields.mjs?v=606b84c580271b8a';
+import { CREDENTIAL_CONNECT_PATH, CONNECT_FIELDS_TIMEOUT_MS, connectFailureText } from './connect-fields.mjs?v=3941897bff464b82';
 
 export { CREDENTIAL_CONNECT_PATH, CONNECT_FIELDS_TIMEOUT_MS };
 
