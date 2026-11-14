@@ -1,8 +1,8 @@
 // Integrations page: small cards, plain words. Nothing internal is shown here:
 // no setting names, ids, addresses of services, or keys. The model is pure (tested);
 // renderIntegrations draws it.
-import { integrationsModel, profileSyncResultModel, usageModel } from './app-model.mjs?v=367e1171b51fe067';
-import { avatarFor } from './avatars.mjs?v=367e1171b51fe067';
+import { integrationsModel, profileSyncResultModel, usageModel } from './app-model.mjs?v=b8a29b0fd79eec58';
+import { avatarFor } from './avatars.mjs?v=b8a29b0fd79eec58';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is

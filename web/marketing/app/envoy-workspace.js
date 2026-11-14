@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=367e1171b51fe067';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=367e1171b51fe067';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=367e1171b51fe067';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=367e1171b51fe067';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=367e1171b51fe067';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=367e1171b51fe067';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=367e1171b51fe067';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=367e1171b51fe067';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=367e1171b51fe067';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=367e1171b51fe067';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=367e1171b51fe067';
-import { createConnectFields } from './connect-fields.mjs?v=367e1171b51fe067';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=367e1171b51fe067';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=367e1171b51fe067';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=b8a29b0fd79eec58';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=b8a29b0fd79eec58';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=b8a29b0fd79eec58';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=b8a29b0fd79eec58';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=b8a29b0fd79eec58';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=b8a29b0fd79eec58';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=b8a29b0fd79eec58';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=b8a29b0fd79eec58';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=b8a29b0fd79eec58';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=b8a29b0fd79eec58';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=b8a29b0fd79eec58';
+import { createConnectFields } from './connect-fields.mjs?v=b8a29b0fd79eec58';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=b8a29b0fd79eec58';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=b8a29b0fd79eec58';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -444,6 +444,60 @@ export function watchStepText(offer) {
 }
 export function watchOfferSignature(offers) {
   return (offers ?? []).map((o) => `${o.seat}:${o.url ?? ''}`).join(',');
+}
+
+// ---------- take control (live browser view, Bite 4) ----------
+// While watching, the member can ask for the seat's drive lease
+// and drive the agent's page from the pane. The pure pieces are
+// here; the socket wiring lives with the watch code further down.
+// Coordinates: screencast frames are capped at 1280 by 900 and the
+// canvas takes the decoded frame's own size, so a frame pixel is
+// a page pixel on this road. The canvas is styled object-fit:
+// contain, so the picture sits letterboxed inside the pane's box:
+// the mapping walks through the displayed picture's own rectangle
+// (centered, aspect kept), and a point in the letterbox bands
+// maps to nothing, never to a guessed point on the page edge.
+export function watchFramePoint({ offsetX, offsetY, boxWidth, boxHeight, frameWidth, frameHeight } = {}) {
+  const nums = [offsetX, offsetY, boxWidth, boxHeight, frameWidth, frameHeight];
+  if (!nums.every((n) => typeof n === 'number' && Number.isFinite(n))) return null;
+  if (boxWidth <= 0 || boxHeight <= 0 || frameWidth <= 0 || frameHeight <= 0) return null;
+  const scale = Math.min(boxWidth / frameWidth, boxHeight / frameHeight);
+  if (!(scale > 0)) return null;
+  const shownWidth = frameWidth * scale;
+  const shownHeight = frameHeight * scale;
+  const shownX = offsetX - (boxWidth - shownWidth) / 2;
+  const shownY = offsetY - (boxHeight - shownHeight) / 2;
+  if (shownX < 0 || shownY < 0 || shownX >= shownWidth || shownY >= shownHeight) return null;
+  return {
+    x: Math.min(Math.floor(shownX / scale), frameWidth - 1),
+    y: Math.min(Math.floor(shownY / scale), frameHeight - 1),
+  };
+}
+// The named keys the pane forwards as key events. A plain
+// printable key travels as text instead (one insert, the way the
+// drivers themselves type); browser shortcuts and modified keys
+// are never forwarded, so the member's own copy, paste and
+// devtools keys keep working on the desk.
+const WATCH_KEY_NAMES = Object.freeze(new Set([
+  'Enter', 'Tab', 'Backspace', 'Delete', 'Escape',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'Home', 'End', 'PageUp', 'PageDown',
+]));
+export function watchKeyInput({ key, code, ctrlKey = false, metaKey = false, altKey = false } = {}) {
+  if (typeof key !== 'string' || !key) return null;
+  if (ctrlKey || metaKey || altKey) return null;
+  if (key.length === 1) return { type: 'input', kind: 'text', text: key };
+  if (!WATCH_KEY_NAMES.has(key)) return null;
+  const msg = { type: 'input', kind: 'key', key };
+  if (typeof code === 'string' && code) msg.code = code;
+  return msg;
+}
+// Pasted text rides as one text input, capped at the length the
+// watch service accepts; anything longer is trimmed to the cap
+// rather than dropped whole.
+export function watchTextInput(text) {
+  if (typeof text !== 'string' || !text) return null;
+  return { type: 'input', kind: 'text', text: text.slice(0, 2000) };
 }
 
 // ---------- seat avatar motion (emoji bite 4) ----------
@@ -5708,7 +5762,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=367e1171b51fe067');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=b8a29b0fd79eec58');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -5855,7 +5909,17 @@ function closePage() {
 // leaves the tab, opens a page of their own, or when the seat's
 // offer leaves the poll — and an ended watch never leaves its
 // last frame standing as if it were live.
-const watchView = { seat: null, socket: null, pending: null, drawing: false };
+//
+// Take control (Bite 4): while watching, the member can hold the
+// seat's drive lease. The watch service owns the lease and tells
+// every watcher its state ({type:'control'}); this pane changes
+// its own control state only on those messages, never on the
+// click that asked. While the lease is this pane's, pointer,
+// wheel, keyboard and paste on the canvas become input messages
+// on the same socket, and the agent's driver yields between its
+// steps until control is given back, the lease idles out, or the
+// watch ends.
+const watchView = { seat: null, socket: null, pending: null, drawing: false, control: 'none', holder: null };
 let watchBarSig = null;
 
 function liveWatchOffers() {
@@ -5871,15 +5935,25 @@ function syncWatchBar() {
   // watch is over too — end it here rather than leave a still
   // picture standing in the pane.
   if (watchView.seat && !offers.some((o) => o.seat === watchView.seat)) endWatch();
-  const sig = watchView.seat ? `watching:${watchView.seat}` : watchOfferSignature(offers);
+  const sig = watchView.seat
+    ? `watching:${watchView.seat}:${watchView.control}:${watchView.holder ?? ''}`
+    : watchOfferSignature(offers);
   if (sig === watchBarSig) return;
   watchBarSig = sig;
   if (watchView.seat) {
     const name = NAMES[watchView.seat] ?? watchView.seat;
-    bar.replaceChildren(h('div', { class: 'ew-watch-row' },
-      h('span', { class: 'ew-watch-live' }, `Watching ${name} live`),
-      h('span', { class: 'ew-spacer' }),
-      h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: () => stopWatch() }, 'Stop watching')));
+    const kids = [h('span', { class: 'ew-watch-live' }, `Watching ${name} live`), h('span', { class: 'ew-spacer' })];
+    if (watchView.control === 'mine') {
+      kids.push(h('span', { class: 'ew-watch-driving-label' }, 'You are driving'),
+        h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: () => releaseControl() }, 'Give back control'));
+    } else if (watchView.control === 'theirs') {
+      kids.push(h('span', {}, `${watchView.holder ?? 'Someone else'} is driving`),
+        h('button', { type: 'button', class: 'ew-btn ghost sm', disabled: true, title: 'Only one person can drive at a time' }, 'Take control'));
+    } else {
+      kids.push(h('button', { type: 'button', class: 'ew-btn primary sm', onclick: () => requestControl() }, 'Take control'));
+    }
+    kids.push(h('button', { type: 'button', class: 'ew-btn ghost sm', onclick: () => stopWatch() }, 'Stop watching'));
+    bar.replaceChildren(h('div', { class: 'ew-watch-row' }, ...kids));
     return;
   }
   if (offers.length) {
@@ -5918,6 +5992,11 @@ function onWatchMessage(data) {
   try { msg = JSON.parse(String(data)); } catch { return; }
   if (!msg || typeof msg !== 'object') return;
   if (msg.type === 'ready') { showWatchCanvas(); return; }
+  if (msg.type === 'control') { applyControlState(msg); return; }
+  if (msg.type === 'control-denied') {
+    $('ew-browser-status').textContent = `${typeof msg.holder === 'string' && msg.holder ? msg.holder : 'Someone else'} is already driving.`;
+    return;
+  }
   if (msg.type === 'page') {
     // The address bar follows the agent's page as it moves.
     if (typeof msg.url === 'string' && msg.url) {
@@ -5930,6 +6009,120 @@ function onWatchMessage(data) {
     try { watchView.socket?.send(JSON.stringify({ type: 'ack', sessionId: msg.sessionId })); } catch { /* a failed ack drops one frame, never the watch */ }
     if (typeof msg.data === 'string' && msg.data) drawWatchFrame(msg.data);
   }
+}
+
+// The drive lease, pane side (Bite 4). The service is the only
+// authority: asking changes nothing here until its control
+// message lands, and every pane watching the seat hears the same
+// change, so two windows of the same member can never both
+// believe they are driving.
+function requestControl() {
+  if (!watchView.socket || watchView.control !== 'none') return;
+  const name = typeof ws.profile?.nickname === 'string' ? ws.profile.nickname : null;
+  try { watchView.socket.send(JSON.stringify({ type: 'control-request', name })); } catch { /* a dead socket ends the watch on its own */ }
+}
+
+function releaseControl() {
+  if (!watchView.socket || watchView.control !== 'mine') return;
+  try { watchView.socket.send(JSON.stringify({ type: 'control-release' })); } catch { /* a dead socket ends the watch on its own */ }
+}
+
+function applyControlState(msg) {
+  const name = NAMES[watchView.seat] ?? watchView.seat ?? 'The agent';
+  const was = watchView.control;
+  watchView.control = !msg.driving ? 'none' : msg.yours ? 'mine' : 'theirs';
+  watchView.holder = typeof msg.holder === 'string' && msg.holder ? msg.holder : null;
+  if (watchView.control === 'mine') attachWatchInput();
+  else detachWatchInput();
+  const status = $('ew-browser-status');
+  if (watchView.control === 'mine') status.textContent = `You are driving, ${name} is paused.`;
+  else if (watchView.control === 'theirs') status.textContent = `${watchView.holder ?? 'Someone else'} is driving, ${name} is paused.`;
+  else if (was !== 'none') status.textContent = `${name} has control again.`;
+  watchBarSig = null;
+  syncWatchBar();
+}
+
+// Canvas input while driving: pointer, wheel, keys and paste on
+// the canvas become input messages. Handlers live only while
+// this pane holds the lease; they are attached and detached as
+// the control state lands, so a pane that is only watching can
+// never send input by accident. Pointer positions go through
+// watchFramePoint; keys through watchKeyInput.
+const watchInputHandlers = { pointerdown: null, pointermove: null, wheel: null, keydown: null, paste: null };
+let watchMoveLastSent = 0;
+
+function watchSendInput(msg) {
+  if (!msg || watchView.control !== 'mine' || !watchView.socket) return;
+  try { watchView.socket.send(JSON.stringify(msg)); } catch { /* a dead socket ends the watch on its own */ }
+}
+
+function watchPointFromEvent(canvas, event) {
+  const rect = canvas.getBoundingClientRect();
+  return watchFramePoint({
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+    boxWidth: rect.width,
+    boxHeight: rect.height,
+    frameWidth: canvas.width,
+    frameHeight: canvas.height,
+  });
+}
+
+function attachWatchInput() {
+  const canvas = $('ew-browser-watch');
+  if (!canvas || watchInputHandlers.pointerdown) return;
+  canvas.classList.add('ew-watch-driving');
+  canvas.tabIndex = 0;
+  watchInputHandlers.pointerdown = (event) => {
+    const point = watchPointFromEvent(canvas, event);
+    if (!point) return;
+    event.preventDefault();
+    canvas.focus();
+    watchSendInput({ type: 'input', kind: 'click', ...point });
+  };
+  watchInputHandlers.pointermove = (event) => {
+    const now = Date.now();
+    if (now - watchMoveLastSent < 60) return;
+    const point = watchPointFromEvent(canvas, event);
+    if (!point) return;
+    watchMoveLastSent = now;
+    watchSendInput({ type: 'input', kind: 'move', ...point });
+  };
+  watchInputHandlers.wheel = (event) => {
+    const point = watchPointFromEvent(canvas, event);
+    if (!point) return;
+    event.preventDefault();
+    watchSendInput({ type: 'input', kind: 'wheel', ...point, deltaX: Math.round(event.deltaX), deltaY: Math.round(event.deltaY) });
+  };
+  watchInputHandlers.keydown = (event) => {
+    const msg = watchKeyInput(event);
+    if (!msg) return;
+    event.preventDefault();
+    watchSendInput(msg);
+  };
+  watchInputHandlers.paste = (event) => {
+    const msg = watchTextInput(event.clipboardData?.getData('text') ?? '');
+    if (!msg) return;
+    event.preventDefault();
+    watchSendInput(msg);
+  };
+  canvas.addEventListener('pointerdown', watchInputHandlers.pointerdown);
+  canvas.addEventListener('pointermove', watchInputHandlers.pointermove);
+  canvas.addEventListener('wheel', watchInputHandlers.wheel, { passive: false });
+  canvas.addEventListener('keydown', watchInputHandlers.keydown);
+  canvas.addEventListener('paste', watchInputHandlers.paste);
+}
+
+function detachWatchInput() {
+  const canvas = $('ew-browser-watch');
+  if (!canvas || !watchInputHandlers.pointerdown) return;
+  canvas.removeEventListener('pointerdown', watchInputHandlers.pointerdown);
+  canvas.removeEventListener('pointermove', watchInputHandlers.pointermove);
+  canvas.removeEventListener('wheel', watchInputHandlers.wheel);
+  canvas.removeEventListener('keydown', watchInputHandlers.keydown);
+  canvas.removeEventListener('paste', watchInputHandlers.paste);
+  for (const key of Object.keys(watchInputHandlers)) watchInputHandlers[key] = null;
+  canvas.classList.remove('ew-watch-driving');
 }
 
 function showWatchCanvas() {
@@ -5979,9 +6172,18 @@ function drawWatchFrame(data) {
 function teardownWatch() {
   const seat = watchView.seat;
   const socket = watchView.socket;
+  // A held lease goes back before the socket closes (the service
+  // also releases it on disconnect, so this is a courtesy, never
+  // the only road).
+  if (socket && watchView.control === 'mine') {
+    try { socket.send(JSON.stringify({ type: 'control-release' })); } catch { /* the disconnect release covers it */ }
+  }
+  detachWatchInput();
   watchView.seat = null;
   watchView.socket = null;
   watchView.pending = null;
+  watchView.control = 'none';
+  watchView.holder = null;
   if (socket) { try { socket.close(); } catch { /* already gone */ } }
   const canvas = $('ew-browser-watch');
   if (canvas) canvas.hidden = true;

@@ -492,6 +492,8 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-browser-watchbar:empty { display:none; }
 .ew-watch-row { display:flex; align-items:center; gap:8px; min-height:30px; font-size:12px; }
 .ew-watch-live { font-weight:600; }
+.ew-watch-driving-label { font-weight:600; color:var(--accent); }
+.ew-browser-view canvas.ew-watch-driving { outline:2px solid var(--accent); outline-offset:-2px; cursor:crosshair; }
 .ew-browser-start { position:absolute; inset:0; background:var(--panel); padding:18px; overflow:auto; }
 .ew-quick { display:grid; grid-template-columns:repeat(auto-fill, minmax(130px, 1fr)); gap:8px; margin-top:10px; }
 .ew-quick button { text-align:left; border:1px solid var(--border); background:var(--panel-2); color:var(--text); border-radius:10px; padding:10px; cursor:pointer; font-size:12px; }

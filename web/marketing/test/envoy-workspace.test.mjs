@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { CALM_POLL_MS, MAESTRO_DESK_SLUG, activityCue, activityCueText, activityCues, activityElapsed, activityLive, activityName, activityProviderNames, addressed, agentRoomFor, agentRoomThread, customAgentCreateBody, deskChannelFor, deskRoster, deskTargets, dialogConnectFields, dragLayout, isDeskChannel, latestActivity, mergeReactionPost, mirrorLinkHeader, pickerAgentContext, reactionActorLabel, reactionChar, reactionChipModel, roomAddressed, watchOfferSignature, watchOffersFrom, watchPageName, watchStepText, WATCH_SEATS } from '../app/envoy-workspace.js';
+import { CALM_POLL_MS, MAESTRO_DESK_SLUG, activityCue, activityCueText, activityCues, activityElapsed, activityLive, activityName, activityProviderNames, addressed, agentRoomFor, agentRoomThread, customAgentCreateBody, deskChannelFor, deskRoster, deskTargets, dialogConnectFields, dragLayout, isDeskChannel, latestActivity, mergeReactionPost, mirrorLinkHeader, pickerAgentContext, reactionActorLabel, reactionChar, reactionChipModel, roomAddressed, watchFramePoint, watchKeyInput, watchOfferSignature, watchOffersFrom, watchPageName, watchStepText, watchTextInput, WATCH_SEATS } from '../app/envoy-workspace.js';
 import * as envoyWorkspace from '../app/envoy-workspace.js';
 
 // Layout bite 2 (Troy's ruling + Slack/Discord UX research, 2026-10-23):
@@ -1447,6 +1447,59 @@ test('watch step line: the page is named in plain words', () => {
   assert.equal(watchPageName(null), null);
   assert.equal(watchStepText({ name: 'Mistral', url: 'https://chat.mistral.ai/c/abc' }), 'Mistral is working in Le Chat');
   assert.equal(watchStepText({ name: 'Mistral', url: null }), 'Mistral is working in its browser');
+});
+
+// ---------- take control input mapping (live browser view, Bite 4) ----------
+// The pane's half of take control is three pure mappings: a
+// pointer position becomes a frame point (through the letterboxed
+// picture, never a guess), a keyboard event becomes a text or key
+// input (browser shortcuts never travel), and pasted text becomes
+// one capped text input. What they return null for can never be
+// sent, whatever the wiring above them does.
+
+test('watch frame point: maps through the letterboxed picture', () => {
+  // Frame 1280x900 in a 640x600 box: scale 0.5, picture 640x450,
+  // letterbox bands of 75 above and below.
+  const base = { boxWidth: 640, boxHeight: 600, frameWidth: 1280, frameHeight: 900 };
+  assert.deepEqual(watchFramePoint({ ...base, offsetX: 320, offsetY: 300 }), { x: 640, y: 450 }, 'the centre of the picture is the centre of the frame');
+  assert.deepEqual(watchFramePoint({ ...base, offsetX: 0, offsetY: 75 }), { x: 0, y: 0 }, 'the picture corner is the frame corner');
+  assert.equal(watchFramePoint({ ...base, offsetX: 320, offsetY: 74 }), null, 'the top letterbox band maps to nothing');
+  assert.equal(watchFramePoint({ ...base, offsetX: 320, offsetY: 525 }), null, 'the bottom letterbox band maps to nothing');
+  assert.equal(watchFramePoint({ ...base, offsetX: 320, offsetY: Number.NaN }), null, 'junk maps to nothing');
+  assert.equal(watchFramePoint({ boxWidth: 0, boxHeight: 600, frameWidth: 1280, frameHeight: 900, offsetX: 1, offsetY: 100 }), null, 'a box with no width maps to nothing');
+  assert.equal(watchFramePoint(), null);
+  // A box at exactly the frame size maps one to one.
+  assert.deepEqual(watchFramePoint({ boxWidth: 1280, boxHeight: 900, frameWidth: 1280, frameHeight: 900, offsetX: 1279, offsetY: 899 }), { x: 1279, y: 899 });
+});
+
+test('watch key input: printable keys are text, named keys are keys, shortcuts stay home', () => {
+  assert.deepEqual(watchKeyInput({ key: 'a' }), { type: 'input', kind: 'text', text: 'a' });
+  assert.deepEqual(watchKeyInput({ key: ' ', code: 'Space' }), { type: 'input', kind: 'text', text: ' ' });
+  assert.deepEqual(watchKeyInput({ key: 'Enter', code: 'Enter' }), { type: 'input', kind: 'key', key: 'Enter', code: 'Enter' });
+  assert.deepEqual(watchKeyInput({ key: 'Backspace', code: 'Backspace' }), { type: 'input', kind: 'key', key: 'Backspace', code: 'Backspace' });
+  assert.deepEqual(watchKeyInput({ key: 'ArrowLeft' }), { type: 'input', kind: 'key', key: 'ArrowLeft' }, 'a key with no code still travels by name');
+  assert.equal(watchKeyInput({ key: 'c', ctrlKey: true }), null, 'copy stays the member own shortcut');
+  assert.equal(watchKeyInput({ key: 'v', metaKey: true }), null);
+  assert.equal(watchKeyInput({ key: 'F5' }), null, 'function keys are not forwarded');
+  assert.equal(watchKeyInput({ key: 'Shift', code: 'ShiftLeft' }), null, 'a bare modifier is not an input');
+  assert.equal(watchKeyInput({ key: '' }), null);
+  assert.equal(watchKeyInput(), null);
+});
+
+test('watch text input: paste rides as one capped text input', () => {
+  assert.deepEqual(watchTextInput('hello'), { type: 'input', kind: 'text', text: 'hello' });
+  assert.equal(watchTextInput('x'.repeat(5000)).text.length, 2000, 'a long paste is trimmed to the cap, not dropped');
+  assert.equal(watchTextInput(''), null);
+  assert.equal(watchTextInput(null), null);
+});
+
+test('watch pane: take control wiring rides the watch socket and the lease state', async () => {
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  for (const needle of ['function requestControl', 'function releaseControl', 'function applyControlState', 'function attachWatchInput', 'function detachWatchInput', "type: 'control-request'", "type: 'control-release'", "msg.type === 'control'", "'Take control'", "'Give back control'", "'You are driving'"]) {
+    assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
+  }
+  assert.match(css, /\.ew-watch-driving/, 'the driving state has a visible style');
 });
 
 test('watch pane: the shell carries the watch bar and the canvas, the desk carries the watch', async () => {
