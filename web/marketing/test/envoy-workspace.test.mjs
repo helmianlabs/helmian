@@ -785,6 +785,49 @@ test('bite 2: bot status known at boot resolves the empty-state wording to the t
   assert.equal(discordEmptyText(null), 'The Helmian Discord bot is not connected yet. Once it is, linked channels mirror here.');
 });
 
+// Slack mode (2026-11-14): the network switch gains its third segment.
+// Slack mirroring underneath (link flow, bridges, per-channel link
+// payload) was already at parity with Discord; only the view layer
+// was missing. These pins mirror the bite-2 Discord cases above.
+test('slack mode: third segment, coercion, mode list, strip and empty state mirror Discord', async () => {
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  assert.match(html, /id="ew-net-slack"/, 'index.html carries the Slack segment');
+  assert.match(html, /Slack<span id="ew-net-slack-count"/, 'Slack segment is word-labelled and carries the count chip');
+  assert.ok(js.includes("$('ew-net-slack').addEventListener('click', () => setNetMode('slack'))"), 'the Slack segment is wired to setNetMode');
+  assert.ok(js.includes("ws.mode === 'slack'"), 'the workspace carries slack mode branches');
+  assert.ok(css.includes('.ew-net-seg#ew-net-slack.on'), 'envoy.css colours the Slack segment on-state');
+  assert.ok(css.includes('.ew-net-strip.slack'), 'envoy.css colours the Slack net strip');
+  assert.ok(css.includes('#ew-chat.net-slack'), 'envoy.css accents the composer in Slack mode');
+
+  const { netModeFor, channelsForMode, slackLinkedChannels, netStripText, slackEmptyText, composerPlaceholderText, applyChannelLinks } = await import('../app/envoy-workspace.js');
+  assert.equal(netModeFor('slack'), 'slack', 'a stored slack mode restores as Slack');
+  assert.equal(netModeFor('discord'), 'discord', 'a stored discord mode still restores as Discord');
+  assert.equal(netModeFor('envoy'), 'envoy');
+  assert.equal(netModeFor('junk'), 'envoy', 'an unknown stored mode still falls back to Envoy');
+  assert.equal(netModeFor(undefined), 'envoy');
+
+  const channels = applyChannelLinks([
+    { id: 'team-1', slug: 'team', title: 'Team', kind: 'team', discord: null, slack: { teamId: 'T1', channelId: 'C1', channelName: 'all-helmian', teamName: 'Helmian', linkedAt: null } },
+    { id: 'room-1', slug: 'troy', title: 'troy', kind: 'agent', discord: { guildId: 'G1', channelId: 'D1', channelName: 'general', guildName: 'HELMIAN', linkedAt: null }, slack: null },
+  ], {});
+  assert.equal(channels[0]._slack, true);
+  assert.equal(channels[1]._slack, false);
+  assert.deepEqual(slackLinkedChannels(channels).map((c) => c.id), ['team-1'], 'the Slack list comes from the payload link flags');
+  assert.deepEqual(channelsForMode('slack', channels).map((c) => c.id), ['team-1'], 'Slack mode lists exactly the Slack-linked channels');
+  assert.deepEqual(channelsForMode('discord', channels).map((c) => c.id), ['room-1'], 'Discord mode still lists exactly the Discord-linked channels');
+  assert.deepEqual(channelsForMode('envoy', channels).map((c) => c.id), ['team-1', 'room-1'], 'Envoy mode still lists every channel');
+
+  assert.equal(netStripText({ mode: 'slack', channel: channels[0] }), "You're posting to Slack · #all-helmian");
+  assert.equal(netStripText({ mode: 'slack', channel: null }), "You're in Slack · no channel linked yet", 'the no-link wording mirrors the Discord one');
+  assert.equal(composerPlaceholderText({ mode: 'slack', title: 'Team' }), 'Message #Team');
+
+  assert.equal(slackEmptyText({ configured: true }), 'No channels are linked to Slack yet. Flip to Envoy, open a channel and use Link Slack to mirror it here.', 'configured bot + nothing linked says so');
+  assert.equal(slackEmptyText({ configured: false }), 'The Helmian Slack bot is not connected yet. Once it is, linked channels mirror here.', 'a bot that truly is not configured keeps the honest wording');
+  assert.equal(slackEmptyText(null), 'The Helmian Slack bot is not connected yet. Once it is, linked channels mirror here.');
+});
+
 test('bite 2: an older server payload (no link fields) still falls back to the chanMeta cache', async () => {
   const { applyChannelLinks } = await import('../app/envoy-workspace.js');
   const channels = applyChannelLinks([{ id: 'room-1', slug: 'troy', title: 'troy', kind: 'agent' }], { 'room-1': { a: 1, d: true, s: false } });
