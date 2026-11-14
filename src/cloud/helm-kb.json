@@ -701,7 +701,7 @@
     "install Helmian Guard",
     "where do I get the extension"
    ],
-   "source": "helmian.cloud/guard (live): packages v0.2.4 served from the page, one Chromium package and one Firefox package; no store listing yet, installation is the manual load the page describes.",
+   "source": "helmian.cloud/guard (live): packages v0.7.0 served from the page, one Chromium package and one Firefox package; no store listing yet, installation is the manual load the page describes.",
    "status": "grounded",
    "when": {
     "allWords": [],
