@@ -8,15 +8,15 @@
        the stylesheets land so a light-theme user never gets a dark
        flash. It is an external file because the /app CSP allows
        external scripts only; an inline block here cannot run. -->
-  <script src="/app/theme-init.js?v=ece322a2c6438134"></script>
+  <script src="/app/theme-init.js?v=34c17f39f875ee54"></script>
   <title>Helmian</title>
   <link rel="icon" type="image/png" href="/assets/helmian-logo.png">
   <link rel="manifest" href="/app/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/assets/helmian-logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="/app/app.css?v=ece322a2c6438134">
-  <link rel="stylesheet" href="/app/envoy.css?v=ece322a2c6438134">
-  <script type="module" src="/app/app.js?v=ece322a2c6438134"></script>
+  <link rel="stylesheet" href="/app/app.css?v=34c17f39f875ee54">
+  <link rel="stylesheet" href="/app/envoy.css?v=34c17f39f875ee54">
+  <script type="module" src="/app/app.js?v=34c17f39f875ee54"></script>
 </head>
 <body>
 <div id="shell" class="shell" data-view="desktop">
@@ -285,24 +285,37 @@
           </div>
           <div class="ew-tabpane active" data-tabpane="browser" role="tabpanel">
             <div class="ew-browser" id="ew-browser">
-              <form class="ew-browser-bar" id="ew-browser-form">
-                <button class="ew-icon" type="button" id="ew-browser-back" aria-label="Back" title="Back" disabled>←</button>
-                <button class="ew-icon" type="button" id="ew-browser-fwd" aria-label="Forward" title="Forward" disabled>→</button>
-                <button class="ew-icon" type="button" id="ew-browser-reload" aria-label="Reload" title="Reload" disabled>⟳</button>
-                <input id="ew-browser-url" type="text" inputmode="url" placeholder="Search or enter address" aria-label="Address" maxlength="4096" autocomplete="off" spellcheck="false">
-                <button class="ew-btn primary sm" type="submit">Go</button>
-                <button class="ew-icon" type="button" id="ew-browser-external" aria-label="Open in a new tab" title="Open in a new tab" disabled>↗</button>
-                <button class="ew-icon" type="button" id="ew-browser-close" aria-label="Close page" title="Close page" disabled>✕</button>
-              </form>
-              <div class="ew-browser-status" id="ew-browser-status" role="status" aria-live="polite"></div>
-              <div class="ew-browser-watchbar" id="ew-browser-watchbar"></div>
-              <div class="ew-browser-view">
-                <div class="ew-browser-start" id="ew-browser-start">
-                  <p class="muted sm">Public HTTPS sites open here. Every visit goes in the audit trail. Some sites refuse to be shown inside other apps; use ↗ for those.</p>
-                  <div class="ew-quick" id="ew-browser-quick"></div>
+              <div class="ew-browser-faces">
+                <div class="ew-seg" role="group" aria-label="Browser face">
+                  <button type="button" data-bface="agents" class="active" aria-pressed="true">Agent screens<span class="ew-bface-dot" id="ew-bface-dot" hidden></span></button>
+                  <button type="button" data-bface="web" aria-pressed="false">Web browser</button>
                 </div>
-                <iframe id="ew-browser-frame" title="Browser" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" allow="fullscreen; picture-in-picture; encrypted-media" referrerpolicy="strict-origin-when-cross-origin" hidden></iframe>
-                <canvas id="ew-browser-watch" title="Live agent view" hidden></canvas>
+              </div>
+              <div class="ew-browser-status" id="ew-browser-status" role="status" aria-live="polite"></div>
+              <div class="ew-bface" id="ew-bface-agents">
+                <div class="ew-browser-watchbar" id="ew-browser-watchbar"></div>
+                <div class="ew-browser-view">
+                  <div class="ew-browser-idle" id="ew-browser-idle">No agent is working in a browser right now. Agents that answer through a direct connection work without a browser.</div>
+                  <canvas id="ew-browser-watch" title="Live agent view" hidden></canvas>
+                </div>
+              </div>
+              <div class="ew-bface" id="ew-bface-web" hidden>
+                <form class="ew-browser-bar" id="ew-browser-form">
+                  <button class="ew-icon" type="button" id="ew-browser-back" aria-label="Back" title="Back" disabled>←</button>
+                  <button class="ew-icon" type="button" id="ew-browser-fwd" aria-label="Forward" title="Forward" disabled>→</button>
+                  <button class="ew-icon" type="button" id="ew-browser-reload" aria-label="Reload" title="Reload" disabled>⟳</button>
+                  <input id="ew-browser-url" type="text" inputmode="url" placeholder="Search or enter address" aria-label="Address" maxlength="4096" autocomplete="off" spellcheck="false">
+                  <button class="ew-btn primary sm" type="submit">Go</button>
+                  <button class="ew-icon" type="button" id="ew-browser-external" aria-label="Open in a new tab" title="Open in a new tab" disabled>↗</button>
+                  <button class="ew-icon" type="button" id="ew-browser-close" aria-label="Close page" title="Close page" disabled>✕</button>
+                </form>
+                <div class="ew-browser-view">
+                  <div class="ew-browser-start" id="ew-browser-start">
+                    <p class="muted sm">Public HTTPS sites open here. Every visit goes in the audit trail. Some sites refuse to be shown inside other apps; use ↗ for those.</p>
+                    <div class="ew-quick" id="ew-browser-quick"></div>
+                  </div>
+                  <iframe id="ew-browser-frame" title="Browser" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation" allow="fullscreen; picture-in-picture; encrypted-media" referrerpolicy="strict-origin-when-cross-origin" hidden></iframe>
+                </div>
               </div>
             </div>
           </div>
