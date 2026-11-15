@@ -305,8 +305,12 @@ test('one poll over 16 channels: same payload, a fraction of the round trips', a
 
   // The payload, exactly as the old poll shaped it for this fixture:
   // one work item (the unanswered ask), in channel 1, for claude,
-  // carrying the notebook and knowledge base blocks and the full
-  // three-message context in oldest-first order.
+  // carrying the notebook and knowledge base blocks and the context
+  // in oldest-first order. One deliberate payload change since the
+  // old shape was pinned: the context no longer contains the ask
+  // itself (audit letter 731 — it rode in its own Recent
+  // conversation and again under Reply to this message), so the
+  // three-message channel history yields a two-message context.
   assert.deepEqual(Object.keys(result).sort(), ['agentState', 'durability', 'work']);
   assert.equal(result.durability, 'committed');
   assert.deepEqual(result.agentState, { state: 'asleep', gated: false });
@@ -320,7 +324,7 @@ test('one poll over 16 channels: same payload, a fraction of the round trips', a
   assert.equal(item.message.id, ASK_B_ID);
   assert.equal(item.notebook, 'NOTEBOOK-BLOCK');
   assert.equal(item.knowledgeBase, 'KB-BLOCK');
-  assert.deepEqual(item.context.map((m) => m.id), [ASK_A_ID, REPLY_ID, ASK_B_ID]);
+  assert.deepEqual(item.context.map((m) => m.id), [ASK_A_ID, REPLY_ID]);
 
   // The weight. Old shape for this fixture (counted on the pre-bite
   // code with this same fake): begin + identity + membership + 3
