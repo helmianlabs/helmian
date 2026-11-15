@@ -1,5 +1,10 @@
 # Herald desktop adapter boundary
 
+> **Status, November 14, 2026: ON HOLD.** Helmian Herald is paused as
+> a product. The current focus is the Helmian platform itself. The
+> code stays in the tree as it stands; no new Herald work is being
+> built right now.
+
 This folder owns the desktop half of Helmian Herald. The safe Core gateway is
 implemented and tested here; WPF still needs to supply the real selected
 project/session snapshot and the existing session-owned Maestro delegates.

@@ -1,5 +1,10 @@
 # Helmian Herald source map
 
+> **Status, November 14, 2026: ON HOLD.** Helmian Herald is paused as
+> a product. The current focus is the Helmian platform itself. The
+> code stays in the tree as it stands; no new Herald work is being
+> built right now.
+
 Herald is Helmian on a phone. The phone is a paired view and deliberate input
 surface for one running desktop-owned session. It is not a terminal, file
 browser, provider client, or a dependency on the Capstone Foundry product.

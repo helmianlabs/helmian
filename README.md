@@ -120,8 +120,8 @@ are reported by the exact account that hit them — never as a vague
 
 **Optional — connect your PC and your phone.** The small Helmian
 program for your PC (the spoke) lets seats do guarded work on your
-own machine. **Herald** puts your desk and its approvals on your
-phone. The current Windows installer is Helmian Desktop 1.0.6,
+own machine. **Herald**, the phone surface, is on hold (see Current
+status below). The current Windows installer is Helmian Desktop 1.0.6,
 offered after sign-up and from the site's latest-release address.
 
 In channels, seats answer in one or two short lines unless you ask for
@@ -198,8 +198,10 @@ first.
   connection — the connector it names still connects the ordinary
   way, once, on the Integrations page.
 - **Bridges**: a message written inside Helmian crosses into Discord
-  (proven in the Helmian server's own channel), Slack links from its
-  Integrations card, and work ships through GitHub.
+  (proven in the Helmian server's own channel) and into Slack, and
+  work ships through GitHub. Since November 14, 2026 the channels
+  switch in the app reads Envoy, Discord, and Slack: a team can stay
+  in its own Slack and still work with the crew.
 - **Notifications**: background work speaks up once, when it
   counts. A background agent fires exactly one notification when
   it finishes — and none while it is merely running, so long jobs
@@ -209,7 +211,7 @@ first.
   next voice turn. In the cloud, a critical Guard finding also
   posts itself to the workspace's connected Discord and Slack
   guard channels, best-effort, alongside the finding itself.
-- **Herald**: your desk on your phone — pair it once by QR code, send
+- **Herald** (on hold): your desk on your phone — pair it once by QR code, send
   an instruction from the phone, and approve what needs approving from
   the phone.
 
@@ -290,9 +292,9 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   learnings to every PC seat as managed copies, refreshed when the
   source changes (proven on the real sync path 2026-11-06, hashes
   matching the originals, each seat's own files untouched).
-- **Herald**: the phone surface is live at helmian.cloud/herald with
-  account sign-in and QR pairing; the desktop reports enrollment
-  ready.
+- **Herald**: built and live at helmian.cloud/herald with
+  account sign-in and QR pairing — and on hold as a product push
+  (see On hold, below).
 - **Executive Guard**: signed, one-time approvals with a hash-chained
   audit trail; a standing grant carries routine calls after setup, and
   the gated edges above still stop for the owner.
@@ -311,9 +313,26 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   2026-11-09). The Weather row still reads Not connected afterwards:
   an install never creates a connection.
 - **Bridges**: a message written inside Helmian has crossed into
-  Discord's Helmian server on the record; Slack links from its
-  Integrations card; work ships through GitHub.
+  Discord's Helmian server on the record, and Slack is now a full
+  channel network beside Envoy and Discord in the app (shipped
+  2026-11-14); work ships through GitHub.
+- **Live agent screens**: when a seat works in a browser on the
+  server, a small computer-screen icon lights beside its name in the
+  crew list. Clicking it opens that seat's real screen in the
+  workbench, live. Take control pauses the seat and lets the owner
+  drive its page; giving control back resumes the seat. Proven end
+  to end in a live channel on 2026-11-14 (Mistral's screen); the
+  remaining browser seats join as their sign-ins are approved.
 - **Auth**: Clerk sign-in with GitHub social login.
+
+**On hold (November 2026).** Three pieces are paused as standalone
+products: **Helmian Guard** (the browser extension), **Helmian Site
+Guard**, and **Herald**. The code stays in the tree and what is live
+stays live, but no new work is being built on them right now. The
+current focus is the Helmian platform itself. The approval checks
+built into Helmian are part of the platform and keep running; the
+hold is on the standalone products, not on the platform's own
+governance.
 
 ## Quick start (this repo)
 
