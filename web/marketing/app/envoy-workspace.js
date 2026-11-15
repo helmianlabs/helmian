@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=3941897bff464b82';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=3941897bff464b82';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=3941897bff464b82';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=3941897bff464b82';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=3941897bff464b82';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=3941897bff464b82';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=3941897bff464b82';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=3941897bff464b82';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=3941897bff464b82';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=3941897bff464b82';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=3941897bff464b82';
-import { createConnectFields } from './connect-fields.mjs?v=3941897bff464b82';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=3941897bff464b82';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=3941897bff464b82';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=c3a4820cf143c33e';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=c3a4820cf143c33e';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=c3a4820cf143c33e';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=c3a4820cf143c33e';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=c3a4820cf143c33e';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=c3a4820cf143c33e';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=c3a4820cf143c33e';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=c3a4820cf143c33e';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=c3a4820cf143c33e';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=c3a4820cf143c33e';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=c3a4820cf143c33e';
+import { createConnectFields } from './connect-fields.mjs?v=c3a4820cf143c33e';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=c3a4820cf143c33e';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=c3a4820cf143c33e';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -5941,7 +5941,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=3941897bff464b82');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=c3a4820cf143c33e');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -6100,10 +6100,62 @@ function closePage() {
 // watch ends.
 const watchView = { seat: null, socket: null, pending: null, drawing: false, control: 'none', holder: null };
 let watchBarSig = null;
+// Startup warm-up (2026-11-15): the click used to pay two serial
+// waits before the socket existed — the ticket mint POST
+// (~0.5–1.5 s) and a cold DNS/TLS connect to the watch origin
+// (~0.8–1.6 s). While an offer stands, the pane instead mints the
+// ticket ahead of the click and warms the origin once per offer
+// appearance, so the click only pays the socket open itself.
+// Tickets live 60 s server-side; the refresh margin below keeps a
+// usable one in hand at poll cadence.
+let watchTicketCache = null;
+let watchTicketMintSeat = null;
+let watchWarmSig = null;
 
 function liveWatchOffers() {
   const now = Date.now();
   return (ws.watchOffers ?? []).filter((o) => Date.parse(o.expiresAt) > now);
+}
+
+// Mint the offered seat's watch ticket before anyone clicks. The
+// cache is a single entry, for the first offered seat — the seat
+// whose screen icon is lit first is the one a click is coming for.
+// Failures are silent: the click path mints exactly as it did
+// before this cache existed.
+async function prefetchWatchTicket(offers) {
+  if (watchView.seat || watchView.socket || !offers.length) return;
+  const seat = offers[0].seat;
+  const cached = watchTicketCache;
+  if (cached && cached.seat === seat && cached.expiresAtMs - Date.now() >= 15_000) return;
+  if (watchTicketMintSeat === seat) return;
+  watchTicketMintSeat = seat;
+  try {
+    const minted = await ws.ctx.post('/api/admin/browser/watch-ticket', { seat });
+    if (minted?.ticket && minted?.watchUrl) {
+      watchTicketCache = {
+        seat,
+        ticket: minted.ticket,
+        watchUrl: minted.watchUrl,
+        expiresAtMs: Date.parse(minted.expiresAt) || (Date.now() + 60_000),
+      };
+    }
+  } catch { /* silent: the click path mints exactly as before */ }
+  finally { if (watchTicketMintSeat === seat) watchTicketMintSeat = null; }
+}
+
+// One warm-up fetch per offer appearance: the service answers 426
+// to a plain GET, and the answer is not the point — the fetch puts
+// the DNS answer and the TLS session into the browser ahead of the
+// click, so the socket's handshake can resume the session instead
+// of paying a full cold TLS. Keyed on the offer signature, so a
+// standing offer warms once, not once per poll.
+function warmWatchOrigin(offers) {
+  if (!offers.length) { watchWarmSig = null; return; }
+  const sig = watchOfferSignature(offers);
+  if (sig === watchWarmSig) return;
+  watchWarmSig = sig;
+  try { fetch('https://watch.5-78-222-178.sslip.io/watch', { mode: 'no-cors' }).catch(() => {}); }
+  catch { /* best effort: a failed warm-up changes nothing */ }
 }
 
 function syncWatchBar() {
@@ -6114,6 +6166,13 @@ function syncWatchBar() {
   // watch is over too — end it here rather than leave a still
   // picture standing in the pane.
   if (watchView.seat && !offers.some((o) => o.seat === watchView.seat)) endWatch();
+  // The startup warm-up rides the same poll: mint the ticket ahead
+  // of the click and warm the watch origin once per offer
+  // appearance. Both run ahead of the signature early-return below
+  // — a standing offer whose bar does not change still needs its
+  // ticket kept fresh.
+  void prefetchWatchTicket(offers);
+  warmWatchOrigin(offers);
   const sig = watchView.seat
     ? `watching:${watchView.seat}:${watchView.control}:${watchView.holder ?? ''}`
     : watchOfferSignature(offers);
@@ -6151,8 +6210,13 @@ async function startWatch(seat) {
   const status = $('ew-browser-status');
   status.textContent = 'Starting the live view…';
   let minted;
-  try { minted = await ws.ctx.post('/api/admin/browser/watch-ticket', { seat }); }
-  catch { status.textContent = 'The live view could not start. The agent may have finished already.'; return; }
+  const cached = watchTicketCache;
+  if (cached && cached.seat === seat && cached.expiresAtMs - Date.now() > 5_000) {
+    minted = { ticket: cached.ticket, watchUrl: cached.watchUrl };
+  } else {
+    try { minted = await ws.ctx.post('/api/admin/browser/watch-ticket', { seat }); }
+    catch { status.textContent = 'The live view could not start. The agent may have finished already.'; return; }
+  }
   if (!minted?.ticket || !minted?.watchUrl) { status.textContent = 'The live view could not start. The agent may have finished already.'; return; }
   let socket;
   try { socket = new WebSocket(minted.watchUrl, ['helmian-watch', minted.ticket]); }
@@ -6363,6 +6427,9 @@ function teardownWatch() {
   watchView.pending = null;
   watchView.control = 'none';
   watchView.holder = null;
+  // A used ticket's remaining life is short; the next standing
+  // offer re-mints through the prefetch.
+  watchTicketCache = null;
   if (socket) { try { socket.close(); } catch { /* already gone */ } }
   const canvas = $('ew-browser-watch');
   if (canvas) canvas.hidden = true;
