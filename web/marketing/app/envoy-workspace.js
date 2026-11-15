@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=c3a4820cf143c33e';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=c3a4820cf143c33e';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=c3a4820cf143c33e';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=c3a4820cf143c33e';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=c3a4820cf143c33e';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=c3a4820cf143c33e';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=c3a4820cf143c33e';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=c3a4820cf143c33e';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=c3a4820cf143c33e';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=c3a4820cf143c33e';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=c3a4820cf143c33e';
-import { createConnectFields } from './connect-fields.mjs?v=c3a4820cf143c33e';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=c3a4820cf143c33e';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=c3a4820cf143c33e';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=ece322a2c6438134';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=ece322a2c6438134';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=ece322a2c6438134';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=ece322a2c6438134';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=ece322a2c6438134';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=ece322a2c6438134';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=ece322a2c6438134';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=ece322a2c6438134';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=ece322a2c6438134';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=ece322a2c6438134';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=ece322a2c6438134';
+import { createConnectFields } from './connect-fields.mjs?v=ece322a2c6438134';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=ece322a2c6438134';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=ece322a2c6438134';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -493,11 +493,11 @@ export function crewWatchClick(seat, watchingSeat) {
 // While watching, the member can ask for the seat's drive lease
 // and drive the agent's page from the pane. The pure pieces are
 // here; the socket wiring lives with the watch code further down.
-// Coordinates: screencast frames are capped at 1280 by 900 and the
-// canvas takes the decoded frame's own size, so a frame pixel is
-// a page pixel on this road. The canvas is styled object-fit:
-// contain, so the picture sits letterboxed inside the pane's box:
-// the mapping walks through the displayed picture's own rectangle
+// Coordinates: screencast frames are capped at 1280 by 900. The
+// watch canvas's backing store matches the size the pane shows
+// it at, and each frame is drawn contain-fit into that store, so
+// the picture sits letterboxed inside the pane's box: the
+// mapping walks through the displayed picture's own rectangle
 // (centered, aspect kept), and a point in the letterbox bands
 // maps to nothing, never to a guessed point on the page edge.
 export function watchFramePoint({ offsetX, offsetY, boxWidth, boxHeight, frameWidth, frameHeight } = {}) {
@@ -5941,7 +5941,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=c3a4820cf143c33e');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=ece322a2c6438134');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -6098,7 +6098,7 @@ function closePage() {
 // on the same socket, and the agent's driver yields between its
 // steps until control is given back, the lease idles out, or the
 // watch ends.
-const watchView = { seat: null, socket: null, pending: null, drawing: false, control: 'none', holder: null };
+const watchView = { seat: null, socket: null, pending: null, drawing: false, control: 'none', holder: null, frameWidth: 0, frameHeight: 0 };
 let watchBarSig = null;
 // Startup warm-up (2026-11-15): the click used to pay two serial
 // waits before the socket existed — the ticket mint POST
@@ -6306,8 +6306,8 @@ function watchPointFromEvent(canvas, event) {
     offsetY: event.clientY - rect.top,
     boxWidth: rect.width,
     boxHeight: rect.height,
-    frameWidth: canvas.width,
-    frameHeight: canvas.height,
+    frameWidth: watchView.frameWidth,
+    frameHeight: watchView.frameHeight,
   });
 }
 
@@ -6385,7 +6385,12 @@ function showWatchCanvas() {
 
 // Frames are drawn latest-wins: a frame still decoding when the
 // next lands is skipped, so the pane can never fall behind the
-// agent's page and play catch-up.
+// agent's page and play catch-up. The decode goes through a Blob
+// and createImageBitmap where the browser offers it, so the JPEG
+// decode happens off the main thread; the data-URL Image road is
+// the fallback for browsers without it. A frame that fails to
+// decode is dropped, never queued — the stream drops frames by
+// design.
 function drawWatchFrame(data) {
   watchView.pending = data;
   if (watchView.drawing) return;
@@ -6394,22 +6399,65 @@ function drawWatchFrame(data) {
     const latest = watchView.pending;
     watchView.pending = null;
     if (latest == null || !watchView.seat) { watchView.drawing = false; return; }
-    const img = new Image();
-    img.onload = () => {
-      const canvas = $('ew-browser-watch');
-      if (canvas && watchView.seat) {
-        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
-          canvas.width = img.naturalWidth;
-          canvas.height = img.naturalHeight;
-        }
-        canvas.getContext('2d')?.drawImage(img, 0, 0);
-      }
+    decodeWatchFrame(latest).then((frame) => {
+      if (frame) paintWatchFrame(frame);
       step();
-    };
-    img.onerror = () => step();
-    img.src = `data:image/jpeg;base64,${latest}`;
+    });
   };
   step();
+}
+
+function decodeWatchFrame(data) {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const binary = atob(data);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+      return createImageBitmap(new Blob([bytes], { type: 'image/jpeg' }))
+        .then((bitmap) => ({ source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() }))
+        .catch(() => null);
+    } catch { return Promise.resolve(null); }
+  }
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ source: img, width: img.naturalWidth, height: img.naturalHeight, close: () => {} });
+    img.onerror = () => resolve(null);
+    img.src = `data:image/jpeg;base64,${data}`;
+  });
+}
+
+// The canvas backing store matches the size the pane actually
+// shows the canvas at, times the display's pixel ratio (capped
+// at 2, so a dense display stays sharp without an outsized
+// bitmap), and the frame is drawn contain-fit into that store,
+// centred. The letterbox around the picture is cleared through
+// to the canvas's own white background — the pane's background,
+// not empty bitmap. The frame's own pixel size is kept on
+// watchView for the drive mapping (watchPointFromEvent), which
+// walks the same centred rectangle in box coordinates.
+function paintWatchFrame(frame) {
+  const canvas = $('ew-browser-watch');
+  if (canvas && watchView.seat) {
+    watchView.frameWidth = frame.width;
+    watchView.frameHeight = frame.height;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const storeW = Math.max(1, Math.round(rect.width * dpr));
+      const storeH = Math.max(1, Math.round(rect.height * dpr));
+      if (canvas.width !== storeW || canvas.height !== storeH) {
+        canvas.width = storeW;
+        canvas.height = storeH;
+      }
+      ctx.clearRect(0, 0, storeW, storeH);
+      const scale = Math.min(storeW / frame.width, storeH / frame.height);
+      const shownW = Math.max(1, Math.round(frame.width * scale));
+      const shownH = Math.max(1, Math.round(frame.height * scale));
+      ctx.drawImage(frame.source, Math.round((storeW - shownW) / 2), Math.round((storeH - shownH) / 2), shownW, shownH);
+    }
+  }
+  frame.close();
 }
 
 function teardownWatch() {
@@ -6427,6 +6475,8 @@ function teardownWatch() {
   watchView.pending = null;
   watchView.control = 'none';
   watchView.holder = null;
+  watchView.frameWidth = 0;
+  watchView.frameHeight = 0;
   // A used ticket's remaining life is short; the next standing
   // offer re-mints through the prefetch.
   watchTicketCache = null;
