@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=ece322a2c6438134';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=ece322a2c6438134';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=ece322a2c6438134';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=ece322a2c6438134';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=ece322a2c6438134';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=ece322a2c6438134';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=ece322a2c6438134';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=ece322a2c6438134';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=ece322a2c6438134';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=ece322a2c6438134';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=ece322a2c6438134';
-import { createConnectFields } from './connect-fields.mjs?v=ece322a2c6438134';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=ece322a2c6438134';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=ece322a2c6438134';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=34c17f39f875ee54';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=34c17f39f875ee54';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=34c17f39f875ee54';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=34c17f39f875ee54';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=34c17f39f875ee54';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=34c17f39f875ee54';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=34c17f39f875ee54';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=34c17f39f875ee54';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=34c17f39f875ee54';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=34c17f39f875ee54';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=34c17f39f875ee54';
+import { createConnectFields } from './connect-fields.mjs?v=34c17f39f875ee54';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=34c17f39f875ee54';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=34c17f39f875ee54';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -2420,6 +2420,7 @@ function crewWatchIconNode(seat, iconState) {
 function openCrewWatch(seat) {
   if (crewWatchIconState(seat, liveWatchOffers())?.state !== 'live') return;
   openBench('browser');
+  setBrowserFace('agents');
   if (crewWatchClick(seat, watchView.seat) === 'start') void startWatch(seat);
 }
 
@@ -5941,7 +5942,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=ece322a2c6438134');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=34c17f39f875ee54');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
@@ -6027,9 +6028,11 @@ function buildYoutubeLauncherHtml() {
   </body></html>`;
 }
 async function navigate(input, { push = true } = {}) {
-  // Opening a page of your own ends any watch first: the pane is
-  // one view, and the customer's browsing takes it back.
+  // Opening a page of your own ends any watch first and flips
+  // the tab to its web face: the customer's browsing takes the
+  // pane back.
   stopWatch();
+  setBrowserFace('web');
   const status = $('ew-browser-status');
   const address = toAddress(input);
   if (!address) return;
@@ -6158,6 +6161,96 @@ function warmWatchOrigin(offers) {
   catch { /* best effort: a failed warm-up changes nothing */ }
 }
 
+// ---------- Browser tab faces + watch stage (live view stage
+// bite, 2026-11-15) ----------
+// Troy's shape: the Browser tab's face is the agent screens, not
+// the public-sites browser and its demo tiles. The tab carries
+// two faces — Agent screens (the watch bar over the stage) and
+// Web browser (the address bar over the frame) — and the switch
+// at the top of the tab flips between them; nothing is removed,
+// the web face is one click away with its browsing untouched.
+// The agents face is the default and the one a watch opens on;
+// opening a page of your own flips to the web face (navigate).
+// While a watch runs, the workbench gives the stage the room:
+// the same bench-max the ⤢ button toggles, engaged by the watch
+// and handed back when the watch ends — only when the watch
+// engaged it, and never on a narrow screen, where the bench is
+// already a full-width sheet. The stage stays inside the
+// workbench's own box throughout: bench-max only re-deals the
+// row's widths, it never grows the row.
+let browserFace = 'agents';
+let watchStageMax = false;
+
+function setBrowserFace(face) {
+  browserFace = face === 'web' ? 'web' : 'agents';
+  const agents = $('ew-bface-agents');
+  if (agents) agents.hidden = browserFace !== 'agents';
+  const web = $('ew-bface-web');
+  if (web) web.hidden = browserFace !== 'web';
+  for (const b of document.querySelectorAll('#ew-browser [data-bface]')) {
+    const on = b.dataset.bface === browserFace;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  }
+  if (browserFace === 'web') {
+    // The customer's own browsing shows exactly as it was left:
+    // their page again, or the start panel if they had none open.
+    // A running watch hid both (showWatchCanvas), so the flip
+    // re-asserts them from the nav stack, the same restore
+    // teardownWatch performs when a watch ends.
+    const frame = $('ew-browser-frame');
+    if (frame) frame.hidden = nav.index < 0;
+    const start = $('ew-browser-start');
+    if (start) start.hidden = nav.index >= 0;
+  }
+}
+
+// The stage's idle face: the standing wording when no agent is
+// in a browser, the working agent's step when an offer stands.
+// While a watch runs the canvas owns the stage and the words are
+// left alone. The face switch's dot rides the same sync: lit
+// while any screen is offered or being watched, so the door is
+// visible from the web face too.
+function syncWatchStageIdle(offers) {
+  const dot = $('ew-bface-dot');
+  if (dot) dot.hidden = !(offers.length || watchView.seat);
+  if (watchView.seat) return;
+  const idle = $('ew-browser-idle');
+  if (!idle) return;
+  idle.textContent = offers.length
+    ? `${watchStepText(offers[0])}. Press Watch above to see the screen.`
+    : 'No agent is working in a browser right now. Agents that answer through a direct connection work without a browser.';
+}
+
+// bench-max driven by the watch: the button face is updated the
+// same way its own click handler updates it, so the two drivers
+// can never disagree about which glyph means what.
+function setBenchMax(on) {
+  const ew = $('ew');
+  if (!ew) return;
+  if (ew.classList.contains('bench-max') === on) return;
+  ew.classList.toggle('bench-max', on);
+  const btn = $('ew-bench-max');
+  if (btn) {
+    btn.textContent = on ? '⤡' : '⤢';
+    btn.title = on ? 'Restore' : 'Expand';
+    btn.setAttribute('aria-label', on ? 'Restore workbench' : 'Expand workbench');
+  }
+}
+
+function engageWatchStage() {
+  if (watchStageMax || narrow()) return;
+  if ($('ew')?.classList.contains('bench-max')) return; // already wide by hand: not the watch's to hand back
+  watchStageMax = true;
+  setBenchMax(true);
+}
+
+function releaseWatchStage() {
+  if (!watchStageMax) return;
+  watchStageMax = false;
+  setBenchMax(false);
+}
+
 function syncWatchBar() {
   const bar = $('ew-browser-watchbar');
   if (!bar) return;
@@ -6173,6 +6266,7 @@ function syncWatchBar() {
   // ticket kept fresh.
   void prefetchWatchTicket(offers);
   warmWatchOrigin(offers);
+  syncWatchStageIdle(offers);
   const sig = watchView.seat
     ? `watching:${watchView.seat}:${watchView.control}:${watchView.holder ?? ''}`
     : watchOfferSignature(offers);
@@ -6370,6 +6464,12 @@ function detachWatchInput() {
 
 function showWatchCanvas() {
   const offer = liveWatchOffers().find((o) => o.seat === watchView.seat);
+  // The watch opens on the tab's agent face, with the stage
+  // given the workbench's room (stage bite).
+  setBrowserFace('agents');
+  engageWatchStage();
+  const idle = $('ew-browser-idle');
+  if (idle) idle.hidden = true;
   $('ew-browser-frame').hidden = true;
   $('ew-browser-start').hidden = true;
   $('ew-browser-watch').hidden = false;
@@ -6483,6 +6583,11 @@ function teardownWatch() {
   if (socket) { try { socket.close(); } catch { /* already gone */ } }
   const canvas = $('ew-browser-watch');
   if (canvas) canvas.hidden = true;
+  // The stage returns to its idle face, and the room the watch
+  // took is handed back (only if the watch took it).
+  const idle = $('ew-browser-idle');
+  if (idle) idle.hidden = false;
+  releaseWatchStage();
   // The customer's own browsing returns exactly as it was: their
   // page again, or the start panel if they had none open.
   const frame = $('ew-browser-frame');
@@ -6610,6 +6715,8 @@ function wire() {
   $('ew-modal').addEventListener('click', (e) => { if (e.target === $('ew-modal')) closeModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (ws.pickerFor) closePicker(); else if ($('ew-modal').classList.contains('open')) closeModal(); else closeSheets(); } });
   // Browser
+  for (const b of document.querySelectorAll('#ew-browser [data-bface]')) b.addEventListener('click', () => setBrowserFace(b.dataset.bface));
+  setBrowserFace('agents');
   $('ew-browser-form').addEventListener('submit', (e) => { e.preventDefault(); navigate($('ew-browser-url').value); });
   $('ew-browser-back').addEventListener('click', () => { if (nav.index > 0) { nav.index -= 1; navigate(nav.stack[nav.index], { push: false }); } });
   $('ew-browser-fwd').addEventListener('click', () => { if (nav.index < nav.stack.length - 1) { nav.index += 1; navigate(nav.stack[nav.index], { push: false }); } });

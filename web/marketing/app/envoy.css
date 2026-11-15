@@ -506,6 +506,21 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-watch-live { font-weight:600; }
 .ew-watch-driving-label { font-weight:600; color:var(--accent); }
 .ew-browser-view canvas.ew-watch-driving { outline:2px solid var(--accent); outline-offset:-2px; cursor:crosshair; }
+/* Browser tab faces (live view stage bite, 2026-11-15): the tab's
+   face is the agent screens — the watch bar over the stage — and
+   the public-sites browser (address bar, start page, frame) sits
+   one click behind the face switch at the top of the tab. Each
+   face is a column of the same .ew-browser stack and the hidden
+   face is out of layout entirely, so the shown face holds the
+   tab's full height; the watch canvas keeps filling its view
+   exactly as it did when the view was shared. */
+.ew-browser-faces { display:flex; align-items:center; padding:8px 8px 4px; }
+.ew-bface { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
+.ew-bface[hidden] { display:none; }
+.ew-bface-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--accent); margin-left:6px; }
+.ew-bface-dot[hidden] { display:none; }
+.ew-browser-idle { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:24px; text-align:center; background:var(--panel); color:var(--muted); font-size:13px; line-height:1.55; }
+.ew-browser-idle[hidden] { display:none; }
 .ew-browser-start { position:absolute; inset:0; background:var(--panel); padding:18px; overflow:auto; }
 .ew-quick { display:grid; grid-template-columns:repeat(auto-fill, minmax(130px, 1fr)); gap:8px; margin-top:10px; }
 .ew-quick button { text-align:left; border:1px solid var(--border); background:var(--panel-2); color:var(--text); border-radius:10px; padding:10px; cursor:pointer; font-size:12px; }
