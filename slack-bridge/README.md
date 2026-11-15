@@ -62,7 +62,7 @@ App "Helmian" (`A0CBUCYTVNW`), workspace HELMIAN (`T0BP40EFJ1W`):
 
 ## Deploy
 
-Target on the Hetzner box: `/opt/helmian-slack-bridge/` (not live yet):
+Live on the Hetzner box at `/opt/helmian-slack-bridge/`:
 
 - `src/` holds this folder (copy with `tar -C slack-bridge --exclude node_modules -czf - . | ssh root@HOST 'tar -C /opt/helmian-slack-bridge/src -xzf -'`).
 - `app.env` holds the env above, mode 600.

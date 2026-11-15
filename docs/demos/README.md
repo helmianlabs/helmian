@@ -19,7 +19,7 @@ Each has a script (.md), voiceover (.mp3), and platform post copy (.md).
 - **Post copy:** [video1-post-copy.md](sandbox://workspace/your_files/helmian-social-content/video1-post-copy.md)
 - **Visual:** EXE 4-panel view, sliding panels, Guard finding cards. Use Troy's 15 EXE screenshots from 2026-10-18 as B-roll (helmian.cloud/app is behind login).
 
-### Video 2: "Free Trial in Under Two Minutes" (~40 sec)
+### Video 2: "Free Account in Under Two Minutes" (~40 sec)
 - **Script:** [video2-script-free-trial.md](sandbox://workspace/your_files/helmian-social-content/video2-script-free-trial.md)
 - **Voiceover:** [video2-voiceover.mp3](sandbox://workspace/your_files/helmian-social-content/video2-voiceover.mp3)
 - **Post copy:** [video2-post-copy.md](sandbox://workspace/your_files/helmian-social-content/video2-post-copy.md)
@@ -37,7 +37,7 @@ All voiceovers use Aria (avocado_v2:MAI_01), Troy's preferred voice. Authentic t
 ## Posting schedule suggestion
 Troy wants 3x/day. Suggested rotation:
 - **Morning:** Video 1 (product showcase)
-- **Midday:** Video 2 (free trial CTA)
+- **Midday:** Video 2 (free account CTA)
 - **Evening:** Video 3 (founder story)
 
 Rotate with variations. Each platform gets tailored copy (YouTube: SEO titles/descriptions/tags; X: under 280 chars with hashtags; LinkedIn: professional long-form).
