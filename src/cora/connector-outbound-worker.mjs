@@ -10,13 +10,22 @@
 // is a no-op that reports { queued: false, reason: 'unavailable' } instead of
 // throwing. Input validation still throws.
 //
-// Delivery semantics: at-most-once per row. Rows are claimed with
-// SELECT ... FOR UPDATE SKIP LOCKED and the status update is guarded by
-// status='queued', so a concurrent drainer cannot double-deliver. Attempts are
-// capped at 3; a message for a provider with no webhook URL configured fails
-// immediately with reason webhook_not_configured and is never retried. Every
-// send and every terminal failure is audit-logged (best-effort: a failed
-// audit write never un-sends a delivered message).
+// Delivery semantics: at-most-once per row between live drainers. A drain
+// claims its batch with SELECT ... FOR UPDATE SKIP LOCKED and HOLDS that
+// transaction open across delivery and settle: the row locks are the claim,
+// so a concurrent drainer's claim skips every row this drain holds, and the
+// settle (status update guarded by status='queued') commits together with
+// the claim. An earlier shape committed the claim before delivering, which
+// dropped the locks and let two drainers deliver the same row; the locks
+// only exclude while the claiming transaction is still open. If a drain
+// dies mid-delivery its transaction rolls back and the rows stay queued,
+// so a crash can re-deliver but a live peer cannot double-deliver. Attempts
+// are capped at 3; a message for a provider with no webhook URL configured
+// fails immediately with reason webhook_not_configured and is never
+// retried. Every send and every terminal failure is audit-logged inside
+// the settle, behind a savepoint: a failed audit write rolls back to the
+// savepoint only, so it never un-sends a delivered message and never
+// discards the status update it rides with.
 
 import { randomUUID } from 'node:crypto';
 import { postConnectorMessage } from '../cloud/communication-connectors.mjs';
@@ -35,7 +44,16 @@ function webhookUrlFor(provider, env = process.env) {
 }
 
 function workerContext(tenantId, workerId) {
-  return { tenantId, actorSubject: workerId, actorRole: 'worker', sessionId: randomUUID(), requestId: randomUUID() };
+  // The audit schema (sql/004) permits only the membership roles
+  // (owner, admin, member, auditor): there is no 'worker' role, and an
+  // audit insert carrying one is rejected by the
+  // audit_events_actor_role_check constraint. System actors in this
+  // codebase write audit events under the membership-shaped role
+  // 'member' (tenant-action-policy.mjs's system actor;
+  // credential-vault.mjs's transactionContext; workspace-lease.mjs's
+  // workerContext), with the true actor named in actorSubject. The
+  // worker id stays the subject here, for the same reason.
+  return { tenantId, actorSubject: workerId, actorRole: 'member', sessionId: randomUUID(), requestId: randomUUID() };
 }
 
 export async function enqueueConnectorMessage({ pool, tenantId, provider, channelLabel = null, text } = {}) {
@@ -70,7 +88,63 @@ export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-c
   if (!WORKER_ID_PATTERN.test(workerId)) throw new Error('connector outbound worker id is invalid');
   const limit = Math.min(Math.max(Number(batchSize) || 10, 1), 50);
 
-  async function claimBatch() {
+  // settle runs INSIDE the claiming transaction (see the header): the
+  // status update and the claim commit or roll back together, and the
+  // audit insert rides behind a savepoint so its failure discards only
+  // itself, never the status update.
+  async function settle(client, message, outcome) {
+    // outcome: { status: 'sent'|'failed', attempts, receipt }
+    const updated = await client.query(
+      `update helmion.connector_outbound_messages
+       set status = $2, attempts = $3, receipt = $4::jsonb, updated_at = clock_timestamp()
+       where id = $1 and status = 'queued'`,
+      [message.id, outcome.status, outcome.attempts, JSON.stringify({ format: CONNECTOR_OUTBOUND_WORKER_FORMAT, ...outcome.receipt })],
+    );
+    if (updated.rowCount === 1) {
+      await client.query('savepoint outbound_audit');
+      try {
+        await appendAuditEvent(client, workerContext(message.tenant_id, workerId), {
+          actionType: outcome.status === 'sent' ? 'connector.outbound.sent' : 'connector.outbound.failed',
+          canonicalTarget: { resource: 'connector_outbound_message', messageId: message.id, provider: message.provider, channelLabel: message.channel_label },
+          policyVersion: 'connector-outbound.v1',
+          decision: outcome.status === 'sent' ? 'ALLOW' : 'DENY',
+          privacySummary: outcome.status === 'sent'
+            ? `Delivered a ${message.provider} message (${message.channel_label ?? 'no label'})`
+            : `Failed to deliver a ${message.provider} message (${message.channel_label ?? 'no label'}): ${outcome.receipt.reason ?? 'unknown'}`,
+          result: { status: outcome.status, attempts: outcome.attempts, receipt: outcome.receipt },
+        });
+        await client.query('release savepoint outbound_audit');
+      } catch (auditError) {
+        // A failed audit write never un-sends a delivered message, and
+        // the savepoint keeps it from discarding the status update.
+        await client.query('rollback to savepoint outbound_audit').catch(() => {});
+        await client.query('release savepoint outbound_audit').catch(() => {});
+        log(`connector outbound audit failed: ${auditError.message}`);
+      }
+    }
+    return updated.rowCount === 1;
+  }
+
+  async function deliver(client, message) {
+    if (!webhookUrlFor(message.provider, env)) {
+      return settle(client, message, { status: 'failed', attempts: CONNECTOR_OUTBOUND_MAX_ATTEMPTS, receipt: { reason: 'webhook_not_configured', provider: message.provider } });
+    }
+    try {
+      const result = await postMessage({ provider: message.provider, text: message.text, env });
+      return settle(client, message, { status: 'sent', attempts: message.attempts, receipt: { reason: 'delivered', delivered: result.delivered, httpStatus: result.status } });
+    } catch (error) {
+      const attempts = Number(message.attempts || 0) + 1;
+      if (attempts >= CONNECTOR_OUTBOUND_MAX_ATTEMPTS) {
+        return settle(client, message, { status: 'failed', attempts, receipt: { reason: 'delivery_failed', error: String(error?.message ?? error).slice(0, 300) } });
+      }
+      // Leave queued for the next drain; record the attempt count in the
+      // claiming transaction, so it commits with the claim.
+      await client.query(`update helmion.connector_outbound_messages set attempts = $2, updated_at = clock_timestamp() where id = $1 and status = 'queued'`, [message.id, attempts]);
+      return false;
+    }
+  }
+
+  async function runOnce() {
     const client = await pool.connect();
     try {
       await client.query('begin');
@@ -89,91 +163,24 @@ export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-c
         if (error?.code === '42P01') return [];
         throw error;
       }
-      await client.query('commit');
-      return claimed.rows;
-    } catch (error) {
-      await client.query('rollback').catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  async function settle(message, outcome) {
-    // outcome: { status: 'sent'|'failed', attempts, receipt }
-    const client = await pool.connect();
-    try {
-      await client.query('begin');
-      const updated = await client.query(
-        `update helmion.connector_outbound_messages
-         set status = $2, attempts = $3, receipt = $4::jsonb, updated_at = clock_timestamp()
-         where id = $1 and status = 'queued'`,
-        [message.id, outcome.status, outcome.attempts, JSON.stringify({ format: CONNECTOR_OUTBOUND_WORKER_FORMAT, ...outcome.receipt })],
-      );
-      if (updated.rowCount === 1) {
-        try {
-          await appendAuditEvent(client, workerContext(message.tenant_id, workerId), {
-            actionType: outcome.status === 'sent' ? 'connector.outbound.sent' : 'connector.outbound.failed',
-            canonicalTarget: { resource: 'connector_outbound_message', messageId: message.id, provider: message.provider, channelLabel: message.channel_label },
-            policyVersion: 'connector-outbound.v1',
-            decision: outcome.status === 'sent' ? 'ALLOW' : 'DENY',
-            privacySummary: outcome.status === 'sent'
-              ? `Delivered a ${message.provider} message (${message.channel_label ?? 'no label'})`
-              : `Failed to deliver a ${message.provider} message (${message.channel_label ?? 'no label'}): ${outcome.receipt.reason ?? 'unknown'}`,
-            result: { status: outcome.status, attempts: outcome.attempts, receipt: outcome.receipt },
-          });
-        } catch (auditError) {
-          // A failed audit write never un-sends a delivered message.
-          log(`connector outbound audit failed: ${auditError.message}`);
-        }
-      }
-      await client.query('commit');
-      return updated.rowCount === 1;
-    } catch (error) {
-      await client.query('rollback').catch(() => {});
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  async function deliver(message) {
-    if (!webhookUrlFor(message.provider, env)) {
-      return settle(message, { status: 'failed', attempts: CONNECTOR_OUTBOUND_MAX_ATTEMPTS, receipt: { reason: 'webhook_not_configured', provider: message.provider } });
-    }
-    try {
-      const result = await postMessage({ provider: message.provider, text: message.text, env });
-      return settle(message, { status: 'sent', attempts: message.attempts, receipt: { reason: 'delivered', delivered: result.delivered, httpStatus: result.status } });
-    } catch (error) {
-      const attempts = Number(message.attempts || 0) + 1;
-      if (attempts >= CONNECTOR_OUTBOUND_MAX_ATTEMPTS) {
-        return settle(message, { status: 'failed', attempts, receipt: { reason: 'delivery_failed', error: String(error?.message ?? error).slice(0, 300) } });
-      }
-      // Leave queued for the next drain; record the attempt count.
-      const client = await pool.connect();
-      try {
-        await client.query(`update helmion.connector_outbound_messages set attempts = $2, updated_at = clock_timestamp() where id = $1 and status = 'queued'`, [message.id, attempts]);
-      } finally {
-        client.release();
-      }
-      return false;
-    }
-  }
-
-  async function runOnce() {
-    const claimed = await claimBatch();
-    if (claimed.length === 0) return [];
-    const processed = [];
-    for (const message of claimed) {
-      try {
-        const settled = await deliver(message);
+      // The claiming transaction stays open across delivery and settle:
+      // its row locks are what stop a concurrent drainer from taking
+      // the same rows. It commits only when every settle in the batch
+      // is written, and rolls back whole if the drain itself fails.
+      const processed = [];
+      for (const message of claimed.rows) {
+        const settled = await deliver(client, message);
         if (settled) processed.push({ messageId: message.id, provider: message.provider });
-      } catch (error) {
-        log(`connector outbound delivery error for message ${message.id}: ${error.message}`);
       }
+      await client.query('commit');
+      for (const p of processed) log(`connector outbound ${p.messageId} -> ${p.provider} settled`);
+      return processed;
+    } catch (error) {
+      await client.query('rollback').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
     }
-    for (const p of processed) log(`connector outbound ${p.messageId} -> ${p.provider} settled`);
-    return processed;
   }
 
   function start({ intervalMs = 5000 } = {}) {
