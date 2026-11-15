@@ -26,7 +26,17 @@ function leaseScope(projectKey) {
 }
 
 function workerContext(tenantId, holder) {
-  return { tenantId, actorSubject: holder, actorRole: 'worker', sessionId: randomUUID(), requestId: randomUUID() };
+  // The audit schema (sql/004) permits only the membership roles
+  // (owner, admin, member, auditor): there is no 'worker' role, and an
+  // audit insert carrying one is rejected by the
+  // audit_events_actor_role_check constraint, which rolls the whole
+  // acquire or release back with it. System actors in this codebase
+  // write audit events under the membership-shaped role 'member'
+  // (tenant-action-policy.mjs's system actor;
+  // credential-vault.mjs's transactionContext), with the true actor
+  // named in actorSubject. The holder stays the subject here, for the
+  // same reason.
+  return { tenantId, actorSubject: holder, actorRole: 'member', sessionId: randomUUID(), requestId: randomUUID() };
 }
 
 export async function acquireWorkspaceLease({ pool, tenantId, projectKey = null, holder, ttlMs = 60000 } = {}) {
