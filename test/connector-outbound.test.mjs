@@ -12,6 +12,11 @@ function fakeOutboxPool({ messages = [], throwOn = null } = {}) {
     async query(sql, params = []) {
       const q = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
       if (['begin', 'commit', 'rollback'].includes(q)) return { rows: [] };
+      // The settle's audit insert rides behind a savepoint; the fake
+      // models savepoint statements as no-ops (its audit insert never
+      // fails, so the rollback-to-savepoint path is not exercised here;
+      // the real-database test covers the settle itself).
+      if (q.startsWith('savepoint') || q.startsWith('release savepoint') || q.startsWith('rollback to savepoint')) return { rows: [] };
       if (throwOn && q.includes(throwOn)) { const error = new Error('relation "helmion.connector_outbound_messages" does not exist'); error.code = '42P01'; throw error; }
       if (q.startsWith('insert into helmion.connector_outbound_messages')) {
         const row = { id: rows.length + 1, tenant_id: params[0], provider: params[1], channel_label: params[2], text: params[3], status: 'queued', attempts: 0, receipt: {} };
