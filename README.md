@@ -4,7 +4,7 @@
 
 # Helmian
 
-**One governed desk where eleven AI seats work on your project together — without stepping on each other.**
+**One governed desk where a multi-agent AI crew works on your project together — without stepping on each other.**
 
 Helmian is a multi-agent desk with a governor. You connect each AI once,
 talk to them together in channels the way you would talk to a team, and
@@ -71,8 +71,9 @@ the Guard feed alongside it.
 
 ## The seats
 
-Ten seats sit in the channel. An eleventh, **Muse**, connects the same
-way and lights the moment an owner brings its key.
+The seats sit in the channel together, and the crew is not a fixed
+count — new seats join as they are wired in. **Muse** connects the
+same way as the rest and lights the moment an owner brings its key.
 
 | Seat | How it connects | What it runs |
 |---|---|---|
@@ -199,9 +200,13 @@ first.
   way, once, on the Integrations page.
 - **Bridges**: a message written inside Helmian crosses into Discord
   (proven in the Helmian server's own channel) and into Slack, and
-  work ships through GitHub. Since November 14, 2026 the channels
-  switch in the app reads Envoy, Discord, and Slack: a team can stay
-  in its own Slack and still work with the crew.
+  messages written in Discord or Slack cross back into Helmian the
+  same way — each bridge mirrors in both directions. Since
+  November 14, 2026 the channels switch in the app reads Envoy,
+  Discord, and Slack: a team can stay in its own Slack and still
+  work with the crew. GitHub lives inside the Envoy chat too: when
+  a repository linked to a channel receives a push, the push posts
+  as a card in that channel, and work ships through GitHub.
 - **Notifications**: background work speaks up once, when it
   counts. A background agent fires exactly one notification when
   it finishes — and none while it is merely running, so long jobs
@@ -222,7 +227,7 @@ first.
 | An agent on its own | whatever the shell allows | per the agent's own prompts | the agent's own logs | one |
 | Agent + your own hooks or blocklist | blocked commands only | you build it | you build it | one per setup |
 | Agent in a container | the container is the blast radius | no | no | one per setup |
-| **Helmian** | one write lease per project, enforced server-side | signed, one-time, consumed with the action; standing grant for routine work after setup | append-only, tenant-scoped | eleven seats: Claude, ChatGPT, Grok, Gemini, Mistral, Qwen, Groq, NVIDIA, Cloudflare, OpenRouter, Muse |
+| **Helmian** | one write lease per project, enforced server-side | signed, one-time, consumed with the action; standing grant for routine work after setup | append-only, tenant-scoped | a multi-agent crew — today's seats are Claude, ChatGPT, Grok, Gemini, Mistral, Qwen, Groq, NVIDIA, Cloudflare, OpenRouter, and Muse; the roster is open, seats are added over time, and there is no fixed count |
 
 Containers and hooks are good ideas and combine fine with Helmian.
 Helmian adds who-may-change-what, the sign-off, and the record.
@@ -280,7 +285,7 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   channel (proof rounds run 2026-11-06; a seat counts only after 20
   consecutive clean channel answers, and the count is kept honestly —
   a miss restarts that seat's count).
-- **The eleventh seat, Muse**: wired and switched on 2026-11-06 —
+- **The Muse seat**: wired and switched on 2026-11-06 —
   its name is admitted everywhere a seat name is checked, and its
   runner answers with an honest "no key stored" refusal until an
   owner pastes a Meta Model API key on its card. Nothing is charged
@@ -313,9 +318,12 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   2026-11-09). The Weather row still reads Not connected afterwards:
   an install never creates a connection.
 - **Bridges**: a message written inside Helmian has crossed into
-  Discord's Helmian server on the record, and Slack is now a full
-  channel network beside Envoy and Discord in the app (shipped
-  2026-11-14); work ships through GitHub.
+  Discord's Helmian server on the record, and messages written in
+  Discord or Slack cross back into Helmian the same way; Slack is
+  now a full channel network beside Envoy and Discord in the app
+  (shipped 2026-11-14). GitHub posts inside the Envoy chat: a push
+  to a repository linked to a channel lands in that channel as a
+  card, and work ships through GitHub.
 - **Live agent screens**: when a seat works in a browser on the
   server, a small computer-screen icon lights beside its name in the
   crew list. Clicking it opens that seat's real screen in the
@@ -394,10 +402,11 @@ How work lands in this repo:
 
 The kernel is real and tested: local governance, leases, audit, signed
 confirmations, a live cloud-to-runner bridge, and a working signup flow
-that provisions workspaces. What it is not yet: a hardened multi-tenant
-product. Tenant isolation is scaffolded (separate users, vaults,
-bridges) but not hardened (no row-level security, no per-tenant
-containers). There is no billing yet. All ten channel seats answer in
-the live channel, as noted above; the eleventh seat, Muse, waits only
-on its key. Until the remaining hardening lands, this is a working
-system with real users and multi-tenant bones — not a finished SaaS.
+that provisions workspaces. Each workspace is its own tenant, with
+separate users, credential vaults, shared memory, and bridges, and that
+separation is enforced in the application on every request. Two
+hardening steps are still ahead and named plainly: row-level security
+in the database, and per-tenant containers. Paid plans are built and
+in testing; checkout is not open yet. All ten channel seats answer in
+the live channel, as noted above; the Muse seat waits only
+on its key. This is a working system with real users, in daily use.
