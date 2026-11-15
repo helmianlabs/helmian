@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { createEnvoyMesh, handleEnvoyMeshRoute, bridgeTokenOk, stampAgentAnswered, resolveDispatchSkills } from '../src/cloud/envoy-mesh.mjs';
 import { createRunnerPresenceStore } from '../src/cloud/runner-presence.mjs';
 import { createEnvoyStore } from '../src/cloud/envoy-chat.mjs';
-import { emptyConfig, serializeConfig } from '../src/cloud/envoy-agents.mjs';
+import { emptyConfig, serializeConfig, agentPrompt } from '../src/cloud/envoy-agents.mjs';
 
 const url = process.env.HELMIAN_TEST_PG_URL;
 const skip = !url && 'HELMIAN_TEST_PG_URL not set';
@@ -795,4 +795,67 @@ test('mesh on fakes: a failed keep-loaded enumeration drops only the extra pairs
   assert.deepEqual(armingCalls.map((c) => c.pairs), [[{ seatId: 'claude', entryId: 'helmian-github' }]],
     'the standing armed set still resolves — the failure was in the expansion, not the arming');
   assert.deepEqual(result.work[0].connectorConnections, [{ seatId: 'claude', entryId: 'helmian-github', state: 'connected' }]);
+});
+
+// Regression (audit letter 731): the dispatch context for a message
+// must not contain the message itself. The mesh built the context
+// with a created_at <= filter and no id exclusion, so the current
+// message rode in its own "Recent conversation" and then again in
+// full under "Reply to this message": every prompt carried it twice.
+function fakeDupPool({ configBody }) {
+  const earlier = {
+    id: 'bbbbbbbb-1111-4222-8333-444444444444', channel_id: G6_CHANNEL_ID, author_subject: 'user_author',
+    author_kind: 'human', body: 'CTXDUP earlier message, already in the channel.', idempotency_key: 'dup-earlier-1',
+    created_at: new Date(Date.now() - 5000), metadata: null,
+  };
+  const current = {
+    id: 'cccccccc-1111-4222-8333-444444444444', channel_id: G6_CHANNEL_ID, author_subject: 'user_author',
+    author_kind: 'human', body: 'CTXDUP current message, answer this one.', idempotency_key: 'dup-current-1',
+    created_at: new Date(), metadata: null,
+  };
+  const client = {
+    async query(text, vals = []) {
+      const sql = String(text);
+      if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 0 };
+      if (sql.includes("set_config('helmion.tenant_id'")) return { rows: [{}], rowCount: 1 };
+      if (sql.includes('tenant_memberships')) return { rows: [{ role: 'owner' }], rowCount: 1 };
+      if (sql.includes('from helmion.desktop_links')) return { rows: [{ n: 0 }], rowCount: 1 };
+      if (sql.includes('runner_provider_presence')) return { rows: [], rowCount: 0 };
+      if (sql.includes('provider_connections')) return { rows: [], rowCount: 0 };
+      if (sql.includes('distinct on (channel_id)')) return { rows: [{ channel_id: G6_CHANNEL_ID, body: configBody }], rowCount: 1 };
+      if (sql.includes('lateral')) {
+        // The real bulk read returns newest first; the mesh reverses
+        // to oldest first before walking the rows.
+        return {
+          rows: [
+            { ch_id: G6_CHANNEL_ID, ch_slug: 'build', ch_title: 'Build', ch_kind: 'team', ...current },
+            { ch_id: G6_CHANNEL_ID, ch_slug: 'build', ch_title: 'Build', ch_kind: 'team', ...earlier },
+          ],
+          rowCount: 2,
+        };
+      }
+      if (sql.includes('from helmion.envoy_channels')) return { rows: [{ id: G6_CHANNEL_ID, slug: 'build', title: 'Build', kind: 'team' }], rowCount: 1 };
+      if (sql.includes('limit 40')) return { rows: [current], rowCount: 1 };
+      if (sql.startsWith('insert into helmion.envoy_messages')) return { rows: [], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  return { pool: { async connect() { return client; } }, earlier, current };
+}
+
+test('mesh on fakes: dispatch context excludes the message being answered (letter 731)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const { pool, earlier, current } = fakeDupPool({ configBody: serializeConfig(config) });
+  const mesh = g6Mesh(pool);
+  const result = await mesh.agentWork(G6_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  const item = result.work.find((w) => w.message.id === current.id);
+  assert.ok(item, 'the current message earns a work item');
+  assert.ok(item.context.some((m) => m.id === earlier.id), 'the earlier message stays in the context');
+  assert.ok(!item.context.some((m) => m.id === current.id), 'the current message is not in its own context');
+  assert.ok(!item.context.some((m) => m.body === current.body), 'the current body is not in its own context');
+  const prompt = agentPrompt({ provider: 'claude', channelTitle: 'Build', members: ['claude'], context: item.context, message: item.message });
+  assert.equal(prompt.split(current.body).length - 1, 1, 'the built prompt carries the current message exactly once');
 });

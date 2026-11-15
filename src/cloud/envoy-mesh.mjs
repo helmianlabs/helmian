@@ -944,7 +944,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               continue;
             }
           }
-          const context = rows.filter((r) => new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
+          const context = rows.filter((r) => String(r.id) !== String(row.id) && new Date(r.created_at) <= new Date(row.created_at) && r.author_kind !== 'system').slice(-12).map(messageOut);
           const notebook = await loadNotebook();
           const knowledgeBase = await loadKnowledgeBase();
           // Skills ride only when the message names them: resolve
