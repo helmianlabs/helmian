@@ -1,5 +1,12 @@
 # Helmion Guard — browser extension, phase 1
 
+> **Status, November 14, 2026: ON HOLD.** Helmian Guard as a standalone
+> product is paused. The current focus is the Helmian platform itself.
+> The extension still works, and the Guard page at helmian.cloud still
+> serves this build. The approval checks built into Helmian itself are
+> part of the platform and keep running. No new Guard features are
+> being built right now.
+
 It watches the AI's reply as it types, and it reads that reply twice.
 
 It also checks the chat composer at send time. An explicit request to erase an

@@ -1,5 +1,10 @@
 # Herald PWA runtime boundaries
 
+> **Status, November 14, 2026: ON HOLD.** Helmian Herald is paused as
+> a product. The current focus is the Helmian platform itself. The
+> code stays in the tree as it stands; no new Herald work is being
+> built right now.
+
 The browser owns presentation and account-scoped transport only. It receives no desktop enrollment secret,
 database URL, provider key, Clerk secret, or Ably API key.
 
