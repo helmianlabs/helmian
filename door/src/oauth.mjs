@@ -18,13 +18,13 @@ import { renderConsentPage } from './consent.mjs';
 const nowS = () => Math.floor(Date.now() / 1000);
 const token = (bytes = 32) => randomBytes(bytes).toString('base64url');
 
-/** Only scopes we know; empty request = read-only door. */
-export function normalizeScopes(requested) {
-  const list = (Array.isArray(requested) ? requested : []).filter((s) => SCOPES.includes(s));
-  return list.length ? [...new Set(list)] : [...DEFAULT_SCOPES];
+/** Only scopes this door can grant; empty request = read-only door. */
+export function normalizeScopes(requested, allowed = SCOPES, defaults = DEFAULT_SCOPES) {
+  const list = (Array.isArray(requested) ? requested : []).filter((s) => allowed.includes(s));
+  return list.length ? [...new Set(list)] : [...defaults];
 }
 
-export function createOAuth({ resourceId, stateFile }) {
+export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCOPES, defaultScopes = DEFAULT_SCOPES, flavour = 'combined' }) {
   const clients = new Map();
   const authCodes = new Map();
   const accessTokens = new Map();
@@ -87,7 +87,7 @@ export function createOAuth({ resourceId, stateFile }) {
     get clientsStore() { return clientsStore; },
     async authorize(client, params, res) {
       const pendingId = token(18);
-      const scopes = normalizeScopes(params.scopes);
+      const scopes = normalizeScopes(params.scopes, scopesAllowed, defaultScopes);
       pendingAuth.set(pendingId, {
         clientId: client.client_id,
         redirectUri: params.redirectUri,
@@ -98,7 +98,7 @@ export function createOAuth({ resourceId, stateFile }) {
         createdAt: nowS(),
       });
       res.status(200).set('Content-Type', 'text/html; charset=utf-8')
-        .send(renderConsentPage({ pendingId, clientName: client.client_name || client.client_id, scopes }));
+        .send(renderConsentPage({ pendingId, clientName: client.client_name || client.client_id, scopes, flavour }));
     },
     async challengeForAuthorizationCode(_client, code) {
       const rec = authCodes.get(code);
