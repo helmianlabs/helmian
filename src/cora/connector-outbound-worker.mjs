@@ -26,9 +26,25 @@
 // the settle, behind a savepoint: a failed audit write rolls back to the
 // savepoint only, so it never un-sends a delivered message and never
 // discards the status update it rides with.
+//
+// Per-tenant routing (Bite F): when the worker is constructed with a
+// destination resolver (directly, or built from a credential client),
+// the deliver path changes and nothing else does. The claimed batch is
+// grouped by (tenant_id, provider), each group is resolved ONCE per
+// drain through src/cloud/connector-destinations.mjs, and each group is
+// delivered to its own tenant's stored webhook; the operator tenant
+// alone may fall back to the server-wide env webhooks above. A tenant
+// with no destination fails its rows on the first drain with reason
+// tenant_destination_not_configured, audited exactly like
+// webhook_not_configured. This is the addendum to sql/052's header,
+// which says webhook URLs live only in server env: that rule named the
+// outbox table (it still stores none); a tenant's own URL is a tenant
+// secret and lives in the credential vault. A worker constructed with
+// no resolver keeps the historical env behaviour above, byte for byte.
 
 import { randomUUID } from 'node:crypto';
 import { postConnectorMessage } from '../cloud/communication-connectors.mjs';
+import { resolveOutboundDestination } from '../cloud/connector-destinations.mjs';
 import { appendAuditEvent } from '../cloud/audit-event-repository.mjs';
 
 export const CONNECTOR_OUTBOUND_WORKER_FORMAT = 'helmian.connector-outbound.v1';
@@ -83,10 +99,20 @@ export async function enqueueConnectorMessage({ pool, tenantId, provider, channe
   }
 }
 
-export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-connector-outbound', batchSize = 10, log = () => {}, env = process.env, postMessage = postConnectorMessage } = {}) {
+export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-connector-outbound', batchSize = 10, log = () => {}, env = process.env, postMessage = postConnectorMessage, credentials = null, resolveDestination = null } = {}) {
   if (!pool?.connect) throw new Error('connector outbound worker needs a Postgres pool');
   if (!WORKER_ID_PATTERN.test(workerId)) throw new Error('connector outbound worker id is invalid');
   const limit = Math.min(Math.max(Number(batchSize) || 10, 1), 50);
+  // Bite F: the destination resolver this worker consults per claimed
+  // group. An injected resolver wins; otherwise one is built from the
+  // credential client, resolving under this worker's own audit context
+  // (workerContext below) in the tenant-pair precedent's shape. With
+  // neither, the worker delivers exactly as it did before Bite F.
+  const destinationResolver = typeof resolveDestination === 'function'
+    ? resolveDestination
+    : (credentials && typeof credentials.resolveVaultCredential === 'function'
+      ? ({ tenantId, provider }) => resolveOutboundDestination({ credentials, tenantId, provider, env, actorContext: workerContext(tenantId, workerId) })
+      : null);
 
   // settle runs INSIDE the claiming transaction (see the header): the
   // status update and the claim commit or roll back together, and the
@@ -125,12 +151,12 @@ export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-c
     return updated.rowCount === 1;
   }
 
-  async function deliver(client, message) {
-    if (!webhookUrlFor(message.provider, env)) {
-      return settle(client, message, { status: 'failed', attempts: CONNECTOR_OUTBOUND_MAX_ATTEMPTS, receipt: { reason: 'webhook_not_configured', provider: message.provider } });
-    }
+  // One delivery attempt and its settle: shared by the historical env
+  // road and the Bite F per-tenant road, so the attempt counting, the
+  // terminal failure, and the receipts are identical on both.
+  async function attemptDelivery(client, message, post) {
     try {
-      const result = await postMessage({ provider: message.provider, text: message.text, env });
+      const result = await post();
       return settle(client, message, { status: 'sent', attempts: message.attempts, receipt: { reason: 'delivered', delivered: result.delivered, httpStatus: result.status } });
     } catch (error) {
       const attempts = Number(message.attempts || 0) + 1;
@@ -142,6 +168,27 @@ export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-c
       await client.query(`update helmion.connector_outbound_messages set attempts = $2, updated_at = clock_timestamp() where id = $1 and status = 'queued'`, [message.id, attempts]);
       return false;
     }
+  }
+
+  async function deliver(client, message) {
+    if (!webhookUrlFor(message.provider, env)) {
+      return settle(client, message, { status: 'failed', attempts: CONNECTOR_OUTBOUND_MAX_ATTEMPTS, receipt: { reason: 'webhook_not_configured', provider: message.provider } });
+    }
+    return attemptDelivery(client, message, () => postMessage({ provider: message.provider, text: message.text, env }));
+  }
+
+  // Bite F: deliver one row to its tenant group's resolved destination.
+  // A group with no destination (or a resolver answer with no usable
+  // URL) fails terminally on this drain, mirroring webhook_not_configured
+  // exactly; no delivery is attempted for such a row.
+  async function deliverToDestination(client, message, destination) {
+    const webhookUrl = destination && (destination.kind === 'tenant' || destination.kind === 'operator-env')
+      ? String(destination.webhookUrl ?? '').trim()
+      : '';
+    if (!webhookUrl) {
+      return settle(client, message, { status: 'failed', attempts: CONNECTOR_OUTBOUND_MAX_ATTEMPTS, receipt: { reason: 'tenant_destination_not_configured', provider: message.provider } });
+    }
+    return attemptDelivery(client, message, () => postMessage({ provider: message.provider, text: message.text, env, webhookUrl }));
   }
 
   async function runOnce() {
@@ -168,9 +215,39 @@ export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-c
       // the same rows. It commits only when every settle in the batch
       // is written, and rolls back whole if the drain itself fails.
       const processed = [];
-      for (const message of claimed.rows) {
-        const settled = await deliver(client, message);
-        if (settled) processed.push({ messageId: message.id, provider: message.provider });
+      if (destinationResolver) {
+        // Bite F: group the claimed batch by (tenant_id, provider) and
+        // resolve each group once for the whole drain. A resolution
+        // error is confined to its own group: those rows are left
+        // untouched, so their locks release at commit with no writes
+        // and they stay queued for the next drain, exactly as a crash
+        // mid-batch would leave them; every other group proceeds.
+        const groups = new Map();
+        for (const message of claimed.rows) {
+          const key = `${message.tenant_id} ${message.provider}`;
+          let group = groups.get(key);
+          if (!group) { group = []; groups.set(key, group); }
+          group.push(message);
+        }
+        for (const group of groups.values()) {
+          const { tenant_id: tenantId, provider } = group[0];
+          let destination;
+          try {
+            destination = await destinationResolver({ tenantId, provider });
+          } catch (error) {
+            log(`connector outbound destination resolution failed for tenant ${tenantId} (${provider}): ${error.message}`);
+            continue;
+          }
+          for (const message of group) {
+            const settled = await deliverToDestination(client, message, destination);
+            if (settled) processed.push({ messageId: message.id, provider: message.provider });
+          }
+        }
+      } else {
+        for (const message of claimed.rows) {
+          const settled = await deliver(client, message);
+          if (settled) processed.push({ messageId: message.id, provider: message.provider });
+        }
       }
       await client.query('commit');
       for (const p of processed) log(`connector outbound ${p.messageId} -> ${p.provider} settled`);
