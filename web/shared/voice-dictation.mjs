@@ -1057,7 +1057,8 @@ export function createVoiceController({
 // are the NAMES display forms insertMention() writes, which mentions()
 // resolves back to the same providers. 'muse' is a server provider
 // (src/cloud/envoy-agents.mjs AGENT_NAMES) the client mirror's ALIAS
-// does not carry yet; 'helm' rides as a custom-seat handle.
+// does not carry yet; 'helm' is a reserved role handle in that
+// same registry (bite H1), never a custom seat.
 export const SPOKEN_MENTION_TAGS = Object.freeze({
   all: 'all', everyone: 'all', here: 'all',
   claude: 'Claude', chatgpt: 'ChatGPT', gpt: 'ChatGPT', openai: 'ChatGPT',
