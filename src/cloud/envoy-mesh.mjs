@@ -35,9 +35,10 @@ import { createGuardStore } from './guard-findings.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
 import { screenIntakeContent, siteGuardRefusalText, siteGuardStopRecord, ingestSiteGuardFindings, createSiteGuardRateLimiter, siteGuardSenderKey, siteGuardRateRefusalText, siteGuardRateStopRecord, ingestSiteGuardRateFinding } from './site-guard.mjs';
 import { readNotebookBlock, readNotebookEntries } from './envoy-notebook.mjs';
-import { createLibrarianStore, deriveChannelName, fileAssignmentCompletion, fileDispatchAsk, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
+import { createLibrarianStore, deriveChannelName, fileAssignmentCompletion, fileDispatchAsk, fileHelmSearchAnswer, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
 import { settleMaestroAssignmentsIfNeeded } from './envoy-assignments.mjs';
-import { composeHelmStateAnswer, fileHelmUnansweredQuestion, helmAnswerSpec, helmFactAnswer, helmPendingGuideStep, isHelmStateAsk, markHelmOnlyMessage, notebookBlockers, oldestUnsettledAssignmentPart, readHelmConnectorStates } from './envoy-helm.mjs';
+import { composeHelmStateAnswer, fileHelmUnansweredQuestion, HELM_AVAILABILITY_LINE, helmAnswerSpec, helmFactAnswer, helmPendingGuideStep, helmSearchAnswer, isHelmStateAsk, markHelmOnlyMessage, notebookBlockers, oldestUnsettledAssignmentPart, readHelmConnectorStates } from './envoy-helm.mjs';
+import { createHelmSearch } from './helm-search.mjs';
 import { createSkillLibraryStore } from './skill-library.mjs';
 import { armingPairsForDispatch, resolveDispatchArming, resolveKeepLoadedPairs } from './connector-arming-dispatch.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
@@ -304,7 +305,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, keepLoadedReadImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null, helmLogImpl = null, helmEntriesReadImpl = null, helmConnectorReadImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, keepLoadedReadImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null, helmLogImpl = null, helmEntriesReadImpl = null, helmConnectorReadImpl = null, helmSearchImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -767,6 +768,35 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         }
         return helmEntriesPromise;
       };
+      // Helm's search road (fix programme bite H5, DESIGN
+      // 3.3): the provider searcher behind helm-search.mjs's
+      // one interface, built lazily in the same discipline as
+      // the record loaders above — at most once per poll, and
+      // ONLY when a general question actually reaches the
+      // search decision in helmAnswerFor below: a poll that
+      // answers nothing through Helm, or answers from records,
+      // never builds it, so its cost is exactly what it was
+      // before this bite. With no provider key configured the
+      // searcher is null and the road is closed: the general
+      // question keeps the availability line and the miss
+      // filing, unchanged. A construction failure is likewise
+      // null, logged loudly — the search is an addition to the
+      // room, never a dependency of it.
+      let helmSearcherPromise = null;
+      const loadHelmSearcher = () => {
+        if (!helmSearcherPromise) {
+          helmSearcherPromise = (async () => {
+            const log = helmLogImpl ?? ((...args) => console.error(...args));
+            try {
+              return await (helmSearchImpl ?? (() => createHelmSearch()))();
+            } catch (error) {
+              log(`[envoy-helm] search setup FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — Helm answers general questions with the availability line this poll; dispatch is unchanged.`);
+              return null;
+            }
+          })();
+        }
+        return helmSearcherPromise;
+      };
       const helmConnectorCache = new Map();
       let helmConnectorReadFailed = false;
       const loadHelmConnectorStates = async (channelId, personId, pairs) => {
@@ -812,11 +842,15 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // below, in the same write as its answer post, so the two
       // land together or not at all; a miss filing rides the
       // deferred tail, through the fail-soft filer, beside the
-      // librarian's groups. Collection is in-computation only —
-      // neither adds a round trip to a poll that answers nothing
-      // through Helm.
+      // librarian's groups. Bite H5 adds the third collection:
+      // a searched answer's filing, which rides the same tail
+      // through the Librarian (the one pen) under
+      // helm:<messageId>. Collection is in-computation only —
+      // none of them adds a round trip to a poll that answers
+      // nothing through Helm.
       const helmMarkSpecs = [];
       const helmMissJobs = [];
+      const helmSearchFileJobs = [];
       // Maestro settle watching (fix programme bite M4, DESIGN
       // 2.3): the channels this poll serves, collected as the
       // computation walks them. After the result is computed,
@@ -896,16 +930,59 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // loaders, the channel's armed connectors through the
       // connector library read, and the channel window's own
       // open work (the oldest unsettled assignment part, the
-      // asker's pending guide step) — and files no miss: the
-      // question was answered. Any other question takes the fact
-      // road (envoy-helm.mjs's helmFactAnswer): a filed entry
-      // quoted verbatim, the nothing-filed line, or the
-      // availability line, with the miss filing the composer
-      // decides. Returns { body, fileMiss }.
+      // — and files no miss: the question was answered. Any other
+      // question takes the fact road (envoy-helm.mjs's
+      // helmFactAnswer): a filed entry quoted verbatim, the
+      // nothing-filed line, or the availability line, with the
+      // miss filing the composer decides — and, since bite H5,
+      // a general question the records do not answer takes the
+      // search road before that line is posted. Returns
+      // { body, fileMiss } plus, for a searched answer,
+      // { searchFiling } for the deferred tail's filing.
       const helmAnswerFor = async ({ channel, config, customByHandle, rows, answered, message }) => {
         const question = String(message.body ?? '');
         if (!isHelmStateAsk(question)) {
-          return helmFactAnswer(await loadHelmEntries(), question);
+          const entries = await loadHelmEntries();
+          const factAnswer = helmFactAnswer(entries, question);
+          // The search road (bite H5, DESIGN 3.3): it opens on
+          // exactly one outcome — a general question whose
+          // record lookup RAN and missed, which is the
+          // availability line's general-question case. A
+          // record-naming question keeps its nothing-filed
+          // line (that question asks for the tenant's own
+          // records, and the web is not an answer to it), and a
+          // lookup that failed (entries null) never searches:
+          // the records might have held the answer, and
+          // searching past a broken read would paper over it.
+          // The search runs here, in the dispatch computation
+          // — no transaction is open, so the bounded external
+          // call costs the poll no database time — and when it
+          // serves, its answer replaces the line and files no
+          // miss; the answer's own filing rides the deferred
+          // tail through the Librarian, collected by the
+          // callers below from `searchFiling`, and only when
+          // the serving provider's terms posture allows filing
+          // (helm-search.mjs: an Exa answer is answered from
+          // but not filed).
+          if (Array.isArray(entries) && factAnswer.body === HELM_AVAILABILITY_LINE) {
+            const searched = await helmSearchAnswer({
+              search: await loadHelmSearcher(),
+              question,
+              ...(helmLogImpl ? { log: helmLogImpl } : {}),
+            });
+            if (searched) {
+              return {
+                body: searched.body,
+                fileMiss: false,
+                searchFiling: {
+                  provider: searched.provider,
+                  mayFileAnswers: searched.mayFileAnswers,
+                  sources: searched.sources,
+                },
+              };
+            }
+          }
+          return factAnswer;
         }
         const nameOf = (p) => customByHandle?.get(p)?.name || AGENT_NAMES[p] || p;
         let withheldNames = [];
@@ -1068,6 +1145,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         const helmAnswer = await helmAnswerFor({ channel, config, customByHandle, rows, answered, message });
         insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: 'alone', body: helmAnswer.body }));
         if (helmAnswer.fileMiss) helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
+        if (helmAnswer.searchFiling?.mayFileAnswers) helmSearchFileJobs.push({ channelId: String(channel.id), channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, question: message.body, answer: helmAnswer.body, sources: helmAnswer.searchFiling.sources, provider: helmAnswer.searchFiling.provider, at: new Date(now()).toISOString() });
       }
       continue;
     }
@@ -1168,6 +1246,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: helm, body: helmAnswer.body }));
             if (helm === 'alone') helmMarkSpecs.push({ channelId: String(channel.id), messageId: message.id, senderSubject: message.authorSubject });
             if (helmAnswer.fileMiss) helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
+            if (helmAnswer.searchFiling?.mayFileAnswers) helmSearchFileJobs.push({ channelId: String(channel.id), channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, question: message.body, answer: helmAnswer.body, sources: helmAnswer.searchFiling.sources, provider: helmAnswer.searchFiling.provider, at: new Date(now()).toISOString() });
             continue;
           }
           if (!due.length) continue;
@@ -1421,6 +1500,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             const helmAnswer = await helmAnswerFor({ channel, config, customByHandle, rows, answered, message });
             insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: 'team', body: helmAnswer.body }));
             if (helmAnswer.fileMiss) helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
+            if (helmAnswer.searchFiling?.mayFileAnswers) helmSearchFileJobs.push({ channelId: String(channel.id), channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, question: message.body, answer: helmAnswer.body, sources: helmAnswer.searchFiling.sources, provider: helmAnswer.searchFiling.provider, at: new Date(now()).toISOString() });
           }
           if (evaluation) {
             for (const p of due) {
@@ -1481,7 +1561,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // rejection — so a surprise throw is logged loudly here and
       // can neither crash the process nor skip the other group. The
       // wrappers' own contract says neither group can throw at all.
-      if (findingJobs.length || siteGuardJobs.length || siteGuardRateJobs.length || librarianJobs.length || namingJobs.size || incidentJobs.length || settleChannelIds.size || helmMissJobs.length) {
+      if (findingJobs.length || siteGuardJobs.length || siteGuardRateJobs.length || librarianJobs.length || namingJobs.size || incidentJobs.length || settleChannelIds.size || helmMissJobs.length || helmSearchFileJobs.length) {
         trackFilingTail((async () => {
           // Guard spine bite 3: witness every evaluation this poll produced
           // into the Guard findings feed, allows and refusals alike. This
@@ -1559,6 +1639,30 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             }
           } catch (error) {
             console.error(`[envoy-mesh] maestro settle tail FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — the dispatch stands unchanged; settle lines and completion records wait for the next poll.`);
+          }
+          // Helm search filing (fix programme bite H5, DESIGN
+          // 3.3 and 4.3): every answer the search road served
+          // this poll — from a provider whose terms posture
+          // allows filing — files into the shared notebook
+          // through the Librarian, the one pen, under
+          // helm:<messageId>, so the same question later is
+          // answered from the record by the fact road instead
+          // of renting a second search. The store insert is
+          // on-conflict-do-nothing, so filing on every poll
+          // that observes the answer leaves exactly one dated
+          // entry. Same tail discipline as the groups above: a
+          // failure is logged loudly and changes nothing about
+          // the answer that was posted.
+          try {
+            if (helmSearchFileJobs.length) {
+              const librarian = librarianImpl ?? createLibrarianStore(pool);
+              const librarianOpts = librarianLogImpl ? { log: librarianLogImpl } : {};
+              for (const job of helmSearchFileJobs) {
+                await fileHelmSearchAnswer(librarian, actor, job, librarianOpts);
+              }
+            }
+          } catch (error) {
+            console.error(`[envoy-mesh] helm search filing tail FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — the dispatch stands unchanged; the shared notebook has a gap for this poll's search answers.`);
           }
           // Helm miss filing (fix programme bite H3, DESIGN
           // 3.3): every question Helm answered with the
