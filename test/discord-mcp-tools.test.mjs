@@ -51,8 +51,12 @@ function startFakeCloud() {
     if (req.headers.authorization !== `Bearer ${BRIDGE_TOKEN}`) {
       res.writeHead(401, { 'content-type': 'application/json' }); res.end(JSON.stringify({ valid: false, code: 'ENVOY_BRIDGE_UNAUTHORIZED' })); return;
     }
-    if (req.url.startsWith('/api/admin/envoy/bridge/links')) return ok({ links: LINKS });
-    if (req.url.startsWith('/api/admin/envoy/bridge/outbound')) return ok({ messages: MESSAGES });
+    // The real cloud serves both route shapes (the legacy unscoped
+    // routes and the provider-scoped ones); the server under test
+    // rides the Discord-scoped shape, so normalize it away here.
+    const route = req.url.replace('/api/admin/envoy/bridge/discord/', '/api/admin/envoy/bridge/');
+    if (route.startsWith('/api/admin/envoy/bridge/links')) return ok({ links: LINKS });
+    if (route.startsWith('/api/admin/envoy/bridge/outbound')) return ok({ messages: MESSAGES });
     res.writeHead(404, { 'content-type': 'application/json' }); res.end(JSON.stringify({ valid: false, code: 'ENVOY_BRIDGE_ROUTE_UNKNOWN' }));
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({

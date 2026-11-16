@@ -7,8 +7,15 @@
 //                               a token Helmian issues for the server, never
 //                               a Discord credential. HTTP mode refuses to
 //                               start without it (fail closed).
-//   HELMIAN_ENVOY_BRIDGE_TOKEN  the bridge's existing cloud credential \u2014
-//                               the same value the bridge itself uses.
+//   HELMIAN_ENVOY_BRIDGE_TOKEN_DISCORD
+//                               the bridge's own per-provider cloud
+//                               credential \u2014 the same value the bridge
+//                               itself presents, read through the bridge's
+//                               own envoyBridgeToken helper.
+//   HELMIAN_ENVOY_BRIDGE_TOKEN  the shared cloud credential, presented
+//                               only as the rotation fallback when the
+//                               Discord value above is not set \u2014 the
+//                               same posture the bridge itself runs.
 //                               No second Discord bot, no new Discord token.
 //   HELMIAN_CLOUD               default https://helmian.cloud
 //   DISCORD_MCP_PORT            default 8097 (127.0.0.1 only by default)
@@ -27,6 +34,7 @@ import { createInterface } from 'node:readline';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createDiscordMcpCore, createWebhookPoster } from './mcp-core.mjs';
+import { envoyBridgeToken } from './bridge-core.mjs';
 
 const env = process.env;
 const log = (...a) => console.log(new Date().toISOString(), '[discord-mcp]', ...a);
@@ -34,7 +42,11 @@ const log = (...a) => console.log(new Date().toISOString(), '[discord-mcp]', ...
 export function readConfig(source = env) {
   return {
     cloud: String(source.HELMIAN_CLOUD || 'https://helmian.cloud'),
-    bridgeToken: String(source.HELMIAN_ENVOY_BRIDGE_TOKEN ?? '').trim(),
+    // The bridge's own token choice (bridge-core's helper): the Discord
+    // per-provider value first, the shared value as fallback — so this
+    // server presents the same credential the bridge presents, and the
+    // shared value can be retired once the Discord value is set.
+    bridgeToken: envoyBridgeToken(source),
     mcpToken: String(source.HELMIAN_DISCORD_MCP_TOKEN ?? '').trim(),
     port: Number(source.DISCORD_MCP_PORT || 8097),
     host: String(source.DISCORD_MCP_HOST || '127.0.0.1'),
@@ -67,6 +79,9 @@ export function buildCore(config, overrides = {}) {
   return createDiscordMcpCore({
     cloud: config.cloud,
     token: config.bridgeToken,
+    // The Discord-scoped routes, as the bridge's own calls ride them
+    // (index.mjs passes provider: 'discord' to createBridge the same way).
+    provider: 'discord',
     poster,
     ...(overrides.guard ? { guard: overrides.guard } : {}),
     ...(overrides.fetchImpl ? { fetchImpl: overrides.fetchImpl } : {}),

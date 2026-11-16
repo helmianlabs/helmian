@@ -5,10 +5,13 @@
 // the cloud client, the Guard gate and the Discord poster are injected, and
 // mcp-server.mjs wires the real ones. No discord.js import, no token of its
 // own — the server talks to the EXISTING bridge/cloud mirror plumbing with
-// the bridge's own credential (HELMIAN_ENVOY_BRIDGE_TOKEN):
+// the bridge's own credential, chosen exactly the way the bridge chooses it
+// (bridge-core's envoyBridgeToken: HELMIAN_ENVOY_BRIDGE_TOKEN_DISCORD first,
+// the shared HELMIAN_ENVOY_BRIDGE_TOKEN as the rotation fallback), and its
+// reads ride the Discord-scoped routes the same way the bridge's calls do:
 //
-//   list channels   GET  /api/admin/envoy/bridge/links
-//   read messages   GET  /api/admin/envoy/bridge/outbound?since=
+//   list channels   GET  /api/admin/envoy/bridge/discord/links
+//   read messages   GET  /api/admin/envoy/bridge/discord/outbound?since=
 //   post a message  the bridge's own webhook delivery (see createWebhookPoster)
 //
 // THE GUARD RULE for the one mutating tool, copied from the hands pattern
@@ -71,15 +74,19 @@ export const POST_TOOL = 'discord_post_message';
 
 /**
  * The cloud bridge client, same shape as bridge-core's internal api():
- * bearer HELMIAN_ENVOY_BRIDGE_TOKEN against /api/admin/envoy/bridge/*.
+ * the bridge credential as bearer against /api/admin/envoy/bridge/*.
+ * With a provider, calls ride the provider-scoped routes
+ * (bridge/discord/<route>) — the route itself names the provider whose
+ * token the cloud checks — exactly as bridge-core's api() builds them;
+ * without one, the legacy unscoped routes, as before.
  */
-export function createBridgeCloudClient({ cloud, token, fetchImpl = fetch } = {}) {
+export function createBridgeCloudClient({ cloud, token, provider = null, fetchImpl = fetch } = {}) {
   const base = String(cloud ?? '').replace(/\/+$/, '');
   const secret = String(token ?? '');
   async function api(path, { method = 'GET', body = null } = {}) {
     if (!base) throw new Error('the Helmian cloud URL is not configured (HELMIAN_CLOUD), so the mirror cannot be read');
-    if (!secret) throw new Error('the bridge token is not configured (HELMIAN_ENVOY_BRIDGE_TOKEN), so the mirror cannot be read');
-    const res = await fetchImpl(`${base}/api/admin/envoy/bridge/${path}`, {
+    if (!secret) throw new Error('the bridge token is not configured (HELMIAN_ENVOY_BRIDGE_TOKEN_DISCORD or HELMIAN_ENVOY_BRIDGE_TOKEN), so the mirror cannot be read');
+    const res = await fetchImpl(`${base}/api/admin/envoy/bridge/${provider ? `${provider}/` : ''}${path}`, {
       method,
       headers: { authorization: `Bearer ${secret}`, ...(body ? { 'content-type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,
@@ -150,14 +157,17 @@ function cleanChannelId(value) {
 
 /**
  * @param {{cloudClient?: object, cloud?: string, token?: string,
- *          fetchImpl?: Function, guard?: object, poster?: object,
- *          now?: () => number}} deps
- *   cloudClient wins when given; otherwise one is built from cloud/token.
+ *          provider?: string|null, fetchImpl?: Function, guard?: object,
+ *          poster?: object, now?: () => number}} deps
+ *   cloudClient wins when given; otherwise one is built from
+ *   cloud/token/provider. provider scopes the built client's routes
+ *   (mcp-server.mjs passes 'discord'; the default keeps the legacy
+ *   unscoped routes, as bridge-core's createBridge defaults).
  *   guard defaults to GUARD_NOT_LIVE (fail closed). poster has no default:
  *   without one, an approved post still cannot execute and says so.
  */
-export function createDiscordMcpCore({ cloudClient = null, cloud, token, fetchImpl = fetch, guard = GUARD_NOT_LIVE, poster = null, now = () => Date.now() } = {}) {
-  const client = cloudClient ?? createBridgeCloudClient({ cloud, token, fetchImpl });
+export function createDiscordMcpCore({ cloudClient = null, cloud, token, provider = null, fetchImpl = fetch, guard = GUARD_NOT_LIVE, poster = null, now = () => Date.now() } = {}) {
+  const client = cloudClient ?? createBridgeCloudClient({ cloud, token, provider, fetchImpl });
 
   async function findLink(channelId) {
     const links = await client.links();
