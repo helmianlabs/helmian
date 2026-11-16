@@ -679,11 +679,11 @@ test('mesh on fakes: set-tool-access writes the channel tool-loading setting (bi
 
 // One channel, one unanswered human ask that arms nothing. The
 // poll answers come from the config body the case supplies.
-function fakeWorkPool({ configBody }) {
+function fakeWorkPool({ configBody, askMetadata = null }) {
   const ask = {
     id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', channel_id: G6_CHANNEL_ID, author_subject: 'user_author',
     author_kind: 'human', body: 'What is the capital of Norway?', idempotency_key: 'g6-ask-1',
-    created_at: new Date(), metadata: null,
+    created_at: new Date(), metadata: askMetadata,
   };
   const client = {
     async query(text, vals = []) {
@@ -858,4 +858,42 @@ test('mesh on fakes: dispatch context excludes the message being answered (lette
   assert.ok(!item.context.some((m) => m.body === current.body), 'the current body is not in its own context');
   const prompt = agentPrompt({ provider: 'claude', channelTitle: 'Build', members: ['claude'], context: item.context, message: item.message });
   assert.equal(prompt.split(current.body).length - 1, 1, 'the built prompt carries the current message exactly once');
+});
+
+test('mesh on fakes: a Librarian-filed fact is never handed to a seat (bite L1)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const configBody = serializeConfig(config);
+  const countingMesh = (pool, filedAsks) => createEnvoyMesh({
+    pool,
+    publishImpl: async () => {},
+    notebookImpl: async () => null,
+    kbImpl: async () => null,
+    librarianImpl: {
+      async fileAsk(actor, job) { filedAsks.push(job); return { filed: true }; },
+      async renameChannelIfGeneric() { return true; },
+      async fileIncident() { return { filed: true }; },
+    },
+    armingLogImpl: () => {},
+  });
+
+  // The marked send: the filing hook already filed the fact and
+  // confirmed it in the channel, so the poll produces no work
+  // item for it and files no ask record for it either — the fact
+  // entry is its record.
+  const markedAsks = [];
+  const marked = countingMesh(fakeWorkPool({ configBody, askMetadata: { librarianFact: { key: 'fact:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', filedBy: 'librarian' } } }).pool, markedAsks);
+  const markedResult = await marked.agentWork(G6_DEVICE, 'claude');
+  await marked.drainFilingTail();
+  assert.equal(markedResult.work.length, 0, 'a filed fact earns no seat a work item');
+  assert.equal(markedAsks.length, 0, 'and no ask record is filed for it');
+
+  // The unmarked twin, same channel, same words: ordinary work,
+  // exactly as before this bite.
+  const plainAsks = [];
+  const plain = countingMesh(fakeWorkPool({ configBody }).pool, plainAsks);
+  const plainResult = await plain.agentWork(G6_DEVICE, 'claude');
+  await plain.drainFilingTail();
+  assert.equal(plainResult.work.length, 1, 'the unmarked send is handed to the seat');
+  assert.equal(plainAsks.length, 1, 'and its ask record files as today');
 });

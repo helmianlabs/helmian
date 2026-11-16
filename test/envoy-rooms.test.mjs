@@ -42,6 +42,19 @@ test('ensureRoom: Maestro is refused before anything is created', async () => {
   assert.equal(meshCalls.length, 0);
 });
 
+test('room definitions: the Librarian has no room — the pen works in every channel and sits in none (bite L1)', () => {
+  assert.equal(agentRoomChannel('librarian'), null);
+  assert.equal(agentRoomChannel('Librarian'), null);
+  assert.equal(agentRoomSlug('librarian'), null);
+});
+
+test('ensureRoom: the Librarian is refused before anything is created (bite L1)', async () => {
+  const { rooms, chatCalls, meshCalls } = stubRooms();
+  await assert.rejects(rooms.ensureRoom(ACTOR, 'librarian'), (error) => error.code === 'ENVOY_AGENT_NOT_AN_AGENT' && error.status === 400);
+  assert.equal(chatCalls.length, 0);
+  assert.equal(meshCalls.length, 0);
+});
+
 test('route: asking for the Maestro room surfaces the not-an-agent code', async () => {
   const fx = routeFixture(stubRooms().rooms, { body: { provider: 'maestro' } });
   await handleAgentRoomsRoute(fx.args);

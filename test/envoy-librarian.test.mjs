@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import {
-  createLibrarianStore, librarianEntryFor, deriveChannelName, isGenericChannelTitle,
+  createLibrarianStore, librarianEntryFor, librarianFactEntryFor, deriveChannelName, isGenericChannelTitle,
   fileDispatchAsk, nameChannelIfGeneric, fileIncidentFromDispatch, readChannelEvidence,
   readKnowledgeBaseBlock, classifyIncident, learnKbRule, kbFindWords, detectIncidentShape,
   KB_PRESET_RULES, LIBRARIAN_ENTRY_MAX_CHARS,
@@ -261,6 +261,70 @@ test('fileAsk: one entry per ask however often it is filed, evidence riding', as
   assert.deepEqual(value.seats, ['claude']);
   assert.equal(value.guard, 'allow');
   assert.equal(value.ask, 'plan the launch page');
+});
+
+test('librarianFactEntryFor: the fact, the filer, the moment, the channel — bounded (bite L1)', () => {
+  const entry = librarianFactEntryFor({
+    messageId: 'm-9', channelId: CHAN, channelTitle: 'General', channelSlug: 'general',
+    humanName: 'Troy', humanSubject: 'user-owner-1',
+    fact: 'The approvals pop-up was proven on 2026-11-15', at: '2026-11-15T00:00:00.000Z',
+  });
+  assert.equal(entry.key, 'fact:m-9');
+  assert.equal(entry.value.fact, 'The approvals pop-up was proven on 2026-11-15');
+  assert.equal(entry.value.channel, 'General');
+  assert.equal(entry.value.slug, 'general');
+  assert.equal(entry.value.channelId, CHAN);
+  assert.equal(entry.value.human, 'Troy');
+  assert.equal(entry.value.subject, 'user-owner-1');
+  assert.equal(entry.value.at, '2026-11-15T00:00:00.000Z');
+  // No title in hand (the send path knows the id, not the title):
+  // the channel still rides, as its id.
+  const bare = librarianFactEntryFor({ messageId: 'm-10', channelId: CHAN, humanSubject: 'user-owner-1', fact: 'a fact' });
+  assert.equal(bare.value.channel, null);
+  assert.equal(bare.value.channelId, CHAN);
+  assert.equal(bare.value.human, 'user-owner-1', 'the subject stands in when no name is known');
+  // A fat fact shrinks to fit the one entry bound, and what
+  // survives is a prefix of what was handed in — the confirmation
+  // quotes the stored text, so nothing files that was not shown.
+  const fat = librarianFactEntryFor({ messageId: 'm-11', channelId: CHAN, humanSubject: 'user-owner-1', fact: 'word '.repeat(1000) });
+  assert.ok(JSON.stringify(fat.value).length <= LIBRARIAN_ENTRY_MAX_CHARS, 'entry JSON within the cap');
+  assert.ok('word '.repeat(1000).startsWith(fat.value.fact));
+  // Nothing to file: no message id, no fact.
+  assert.equal(librarianFactEntryFor({ channelId: CHAN, fact: 'x' }), null);
+  assert.equal(librarianFactEntryFor({ messageId: 'm-12', fact: '   ' }), null);
+  assert.equal(librarianFactEntryFor(null), null);
+});
+
+test('fileFact: filed under the tenant slug only, read back there, absent everywhere else (bite L1)', async () => {
+  const { pool, state } = fakeLibrarianPool();
+  const store = createLibrarianStore(pool);
+  const job = {
+    messageId: 'm-9', channelId: CHAN, channelTitle: 'General', humanSubject: 'user-owner-1', humanName: 'Troy',
+    fact: 'The approvals pop-up was proven on 2026-11-15', at: '2026-11-15T00:00:00.000Z',
+  };
+  const out = await store.fileFact(OWNER, job);
+  assert.equal(out.filed, true);
+  assert.equal(out.key, 'fact:m-9');
+  assert.equal(out.fact, 'The approvals pop-up was proven on 2026-11-15', 'the stored text rides back for the confirmation');
+  const value = state.entries.get('tenant-a|fact:m-9');
+  assert.equal(value.fact, 'The approvals pop-up was proven on 2026-11-15');
+  assert.equal(value.subject, 'user-owner-1');
+  // Another tenant's keyspace holds nothing under the fact key,
+  // and no entry anywhere sits under a NULL or empty slug.
+  assert.equal(state.entries.get('tenant-b|fact:m-9'), undefined);
+  for (const key of state.entries.keys()) assert.ok(!key.startsWith('|') && !key.startsWith('null|') && !key.startsWith('undefined|'), `no unslugged entry: ${key}`);
+  // Re-filing the same message upserts the one entry; the same
+  // words in a NEW message file a second entry (the design's
+  // newest-match rule for recall).
+  assert.equal((await store.fileFact(OWNER, job)).filed, true);
+  assert.equal([...state.entries.keys()].filter((k) => k.endsWith('|fact:m-9')).length, 1);
+  assert.equal((await store.fileFact(OWNER, { ...job, messageId: 'm-10' })).filed, true);
+  assert.equal(state.entries.get('tenant-a|fact:m-10').fact, value.fact);
+  // An actor with no tenant id is refused before anything writes:
+  // a fact never binds a NULL slug.
+  const refused = await store.fileFact({ subject: 'user-owner-1', role: 'owner' }, job);
+  assert.deepEqual({ filed: refused.filed, reason: refused.reason }, { filed: false, reason: 'no-tenant' });
+  assert.equal(state.entries.size, 2, 'the refusal wrote nothing');
 });
 
 test('renameChannelIfGeneric: fires once, never overwrites a human name', async () => {
