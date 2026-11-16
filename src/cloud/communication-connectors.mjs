@@ -99,23 +99,28 @@ export function readCommunicationConnectorStatus(env = process.env) {
   });
 }
 
-function allowedWebhookUrl(value, provider) {
+export function allowedWebhookUrl(value, provider) {
   let url;
   try { url = new URL(String(value ?? '')); } catch { throw new Error(`${provider} webhook URL is invalid`); }
-  const allowed = provider === 'discord' ? DISCORD_WEBHOOK_HOSTS : SLACK_WEBHOOK_HOSTS;
+  const allowed = String(provider ?? '').toLowerCase() === 'discord' ? DISCORD_WEBHOOK_HOSTS : SLACK_WEBHOOK_HOSTS;
   if (url.protocol !== 'https:' || !allowed.has(url.hostname) || url.username || url.password) {
     throw new Error(`${provider} webhook URL host is not allowlisted`);
   }
   return url;
 }
 
-export async function postConnectorMessage({ provider, text, env = process.env, fetchImpl = fetch, signal }) {
+export async function postConnectorMessage({ provider, text, env = process.env, fetchImpl = fetch, signal, webhookUrl }) {
   const normalizedProvider = String(provider ?? '').toLowerCase();
   const bodyText = boundedString(text, 'connector message');
+  // An explicit webhookUrl (Bite F: a tenant's own stored destination,
+  // resolved by connector-destinations.mjs) is validated through the
+  // same host allowlist as the env value. When it is absent the env
+  // read below is exactly the historical behaviour, so every existing
+  // caller is untouched.
   const url = normalizedProvider === 'discord'
-    ? allowedWebhookUrl(env.HELMION_DISCORD_WEBHOOK_URL, 'Discord')
+    ? allowedWebhookUrl(webhookUrl ?? env.HELMION_DISCORD_WEBHOOK_URL, 'Discord')
     : normalizedProvider === 'slack'
-      ? allowedWebhookUrl(env.HELMION_SLACK_WEBHOOK_URL, 'Slack')
+      ? allowedWebhookUrl(webhookUrl ?? env.HELMION_SLACK_WEBHOOK_URL, 'Slack')
       : (() => { throw new Error('connector provider is unsupported'); })();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
