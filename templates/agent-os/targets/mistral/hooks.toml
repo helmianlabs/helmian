@@ -1,0 +1,16 @@
+# BEGIN AGENT OS HOOKS
+# Managed by the Helmian profile sync. Everything between the BEGIN and
+# END markers is refreshed on every sync; your own [[hooks]] tables
+# outside the markers are never touched.
+[[hooks]]
+name = "agent-os-session-start"
+type = "session_start"
+command = "node \"{{HOOKS_DIR}}/session-start-context.mjs\""
+timeout = 10
+
+[[hooks]]
+name = "agent-os-turn-capture"
+type = "post_agent"
+command = "node \"{{HOOKS_DIR}}/stop-capture.mjs\""
+timeout = 10
+# END AGENT OS HOOKS
