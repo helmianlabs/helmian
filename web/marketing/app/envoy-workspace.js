@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=34c17f39f875ee54';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=34c17f39f875ee54';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=34c17f39f875ee54';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=34c17f39f875ee54';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=34c17f39f875ee54';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=34c17f39f875ee54';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=34c17f39f875ee54';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=34c17f39f875ee54';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=34c17f39f875ee54';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=34c17f39f875ee54';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=34c17f39f875ee54';
-import { createConnectFields } from './connect-fields.mjs?v=34c17f39f875ee54';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=34c17f39f875ee54';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=34c17f39f875ee54';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=24f19758bfa96eb5';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=24f19758bfa96eb5';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=24f19758bfa96eb5';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=24f19758bfa96eb5';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=24f19758bfa96eb5';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=24f19758bfa96eb5';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=24f19758bfa96eb5';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=24f19758bfa96eb5';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=24f19758bfa96eb5';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=24f19758bfa96eb5';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=24f19758bfa96eb5';
+import { createConnectFields } from './connect-fields.mjs?v=24f19758bfa96eb5';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=24f19758bfa96eb5';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=24f19758bfa96eb5';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -1313,12 +1313,89 @@ function setChannelsRest(rest, { user = false } = {}) {
 function wireChannelsRail() {
   const pane = $('ew-channels'); if (!pane || pane.dataset.railWired) return;
   pane.dataset.railWired = '1';
+  // True while the peek grip below is mid-drag: the peek must not fold
+  // away under the pointer (the drag can leave the pane's box, and the
+  // fold is what the user dragging the edge used to hit).
+  let peekDragging = false;
   pane.addEventListener('mouseenter', () => { if (pane.classList.contains('rail-rest')) pane.classList.add('peeking'); });
-  pane.addEventListener('mouseleave', () => pane.classList.remove('peeking'));
+  pane.addEventListener('mouseleave', () => { if (!peekDragging) pane.classList.remove('peeking'); });
   pane.addEventListener('focusin', () => { if (pane.classList.contains('rail-rest')) pane.classList.add('peeking'); });
   pane.addEventListener('focusout', (e) => { if (!pane.contains(e.relatedTarget)) pane.classList.remove('peeking'); });
   const tab = $('ew-channels-rail-tab');
   if (tab) tab.addEventListener('click', () => { setChannelsRest(false); setPane('channels', true, { user: true }); });
+  // The peek grip (panel slide fix, 2026-11-15): the resting pane parks
+  // its in-flow width splitter (envoy.css keeps it at flex-basis 0 with
+  // pointer-events none while .channels-rest stands), and the peek
+  // overlay itself carried no drag surface at all, so the column width
+  // Troy ordered on 2026-11-08 could not be slid in the state the pane
+  // actually lives in: grabbing the edge only ended the peek. This grip
+  // is the peek's right edge made draggable. It writes the same
+  // --ew-channels var and the same ls 'widths' store the pinned
+  // splitter writes, so a width dragged in the peek is the width the
+  // pane keeps when pinned, and the pinned splitter's stored width is
+  // the width the peek opens at. Clamps mirror the splitter's: the
+  // PANE_MIN floor, the PANE_MAX cap, and the chat keeps its own floor
+  // (the peek pushes the chat by margin, so the chat's live slack is
+  // the exact growth budget).
+  const grip = h('div', { class: 'ew-peek-grip', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize channels', tabindex: '0' });
+  grip.setAttribute('aria-valuemin', String(PANE_MIN.channels));
+  grip.setAttribute('aria-valuemax', String(PANE_MAX));
+  pane.append(grip);
+  const root = document.documentElement;
+  const setW = (w) => { root.style.setProperty('--ew-channels', `${Math.round(w)}px`); grip.setAttribute('aria-valuenow', String(Math.round(w))); };
+  const persistW = (w) => { const widths = ls.get('widths', {}); widths.channels = Math.round(w); ls.set('widths', widths); };
+  // The growth cap for one drag, measured ONCE at its start: the chat
+  // shrinks as the var grows, so a per-move read of its slack would
+  // halve the travel (each step's growth eats the next step's budget).
+  const budgetMax = (startW) => {
+    const chat = $('ew-chat');
+    if (!chat) return PANE_MAX;
+    const chatFloor = parseFloat(getComputedStyle(chat).minWidth) || 380;
+    return Math.min(PANE_MAX, startW + Math.max(0, chat.getBoundingClientRect().width - chatFloor));
+  };
+  const clampW = (target, cap) => Math.max(PANE_MIN.channels, Math.min(cap, target));
+  const resetW = () => { root.style.removeProperty('--ew-channels'); const widths = ls.get('widths', {}); delete widths.channels; ls.set('widths', widths); grip.setAttribute('aria-valuenow', String(Math.round(pane.getBoundingClientRect().width))); };
+  grip.addEventListener('pointerdown', (e) => {
+    if (narrow() || !pane.classList.contains('peeking')) return;
+    e.preventDefault(); e.stopPropagation();
+    grip.setPointerCapture(e.pointerId);
+    const startX = e.clientX; const startW = Math.round(pane.getBoundingClientRect().width);
+    const cap = budgetMax(startW);
+    const priorVar = root.style.getPropertyValue('--ew-channels');
+    let current = startW; let lastX = e.clientX; let lastY = e.clientY; let done = false;
+    peekDragging = true;
+    $('ew').classList.add('dragging'); grip.classList.add('dragging');
+    const move = (ev) => { lastX = ev.clientX; lastY = ev.clientY; current = clampW(startW + (ev.clientX - startX), cap); setW(current); };
+    const finish = (commit) => {
+      if (done) return; done = true;
+      peekDragging = false;
+      $('ew').classList.remove('dragging'); grip.classList.remove('dragging');
+      grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); grip.removeEventListener('pointercancel', cancel);
+      if (commit) persistW(current);
+      else if (priorVar) root.style.setProperty('--ew-channels', priorVar); else root.style.removeProperty('--ew-channels');
+      // A drag that ends with the pointer outside the pane settles
+      // back to the rail, like any other end of a hover.
+      const r = pane.getBoundingClientRect();
+      if (lastX < r.left || lastX > r.right || lastY < r.top || lastY > r.bottom) pane.classList.remove('peeking');
+    };
+    const up = () => finish(true);
+    const cancel = () => finish(false);
+    grip.addEventListener('pointermove', move); grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', cancel);
+  });
+  grip.addEventListener('dblclick', resetW);
+  grip.addEventListener('keydown', (e) => {
+    // Keyboard parity with the pinned splitter: arrows resize and
+    // persist, End/Enter resets to the default width, Home folds the
+    // pane back to its rail.
+    if (e.key === 'Home') { e.preventDefault(); setChannelsRest(true, { user: true }); return; }
+    if (e.key === 'End' || e.key === 'Enter') { e.preventDefault(); resetW(); return; }
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (narrow() || !pane.classList.contains('peeking')) return;
+    e.preventDefault();
+    const startW = Math.round(pane.getBoundingClientRect().width);
+    const next = clampW(startW + (e.key === 'ArrowRight' ? 24 : -24), budgetMax(startW));
+    setW(next); persistW(next);
+  });
 }
 
 function applyLayout() {
@@ -5942,7 +6019,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=34c17f39f875ee54');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=24f19758bfa96eb5');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();

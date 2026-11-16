@@ -1178,6 +1178,12 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
    pane is resting (the rail rules below reveal it). */
 .ew-channels-rail-tab { display:none; }
 
+/* The peek grip: the resting pane's width handle. Hidden everywhere
+   except on the peeking pane inside the rail media block below (the
+   in-flow .ew-split is parked while the pane rests, so the peek
+   overlay carries this edge grip instead; panel slide fix, 2026-11-15). */
+.ew-peek-grip { display:none; }
+
 /* Channels rail rest + hover peek, desktop pointers only — the same
    shape the nav sidebar's rail peek already uses. At rest the pane is
    a 48px strip showing only its rail tab; every other child is out of
@@ -1196,6 +1202,13 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
   .ew.channels-rest .ew-split[data-split="channels"] { flex-basis:0; pointer-events:none; }
   .ew-channels.rail-rest.peeking { position:fixed; top:52px; bottom:0; left:var(--side-w); width:var(--ew-channels); flex:none; z-index:55; box-shadow:24px 0 48px rgba(0,0,0,.45); }
   .ew-channels.rail-rest.peeking .ew-channels-rail-tab { display:none; }
+  /* The peek's right edge is a drag grip for the column width (the
+     var the pane is floating at), with the accent line the other
+     splitters light on hover. */
+  .ew-channels.rail-rest.peeking .ew-peek-grip { display:block; position:absolute; top:0; right:0; bottom:0; width:10px; cursor:col-resize; z-index:3; touch-action:none; }
+  .ew-channels.rail-rest.peeking .ew-peek-grip::after { content:""; position:absolute; top:0; bottom:0; right:0; width:3px; background:transparent; transition:background .15s; }
+  .ew-channels.rail-rest.peeking .ew-peek-grip:hover::after, .ew-channels.rail-rest.peeking .ew-peek-grip:focus-visible::after, .ew-channels.rail-rest.peeking .ew-peek-grip.dragging::after { background:var(--accent); }
+  .ew-channels.rail-rest.peeking .ew-peek-grip:focus-visible { outline:none; }
   /* Hover-push (Troy, 2026-11-09): while the pane peeks it PUSHES the
      rest of the row right — it never covers the chat. The peeking pane
      is fixed, so its in-flow 48px slot is gone: the chat takes a left
