@@ -569,7 +569,16 @@ export function slackSubject(userId, displayName) {
 // (envoy-librarian.mjs readKnowledgeBaseBlock), is the tenant's solved-
 // incident block — mistakes already made in this workspace and their
 // fixes — rendered after the notebook block under the same discipline.
-export function agentPrompt({ provider, channelTitle, members, context = [], message, source = 'helmian', customAgents = [], debateMode = 'off', notebook = null, knowledgeBase = null }) {
+// `slice`, when the mesh supplies one (fix programme bite M3, DESIGN
+// 2.3), is this turn's part of a Maestro assignment: { n, total, text,
+// job } — the part's number, the part count, the part text, and the
+// full job the part belongs to. The role line gains the slice
+// sentence, the full job renders as a context block beside the
+// notebook block, and the message being answered becomes the part
+// text. A slice carrying no real part (no text, no sane numbering)
+// is no slice at all, under the same discipline as an absent
+// notebook: the prompt is then exactly what it has always been.
+export function agentPrompt({ provider, channelTitle, members, context = [], message, source = 'helmian', customAgents = [], debateMode = 'off', notebook = null, knowledgeBase = null, slice = null }) {
   const customMap = new Map((customAgents ?? []).map((a) => [a.handle || a.id, a]));
   const p = normalizeProvider(provider) ?? (customMap.has(String(provider ?? '').toLowerCase()) ? String(provider).toLowerCase() : null);
   // There is no Maestro prompt: no turn is ever composed for 'maestro',
@@ -608,7 +617,21 @@ export function agentPrompt({ provider, channelTitle, members, context = [], mes
   const from = message?.authorName || (message?.authorKind === 'agent' ? 'Agent' : 'Member');
   const notebookBlock = String(notebook ?? '').trim();
   const knowledgeBaseBlock = String(knowledgeBase ?? '').trim();
-  return `${role}${notebookBlock ? `\n\n${notebookBlock}` : ''}${knowledgeBaseBlock ? `\n\n${knowledgeBaseBlock}` : ''}\n\nRecent conversation:\n${history || '(none)'}\n\nReply to this message from ${from}:\n${String(message?.body ?? '')}`;
+  // The slice rendering (bite M3): the role line gains the slice
+  // sentence so the turn is confined to its part; the full job
+  // renders as a context block after the knowledge-base block when
+  // it adds anything beyond the part itself; and the message being
+  // answered is the part text, never the whole job. Without a real
+  // slice every term below is empty and the return is byte for byte
+  // the prompt this function has always composed.
+  const sliceText = typeof slice?.text === 'string' ? slice.text.trim() : '';
+  const sliceN = Number(slice?.n);
+  const sliceTotal = Number(slice?.total);
+  const sliceOk = Boolean(sliceText) && Number.isInteger(sliceN) && sliceN >= 1 && Number.isInteger(sliceTotal) && sliceTotal >= sliceN;
+  const sliceJob = sliceOk && typeof slice?.job === 'string' ? slice.job.trim() : '';
+  const roleLine = sliceOk ? `${role} Your slice is part ${sliceN} of ${sliceTotal}; answer only it.` : role;
+  const jobBlock = sliceJob && sliceJob !== sliceText ? sliceJob : '';
+  return `${roleLine}${notebookBlock ? `\n\n${notebookBlock}` : ''}${knowledgeBaseBlock ? `\n\n${knowledgeBaseBlock}` : ''}${jobBlock ? `\n\nThe full job this slice belongs to, for context only:\n${jobBlock}` : ''}\n\nRecent conversation:\n${history || '(none)'}\n\nReply to this message from ${from}:\n${sliceOk ? sliceText : String(message?.body ?? '')}`;
 }
 
 // ── Message attachments (composer "+" picker) ─────────────────────────────
