@@ -159,14 +159,21 @@ test('the remember shape files and confirms the same way', async () => {
   assert.equal(confirmations[0].body, 'Filed: the door code is 4419');
 });
 
-test('a Librarian send that is not a file request falls through untouched', async () => {
+test('a Librarian send that is neither a file request nor a recall falls through untouched', async () => {
   const { pool, messages, entries } = factFakePool();
   const store = createEnvoyStore(pool);
-  const out = await store.appendMessage(ownerA, { channelId: CHANNEL_A, body: 'Librarian: what do you have filed about the pop-up', idempotencyKey: 'send-1' });
+  // Bite L2 changed what this test pins: the recall-shaped body
+  // it used before ("what do you have filed about the pop-up")
+  // is now answered by the Librarian's recall hook, so the
+  // fall-through pin moves to a send that is neither a file
+  // request nor a recall. The recall road has its own suite
+  // (envoy-librarian-recall.test.mjs).
+  const out = await store.appendMessage(ownerA, { channelId: CHANNEL_A, body: 'Librarian: the build is green, pass it on', idempotencyKey: 'send-1' });
   assert.equal(entries.size, 0, 'nothing filed');
   assert.equal(librarianMessages(messages).length, 0, 'no confirmation');
   const human = messages.find((m) => m.id === Number(out.receipt.message.id));
   assert.equal(human.metadata?.librarianFact, undefined, 'no mark — the mesh hands the send on as today');
+  assert.equal(human.metadata?.librarianRecall, undefined, 'no recall mark either');
   // The fall-through is the whole pre-L1 shape: on this empty desk
   // the send still gets the empty-desk answer, exactly as a
   // role-addressed send the role hook leaves unanswered does.

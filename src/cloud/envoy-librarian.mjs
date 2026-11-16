@@ -206,6 +206,89 @@ export function librarianCompletionEntryFor(job) {
   return Object.freeze({ key: `completion:${messageId}`, value });
 }
 
+export const LIBRARIAN_RECALL_MAX_ENTRIES = 200;
+
+// The words that shape a recall question are not its topic —
+// the twin of envoy-helm.mjs's HELM_SHAPE_WORDS (bite H4): the
+// state words and the record words are stripped from the
+// topic's candidate triggers before scoring, so a question's
+// shape never counts as evidence about its subject.
+const LIBRARIAN_RECALL_SHAPE_WORDS = new Set([
+  'state', 'status', 'running', 'blocked', 'next',
+  'filed', 'recorded', 'notebook', 'recall', 'remember', 'remembered',
+]);
+
+export function librarianRecallTopicWords(query) {
+  return kbCandidateTriggers(query).filter((word) => !LIBRARIAN_RECALL_SHAPE_WORDS.has(word));
+}
+
+const LIBRARIAN_ASK_KEY_PREFIX = 'chat:';
+
+/**
+ * One filed entry's recallable text, or null when the entry
+ * carries no prose to quote. The twin of envoy-helm.mjs's
+ * filedEntryText (bite H4) — the same shaping over the same
+ * table, kept in this module because the recall read is the
+ * Librarian's own: a fact entry (fileFact's shape, key
+ * fact:<messageId>) quotes its fact field; an ask record (key
+ * chat:<channelId>:<messageId>) quotes its ask field; a
+ * plain-string entry (the notebook's other writers store
+ * strings) quotes itself, classed by its key. The quote is
+ * the stored text exactly — never trimmed, never reworded:
+ * verbatim is the whole point (DESIGN 4.3's dropped "15" is
+ * the failure this road exists to prevent).
+ */
+export function librarianRecallEntryText(entry) {
+  const key = String(entry?.key ?? '');
+  let value = entry?.value ?? null;
+  if (typeof value === 'string' && value.trim().startsWith('{')) {
+    try { value = JSON.parse(value); } catch { /* a string that is not JSON stays a string */ }
+  }
+  if (value && typeof value === 'object') {
+    if (typeof value.fact === 'string' && value.fact.trim()) return { kind: 'fact', text: value.fact };
+    if (typeof value.ask === 'string' && value.ask.trim()) return { kind: 'ask', text: value.ask };
+    return null;
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return { kind: key.startsWith(LIBRARIAN_ASK_KEY_PREFIX) ? 'ask' : 'fact', text: value };
+  }
+  return null;
+}
+
+/**
+ * The recall match (bite L2): over filed entries in the
+ * read's order, facts first, then ask records — the ordering
+ * bite H4's Helm lookup (findFiledEntry) uses over the same
+ * table. An entry matches when at least one of the topic's
+ * words appears in its text (kbFindWords, word-bounded); the
+ * best match is the most topic words matched, ties going to
+ * the earliest entry in the read's order — the store's read
+ * orders newest first, so a tie quotes the newest filing,
+ * the L1/L2 rule. Any fact match outranks every ask match:
+ * the classes are searched in the design's order, not by
+ * score across classes. Pure: the entries ride in as rows
+ * shaped { key, value }. Returns { kind, text, key } or null.
+ */
+export function matchLibrarianRecall(entries, query) {
+  const words = librarianRecallTopicWords(query);
+  if (!words.length) return null;
+  let bestFact = null;
+  let bestAsk = null;
+  for (const entry of entries ?? []) {
+    const shaped = librarianRecallEntryText(entry);
+    if (!shaped) continue;
+    const score = kbFindWords(shaped.text, words).length;
+    if (!score) continue;
+    if (shaped.kind === 'fact') {
+      if (!bestFact || score > bestFact.score) bestFact = { ...shaped, key: String(entry?.key ?? ''), score };
+    } else if (!bestAsk || score > bestAsk.score) {
+      bestAsk = { ...shaped, key: String(entry?.key ?? ''), score };
+    }
+  }
+  const hit = bestFact ?? bestAsk;
+  return hit ? { kind: hit.kind, text: hit.text, key: hit.key } : null;
+}
+
 function contextFor(actor) {
   return { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: randomUUID(), requestId: randomUUID() };
 }
@@ -491,6 +574,45 @@ export function createLibrarianStore(pool) {
         return { incidents: result.rows.map(incidentOut) };
       });
       return out.incidents;
+    },
+
+    /**
+     * The recall read (bite L2): search the tenant's filed
+     * entries for the one a recall question asks about, and
+     * hand back its own text for the caller to quote verbatim.
+     * The read runs inside the membership-checked tenant
+     * transaction like every read in this store, and binds
+     * project_slug to the acting tenant's id EXACTLY — never
+     * NULL (the notebook read's shared rows are the
+     * platform's; a recall answer quotes only what this
+     * tenant filed) and never another tenant's slug. The rows
+     * come back newest first and the match is
+     * matchLibrarianRecall's: facts first, then ask records,
+     * a tie quoting the newest filing. Returns
+     * { found: true, kind, text, key } or { found: false }.
+     * An actor with no tenant id is refused outright, before
+     * any transaction opens (the fileFact discipline). Throws
+     * on failure; the recall hook in envoy-chat.mjs logs and
+     * leaves the send standing, unmarked and unanswered.
+     */
+    async lookupFacts(actor, { query = null, limit = LIBRARIAN_RECALL_MAX_ENTRIES } = {}) {
+      const slug = String(actor?.tenantId ?? '');
+      if (!slug) return { found: false, reason: 'no-tenant' };
+      const n = Math.min(Math.max(Math.trunc(Number(limit)) || LIBRARIAN_RECALL_MAX_ENTRIES, 1), LIBRARIAN_RECALL_MAX_ENTRIES);
+      const context = contextFor(actor);
+      const out = await withTenantTransaction(pool, context, async (client) => {
+        await requireActiveTenantMembership(client, context);
+        const result = await client.query(
+          `select key, value from helmion.context_entries
+            where project_slug = $1
+            order by updated_at desc, key
+            limit $2`,
+          [slug, n],
+        );
+        return { rows: result.rows };
+      });
+      const hit = matchLibrarianRecall(out.rows, query);
+      return hit ? { found: true, kind: hit.kind, text: hit.text, key: hit.key } : { found: false };
     },
   });
 }
