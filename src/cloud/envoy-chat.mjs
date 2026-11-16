@@ -401,14 +401,17 @@ export function createEnvoyStore(pool) {
         }
         //
         // Helm's setup guide (helm-kb.mjs), for unaddressed
-        // messages only: a setup question is answered by Maestro
+        // messages only: a setup question is answered by Helm
         // from the guide — word for word, one step at a time —
         // on any desk, with zero seats connected or a full crew,
         // and an unanswered question on an empty desk is filed
         // to the guide's miss queue there. Only a message the
         // guide leaves unanswered falls through to the empty-desk
-        // answer below, so a fresh send gets at most one Maestro
-        // message and the two never fight.
+        // answer below, so a fresh send gets at most one of the
+        // two mouths' answers and they never fight. The mouths
+        // are named apart (bite H2): the guide posts as
+        // agent:helm; the empty-desk line below stays
+        // agent:maestro, the manager saying the desk is empty.
         // The Librarian's filing hook (bite L1), in that slot
         // after the coordinator: a Librarian-addressed file
         // request is filed through the one store and confirmed in

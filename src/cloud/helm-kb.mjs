@@ -10,8 +10,8 @@
 // mouth. A human message in the workspace is matched against the
 // guide's entries with the librarian's own matcher (whole word or
 // phrase, case-insensitive, plural-tolerant — envoy-librarian's
-// evaluateKbRule, no second engine). On a hit, Maestro answers in
-// the channel himself with the entry's step, WORD FOR WORD: setup
+// evaluateKbRule, no second engine). On a hit, Helm answers in
+// the channel with the entry's step, WORD FOR WORD: setup
 // instructions are product truth, and a model paraphrasing a
 // button name teaches the user to hunt for a button that does not
 // exist. That is also what makes the availability law real: the
@@ -25,7 +25,10 @@
 // drawn here and in the appendMessage wiring: the guide is tried
 // FIRST. A setup question on an empty desk gets the guide's step,
 // not the generic empty-desk line; a message the guide does not
-// answer falls through to P1 unchanged. Chains: an entry can point
+// answer falls through to P1 unchanged. The two mouths are named
+// apart (bite H2): the guide speaks as agent:helm; P1's line
+// stays agent:maestro — the manager saying the desk is empty,
+// not the guide answering. Chains: an entry can point
 // at the next entry (answer.next); the pending step is read back
 // from the channel itself — the guide's last answer to this person
 // carries its next in its metadata — and it advances only on the
@@ -43,28 +46,38 @@
 // a miss is ordinary work for the crew and is NOT filed — the
 // seat answers it, so it was never unanswered.
 //
-// Voice: a guide answer is an ordinary stored Maestro message
-// (subject agent:maestro, the same subject P1's answer uses), so
-// the workspace's existing Voice chat mode speaks it through the
-// shared voice controller exactly the way it speaks any reply —
-// Kokoro in the customer's tab, in Maestro's own voice, the
-// controller's backup engine behind it, and the text in the
-// channel always. The speaker mark lights on it while it plays,
-// like any spoken message. No new voice machinery lives here.
+// Voice: a guide answer is an ordinary stored Helm message
+// (subject agent:helm), so the workspace's existing Voice chat
+// mode speaks it through the shared voice controller exactly the
+// way it speaks any reply — the controller takes the seat from
+// the posting subject, and Helm's seat carries Helm's own voice
+// (bm_george) in the controller's seat-voice table: Kokoro in
+// the customer's tab, the controller's backup engine behind it,
+// and the text in the channel always. The speaker mark lights
+// on it while it plays, like any spoken message. No new voice
+// machinery lives here.
 
 import { readFileSync } from 'node:fs';
 import { evaluateKbRule } from './envoy-librarian.mjs';
 import { tenantAgentStateOn } from './tenant-agent-state.mjs';
 import { CONFIG_SUBJECT } from './envoy-agents.mjs';
 
-export const HELM_KB_SUBJECT = 'agent:maestro';
+export const HELM_KB_SUBJECT = 'agent:helm';
+// The subject guide answers posted under before bite H2 moved
+// the guide's attribution from Maestro to Helm. Production
+// channels can still hold a pending chain whose last answer
+// carries it, so the chain reader below accepts both subjects
+// during the transition; nothing is ever written under the old
+// one again.
+export const HELM_KB_SUBJECT_LEGACY = 'agent:maestro';
 export const HELM_KB_KEY_PREFIX = 'helm-kb:';
 
 // Polish P1's empty-desk answer key prefix (envoy-chat.mjs). The
 // chain reader below treats those answers as transparent: they
-// are Maestro's other mouth saying the desk is empty, and a
-// pending guide step stays pending across one — otherwise the
-// generic line landing mid-chain would silently end the walk.
+// are Maestro's mouth saying the desk is empty, not a guide
+// answer, and a pending guide step stays pending across one —
+// otherwise the generic line landing mid-chain would silently
+// end the walk.
 // Named here rather than imported: envoy-chat imports this
 // module, so the constant cannot ride the other way.
 const EMPTY_DESK_KEY_PREFIX = 'maestro-empty-desk:';
@@ -124,7 +137,7 @@ export function matchHelmKbEntry(text, entries = helmKbEntries()) {
 }
 
 /**
- * The words Maestro speaks for one entry: the step, then the
+ * The words Helm speaks for one entry: the step, then the
  * hand-back line that asks for the person's word before the next
  * step. Nothing is added, dropped, or reworded at runtime — the
  * entry's text is the answer.
@@ -165,8 +178,12 @@ function metadataOf(row) {
  * decides — if it is the guide's answer TO THIS PERSON carrying a
  * next step, that step is pending; anything else (a seat's reply,
  * another person's guide answer, the chain's end) means nothing
- * is pending. P1's empty-desk answers are skipped over: Maestro
- * saying the desk is empty does not end a walk in progress.
+ * is pending. A guide answer counts under either of its subjects:
+ * agent:helm today, or agent:maestro for a chain a production
+ * channel started before bite H2 — such a chain still advances,
+ * and its next step posts under the new subject. P1's empty-desk
+ * answers are skipped over: Maestro saying the desk is empty
+ * does not end a walk in progress.
  * `rows` are the channel's messages newest-first;
  * `beforeId` is the message being answered. Pure.
  */
@@ -176,7 +193,7 @@ export function helmKbPendingNext(rows, { senderSubject, beforeId } = {}) {
     if (row?.author_subject === senderSubject) continue;
     if (String(row?.idempotency_key ?? '').startsWith(EMPTY_DESK_KEY_PREFIX)) continue;
     const mark = metadataOf(row)?.helmKb;
-    if (row?.author_subject === HELM_KB_SUBJECT
+    if ((row?.author_subject === HELM_KB_SUBJECT || row?.author_subject === HELM_KB_SUBJECT_LEGACY)
       && String(row?.idempotency_key ?? '').startsWith(HELM_KB_KEY_PREFIX)
       && mark && mark.forSubject === senderSubject && mark.next) {
       return String(mark.next);
@@ -259,7 +276,7 @@ export async function fileHelmKbMiss({ pool, tenantId, channelId, senderSubject,
  *      question is filed to the unsorted queue, and the send
  *      falls through to the empty-desk answer, which is not this
  *      helper's to post.
- * An answer posts as agent:maestro with the entry's words, marks
+ * An answer posts as agent:helm with the entry's words, marks
  * the human message's metadata helmKb (the mesh's skip — the ask
  * is never handed to a seat), and carries the chain state in its
  * own metadata. Returns { answered, entryId?, filed? }.

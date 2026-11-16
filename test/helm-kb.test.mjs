@@ -1,5 +1,5 @@
 // Helm's setup knowledge base (wiring bite V2, 2026-11-09):
-// Maestro answers setup questions in the channel from the guide
+// Helm answers setup questions in the channel from the guide
 // (helm-kb.json), word for word, one step at a time — with zero
 // seats connected or a full crew, never routed to a seat — and a
 // question the guide cannot answer on an empty desk is filed to
@@ -24,6 +24,7 @@ import {
   postHelmKbAnswerIfNeeded,
   fileHelmKbMiss,
   HELM_KB_SUBJECT,
+  HELM_KB_SUBJECT_LEGACY,
   HELM_KB_KEY_PREFIX,
 } from '../src/cloud/helm-kb.mjs';
 import { createEnvoyStore, EMPTY_DESK_ANSWER_BODY, EMPTY_DESK_SUBJECT } from '../src/cloud/envoy-chat.mjs';
@@ -129,7 +130,7 @@ test('the pending step is the guide answer to this person, and only while it is 
   assert.equal(helmKbPendingNext([mine, kbRow(8, 'connect-first-ai-1', 'user_someone_else')], { senderSubject: 'user_owner', beforeId: 9 }), null, 'another person\'s step is not pending for me');
   const seatReply = { id: 8, author_subject: 'agent:claude', author_kind: 'agent', idempotency_key: 'reply:7', metadata: null };
   assert.equal(helmKbPendingNext([mine, seatReply, kbRow(7, 'connect-first-ai-1', 'user_owner')], { senderSubject: 'user_owner', beforeId: 9 }), null, 'a seat reply after the step closes the chain');
-  const deskLine = { id: 8, author_subject: HELM_KB_SUBJECT, author_kind: 'agent', idempotency_key: 'maestro-empty-desk:7', metadata: null };
+  const deskLine = { id: 8, author_subject: EMPTY_DESK_SUBJECT, author_kind: 'agent', idempotency_key: 'maestro-empty-desk:7', metadata: null };
   assert.equal(helmKbPendingNext([mine, deskLine, kbRow(7, 'connect-first-ai-1', 'user_owner')], { senderSubject: 'user_owner', beforeId: 9 }), 'connect-first-ai-1', 'the empty-desk line landing mid-chain does not end the walk');
   assert.equal(helmKbPendingNext([mine, kbRow(8, null, 'user_owner')], { senderSubject: 'user_owner', beforeId: 9 }), null, 'the chain end is not a pending step');
 });
@@ -228,14 +229,14 @@ function helmKbFakePool({ connections = [] } = {}) {
   return { pool: { async connect() { return client; } }, messages, misses };
 }
 
-const maestroMessages = (messages) => messages.filter((m) => m.author_subject === HELM_KB_SUBJECT);
+const guideMessages = (messages) => messages.filter((m) => m.author_subject === HELM_KB_SUBJECT);
 
-test('zero-seat workspace: a setup question is answered by Maestro from the guide, exactly', async () => {
+test('zero-seat workspace: a setup question is answered by Helm from the guide, exactly', async () => {
   const { pool, messages } = helmKbFakePool();
   const store = createEnvoyStore(pool);
   const out = await store.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'what do I do now', idempotencyKey: 'send-1' });
-  const answers = maestroMessages(messages);
-  assert.equal(answers.length, 1, 'one answer, from Maestro');
+  const answers = guideMessages(messages);
+  assert.equal(answers.length, 1, 'one answer, from Helm');
   assert.equal(answers[0].author_kind, 'agent');
   assert.equal(answers[0].body, helmKbAnswerBody(helmKbEntryById('start-what-now')), 'the entry word for word');
   assert.equal(answers[0].idempotency_key, `${HELM_KB_KEY_PREFIX}${out.receipt.message.id}`);
@@ -293,7 +294,7 @@ test('a new question replaces the chain instead of advancing it', async () => {
   const store = createEnvoyStore(pool);
   await store.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'what do I do now', idempotencyKey: 'send-1' });
   await store.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'how much does it cost', idempotencyKey: 'send-2' });
-  const answers = maestroMessages(messages);
+  const answers = guideMessages(messages);
   assert.equal(answers.length, 2);
   assert.equal(answers[1].body, helmKbAnswerBody(helmKbEntryById('pricing-cost')), 'the question is answered, not the pending step');
 });
@@ -302,13 +303,13 @@ test('connected workspace: the guide still answers — it never waits for a seat
   const { pool, messages, misses } = helmKbFakePool({ connections: [{ provider_id: 'claude', credential_reference: 'vault://seat-credential' }] });
   const store = createEnvoyStore(pool);
   await store.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'how much does it cost', idempotencyKey: 'send-1' });
-  const answers = maestroMessages(messages);
+  const answers = guideMessages(messages);
   assert.equal(answers.length, 1);
   assert.equal(answers[0].body, helmKbAnswerBody(helmKbEntryById('pricing-cost')));
   assert.equal(misses.length, 0);
 });
 
-test('connected workspace: the Weather connector question is Maestro\u2019s, word for word, and no seat is handed it', async () => {
+test('connected workspace: the Weather connector question is Helm\u2019s, word for word, and no seat is handed it', async () => {
   // The exact live failure shape (owner workspace, 2026-11-10): a
   // full crew connected, the guide silent, the seats answering a
   // product question from their own training. On a hit the guide
@@ -316,8 +317,8 @@ test('connected workspace: the Weather connector question is Maestro\u2019s, wor
   const { pool, messages, misses } = helmKbFakePool({ connections: [{ provider_id: 'claude', credential_reference: 'vault://seat-credential' }] });
   const store = createEnvoyStore(pool);
   const out = await store.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'How does the Weather connector work?', idempotencyKey: 'send-1' });
-  const answers = maestroMessages(messages);
-  assert.equal(answers.length, 1, 'Maestro answers, even with a crew connected');
+  const answers = guideMessages(messages);
+  assert.equal(answers.length, 1, 'Helm answers, even with a crew connected');
   assert.equal(answers[0].body, helmKbAnswerBody(helmKbEntryById('connector-weather')), 'the entry word for word');
   const human = messages.find((m) => m.id === Number(out.receipt.message.id));
   assert.deepEqual(human.metadata?.helmKb, { entry: 'connector-weather', answeredBy: 'maestro' }, 'the ask is marked, so the mesh never hands it to a seat');
@@ -356,7 +357,7 @@ test('hook precedence: the same words unaddressed still get the guide answer, wo
   const { pool, messages, misses } = helmKbFakePool({ connections: [{ provider_id: 'claude', credential_reference: 'vault://seat-credential' }] });
   const store = createEnvoyStore(pool);
   const out = await store.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'how does the Weather connector work?', idempotencyKey: 'send-1' });
-  const answers = maestroMessages(messages);
+  const answers = guideMessages(messages);
   assert.equal(answers.length, 1, 'one guide answer, as today');
   assert.equal(answers[0].body, helmKbAnswerBody(helmKbEntryById('connector-weather')), 'the entry word for word');
   const human = messages.find((m) => m.id === Number(out.receipt.message.id));
@@ -400,7 +401,7 @@ test('a miss that is not a question is not filed; a connected desk files nothing
   const storeB = createEnvoyStore(connected.pool);
   await storeB.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'where is the product roadmap?', idempotencyKey: 'send-1' });
   assert.equal(connected.misses.length, 0, 'a seat answers it, so it was never unanswered');
-  assert.equal(maestroMessages(connected.messages).length, 0, 'and Maestro stays out of the crew\'s way');
+  assert.equal(guideMessages(connected.messages).length, 0, 'and the guide stays out of the crew\'s way');
 });
 
 test('filing is fail-soft: a pool without the queue table files nothing and throws nothing', async () => {
@@ -422,4 +423,72 @@ test('filing is fail-soft: a pool without the queue table files nothing and thro
     senderSubject: 'user_owner', body: 'what do I do now', stateOn: async () => ({ connectedProviders: [] }),
   }).catch((error) => ({ answered: false, threw: error.message }));
   assert.equal(out.answered, false, 'a broken pool answers nothing — the caller logs and the send stands');
+});
+
+// ---------- guide attribution (Bite H2, DESIGN section 3.3) ----------
+
+test('bite H2: the guide writes as agent:helm, the old subject is read-only, and the empty-desk mouth stays Maestro', () => {
+  assert.equal(HELM_KB_SUBJECT, 'agent:helm');
+  assert.equal(HELM_KB_SUBJECT_LEGACY, 'agent:maestro');
+  assert.equal(EMPTY_DESK_SUBJECT, 'agent:maestro', 'P1\'s line is a different mouth and does not move');
+});
+
+test('bite H2: the pending reader accepts a chain started under the old agent:maestro subject', () => {
+  const legacyRow = (id, next, forSubject) => ({
+    id, author_subject: HELM_KB_SUBJECT_LEGACY, author_kind: 'agent',
+    idempotency_key: `${HELM_KB_KEY_PREFIX}${id - 1}`,
+    metadata: { helmKb: { entry: 'x', next, forSubject } },
+  });
+  const mine = { id: 9, author_subject: 'user_owner', author_kind: 'human', idempotency_key: 'send-9', metadata: null };
+  assert.equal(helmKbPendingNext([mine, legacyRow(8, 'connect-first-ai-1', 'user_owner')], { senderSubject: 'user_owner', beforeId: 9 }), 'connect-first-ai-1', 'a pre-H2 chain is still pending for its person');
+  assert.equal(helmKbPendingNext([mine, legacyRow(8, 'connect-first-ai-1', 'user_someone_else')], { senderSubject: 'user_owner', beforeId: 9 }), null, 'and still only for its person');
+  // A helm-kb key on a seat's own message is not the guide's word:
+  // only the two guide subjects advance a chain.
+  const seatRow = {
+    id: 8, author_subject: 'agent:claude', author_kind: 'agent',
+    idempotency_key: `${HELM_KB_KEY_PREFIX}7`,
+    metadata: { helmKb: { entry: 'x', next: 'connect-first-ai-1', forSubject: 'user_owner' } },
+  };
+  assert.equal(helmKbPendingNext([mine, seatRow], { senderSubject: 'user_owner', beforeId: 9 }), null, 'a seat message carrying the mark shape advances nothing');
+});
+
+test('bite H2: a chain started under the old subject advances, and its next step posts as agent:helm', async () => {
+  const { pool, messages } = helmKbFakePool();
+  // A production channel's pending chain, as the pre-H2 guide left
+  // it: the last guide answer sits under the old subject, its
+  // metadata carrying the next step for this person.
+  messages.push({
+    id: 1, tenant_id: KB_TENANT, channel_id: KB_CHANNEL,
+    author_subject: HELM_KB_SUBJECT_LEGACY, author_kind: 'agent',
+    body: helmKbAnswerBody(helmKbEntryById('start-what-now')),
+    idempotency_key: `${HELM_KB_KEY_PREFIX}0`,
+    created_at: new Date().toISOString(),
+    metadata: { helmKb: { entry: 'start-what-now', next: 'empty-desk', forSubject: 'user_owner' } },
+  });
+  const out = await postHelmKbAnswerIfNeeded({
+    pool, tenantId: KB_TENANT, channelId: KB_CHANNEL, messageId: 2,
+    senderSubject: 'user_owner', body: 'done',
+  });
+  assert.equal(out.answered, true, 'the person\'s word still advances the old chain');
+  assert.equal(out.entryId, 'empty-desk');
+  const step = messages.find((m) => m.idempotency_key === `${HELM_KB_KEY_PREFIX}2`);
+  assert.equal(step.author_subject, 'agent:helm', 'the advance writes only the new subject');
+  assert.equal(step.body, helmKbAnswerBody(helmKbEntryById('empty-desk')), 'the next step, word for word');
+  assert.equal(messages.filter((m) => m.author_subject === HELM_KB_SUBJECT_LEGACY).length, 1, 'nothing new is written under the old subject');
+});
+
+test('bite H2: a guide hit posts as agent:helm, and the empty-desk line still posts as agent:maestro', async () => {
+  const hit = helmKbFakePool();
+  const storeA = createEnvoyStore(hit.pool);
+  await storeA.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'what do I do now', idempotencyKey: 'send-1' });
+  const answers = hit.messages.filter((m) => String(m.idempotency_key).startsWith(HELM_KB_KEY_PREFIX));
+  assert.equal(answers.length, 1);
+  assert.equal(answers[0].author_subject, 'agent:helm', 'the guide\'s mouth is Helm');
+
+  const noMatch = helmKbFakePool();
+  const storeB = createEnvoyStore(noMatch.pool);
+  await storeB.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'where is the product roadmap?', idempotencyKey: 'send-1' });
+  const desk = noMatch.messages.filter((m) => m.body === EMPTY_DESK_ANSWER_BODY);
+  assert.equal(desk.length, 1);
+  assert.equal(desk[0].author_subject, 'agent:maestro', 'no seat connected and no guide match: the manager still says the desk is empty');
 });
