@@ -5,6 +5,7 @@ import { plainEvent, sessionsFromServer, VIEWS, VIEW_TITLES, VIEW_TITLES_PLAYFUL
 
 const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
 const css = await readFile(new URL('../app/app.css', import.meta.url), 'utf8');
+const envoyCss = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
 const js = await readFile(new URL('../app/app.js', import.meta.url), 'utf8');
 
 test('three columns: sidebar, center console, Guard Feed', () => {
@@ -309,4 +310,39 @@ test('the session console always stays inline (the Workspace is the one chat; no
   assert.match(place, /\{[\s\S]*consoleHome\.after\(consoleView\)[\s\S]*panel\.hidden = true[\s\S]*toggle\.hidden = true/);
   assert.match(js, /if \(!consolePollTimer\) consolePollTimer = setInterval/, 'one chat poll timer, not one per visit');
   assert.match(js, /p\.hidden = p\.dataset\.viewPanel !== panelView && !p\.closest\('#chat-panel'\)/);
+});
+
+// Full screen (2026-11-16): the button was dead by cascade. envoy.css sets
+// the desktop shell grid on #shell — one ID, specificity (1,0,0) — while
+// the full-mode rule hung off .shell.full — two classes, (0,2,0) — so at
+// every desktop width the full rule lost and the layout never changed;
+// its tracks (224px/296px) were near-identical to the standing widths
+// anyway. These pins hold the fix at the same source-reading level: the
+// full-mode rule must sit at ID strength or stronger, collapse BOTH side
+// tracks to zero, hide both side elements, and stay desktop-only so the
+// mobile drawers are untouched. A future class-level full rule fails
+// here instead of silently killing the button again.
+test('full screen: the full-mode rule wins the cascade and collapses both side tracks', () => {
+  const shipped = css + '\n' + envoyCss;
+  // The competing desktop rule the full rule must beat (envoy.css).
+  assert.match(envoyCss, /@media \(min-width: 901px\) \{ #shell \{ grid-template-columns:var\(--side-w\) minmax\(0,1fr\) 0; \}/, 'the ID-strength desktop grid rule is the one full mode must outrank');
+  // ID + class (1,1,0) beats the ID alone (1,0,0): both side tracks are 0
+  // and the center track takes everything.
+  assert.match(css, /#shell\.full \{ grid-template-columns:0 minmax\(0,1fr\) 0; \}/, 'full mode collapses both side tracks at ID strength');
+  // Both side elements hide in full mode.
+  assert.match(css, /#shell\.full > #sidebar, #shell\.full > #guard \{ display:none; \}/, 'full mode hides the sidebar and Guard elements');
+  // The full block is desktop-widths only: the button is hide-mobile and
+  // the mobile drawer grid must never see these rules.
+  const marker = css.indexOf('/* Full mode (the chat head');
+  assert.ok(marker > 0, 'the full-mode block exists in app.css');
+  const block = css.slice(marker, marker + 2400);
+  assert.match(block, /@media \(min-width: 901px\) \{[\s\S]*#shell\.full/, 'the full-mode rules sit inside the min-width: 901px guard');
+  // The dead shapes stay dead: no class-level full grid rule, and not the
+  // burst-2 near-identical tracks that made the change invisible.
+  assert.doesNotMatch(shipped, /\.shell\.full \{ grid-template-columns:/, 'no class-level .shell.full grid rule may return');
+  assert.doesNotMatch(shipped, /224px minmax\(0,1fr\) 296px/, 'the burst-2 full tracks are gone');
+  assert.doesNotMatch(shipped, /\.shell\.full \.sidebar \{ display:flex; \}/, 'the burst-2 keep-the-rail rule is gone');
+  // The handler and the button are the other half of the contract.
+  assert.match(js, /\$\('#fullscreen'\)\.onclick = \(\) => \{ shell\.classList\.toggle\('full'\);/, 'the button toggles .full on the shell');
+  assert.match(html, /<button id="fullscreen" class="ew-btn sm hide-mobile"/, 'the button stays desktop-only');
 });
