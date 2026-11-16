@@ -19,3 +19,18 @@ The split design: one codebase, two flavours (scribe and helmian),
 separated by careful move-over — the new instance stands up in
 parallel and callers move one by one, both products signing in at
 every stage; the shared door narrows to Scribe-only last.
+
+## Flavours
+
+`DOOR_FLAVOUR` selects which product's door an instance is:
+
+- `combined` (default, and how the door has always run): both
+  backends, all four scopes, the approvals page is Scribe's.
+- `scribe`: the memory backend only, memory scopes only, the
+  mailbox-status feed, Scribe's approvals page.
+- `helmian`: the hands backend only, hands scopes only, Helmian's
+  approvals page with Helmian's own Guard approver credential.
+
+The combined flavour's consent page and MCP instructions are
+byte-identical to the pre-split code; the flavour tests live in
+test/flavour.test.mjs (`npm test`).

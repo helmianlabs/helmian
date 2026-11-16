@@ -1,19 +1,47 @@
-// The OAuth consent / passphrase screen for the Helmian door (one page for
-// both capability groups; wording adapted from the hands + memory pages).
+// The OAuth consent / passphrase screen for the door (one page shape for
+// every flavour; the wording names only what this door connects to).
 
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-const GROUPS = [
-  ['memory.read', 'Read shared memory', 'Search and read your shared memory (Helmian Scribe) — the post office where your connected AIs leave mail for each other, and for you.'],
-  ['memory.write', 'Write shared memory', 'Save new memories and letters to your shared memory, and file or re-file them on the shelves.'],
-  ['hands.read', 'Read-only hands', 'List, read and search files inside the folders you chose to share on your PC, and use its local AI models. Nothing changes on your PC.'],
-  ['hands.act', 'Request actions on the PC', 'Ask for file changes, commands and opening pages on your PC. Every single action still needs your separate approval on the Scribe approvals page before it runs — approving this page runs nothing by itself.'],
-];
+// Per-flavour page identity: the product name on the door, the subtitle,
+// and the approvals page the hands.act group points at.
+const FLAVOUR_TEXT = {
+  combined: {
+    product: 'Helmian',
+    subtitle: 'One door into Helmian — your memory and your PC, under Guard. Approving connects this app to:',
+    approvalsName: 'the Scribe approvals page',
+  },
+  scribe: {
+    product: 'Scribe',
+    subtitle: 'One door into Scribe — your shared memory, under Guard. Approving connects this app to:',
+    approvalsName: 'the Scribe approvals page',
+  },
+  helmian: {
+    product: 'Helmian',
+    subtitle: 'One door into Helmian — the hands on your PC, under Guard. Approving connects this app to:',
+    approvalsName: 'the Helmian approvals page',
+  },
+};
 
-export function renderConsentPage({ pendingId, clientName, error, scopes = [] }) {
+function groupsFor(flavour) {
+  const approvalsName = (FLAVOUR_TEXT[flavour] ?? FLAVOUR_TEXT.combined).approvalsName;
+  const all = [
+    ['memory.read', 'Read shared memory', 'Search and read your shared memory (Helmian Scribe) — the post office where your connected AIs leave mail for each other, and for you.'],
+    ['memory.write', 'Write shared memory', 'Save new memories and letters to your shared memory, and file or re-file them on the shelves.'],
+    ['hands.read', 'Read-only hands', 'List, read and search files inside the folders you chose to share on your PC, and use its local AI models. Nothing changes on your PC.'],
+    ['hands.act', 'Request actions on the PC', `Ask for file changes, commands and opening pages on your PC. Every single action still needs your separate approval on ${approvalsName} before it runs — approving this page runs nothing by itself.`],
+  ];
+  if (flavour === 'scribe') return all.filter(([scope]) => scope.startsWith('memory.'));
+  if (flavour === 'helmian') return all.filter(([scope]) => scope.startsWith('hands.'));
+  return all;
+}
+
+export function renderConsentPage({ pendingId, clientName, error, scopes = [], flavour = 'combined' }) {
+  const text = FLAVOUR_TEXT[flavour] ?? FLAVOUR_TEXT.combined;
+  const GROUPS = groupsFor(flavour);
   const granted = GROUPS.filter(([scope]) => scopes.includes(scope));
   const items = (granted.length ? granted : GROUPS.slice(0, 1))
     .map(([, title, body]) => `<li><strong>${escapeHtml(title)}.</strong> ${escapeHtml(body)}</li>`)
@@ -24,7 +52,7 @@ export function renderConsentPage({ pendingId, clientName, error, scopes = [] })
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Authorize Helmian</title>
+<title>Authorize ${escapeHtml(text.product)}</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0d10; color:#e9eef3;
@@ -48,8 +76,8 @@ export function renderConsentPage({ pendingId, clientName, error, scopes = [] })
 </head>
 <body>
   <div class="card">
-    <h1>Authorize Helmian</h1>
-    <p class="sub">One door into Helmian — your memory and your PC, under Guard. Approving connects this app to:</p>
+    <h1>Authorize ${escapeHtml(text.product)}</h1>
+    <p class="sub">${escapeHtml(text.subtitle)}</p>
     <ul>
             ${items}
     </ul>
@@ -62,7 +90,7 @@ export function renderConsentPage({ pendingId, clientName, error, scopes = [] })
       <button type="submit" name="action" value="approve">Approve</button>
       <button type="submit" name="action" value="deny" class="deny">Deny</button>
     </form>
-    <p class="foot">You can revoke this any time by disconnecting the Helmian connector in the app you connected from.</p>
+    <p class="foot">You can revoke this any time by disconnecting the ${escapeHtml(text.product)} connector in the app you connected from.</p>
   </div>
 </body>
 </html>`;

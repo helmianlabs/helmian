@@ -80,7 +80,16 @@ export function approvalsRouter({ config }) {
   const token = config.guard?.approverToken;
   if (!token) return router;
   const guardUrl = String(config.guard.url || 'http://127.0.0.1:8787').replace(/\/+$/, '');
-  const secret = createHash('sha256').update(`scribe-approvals:${config.passphrase}`).digest();
+  // The page belongs to the product whose door serves it: Scribe's door
+  // (combined and scribe flavours) serves the Scribe approvals page with
+  // the scribe-door Guard credential; Helmian's door serves the Helmian
+  // approvals page with Helmian's own credential. Session secret and
+  // cookie name follow the flavour so the two pages' sessions can never
+  // cross-validate.
+  const flavour = config.flavour === 'helmian' ? 'helmian' : 'scribe';
+  const PRODUCT = flavour === 'helmian' ? 'Helmian' : 'Scribe';
+  const COOKIE = flavour === 'helmian' ? 'helmian_appr' : 'scribe_appr';
+  const secret = createHash('sha256').update(`${flavour}-approvals:${config.passphrase}`).digest();
   const sign = (msg) => createHmac('sha256', secret).update(msg).digest('base64url');
 
   function makeSession() {
@@ -101,7 +110,7 @@ export function approvalsRouter({ config }) {
     for (const part of raw.split(';')) {
       const idx = part.indexOf('=');
       if (idx < 1) continue;
-      if (part.slice(0, idx).trim() === 'scribe_appr') return decodeURIComponent(part.slice(idx + 1).trim());
+      if (part.slice(0, idx).trim() === COOKIE) return decodeURIComponent(part.slice(idx + 1).trim());
     }
     return null;
   }
@@ -119,16 +128,16 @@ export function approvalsRouter({ config }) {
 
   function loginPage(error) {
     const errorBlock = error ? `<p class="error">${escapeHtml(error)}</p>` : '';
-    return shell('Scribe approvals', `
-    <h1>Scribe approvals</h1>
-    <p class="sub">Actions your AIs take through Scribe wait for your decision here. Sign in with your Scribe passphrase.</p>
+    return shell(`${PRODUCT} approvals`, `
+    <h1>${PRODUCT} approvals</h1>
+    <p class="sub">Actions your AIs take through ${PRODUCT} wait for your decision here. Sign in with your ${PRODUCT} passphrase.</p>
     ${errorBlock}
     <form method="POST" action="/approvals/login">
       <label for="passphrase">Passphrase</label>
       <input id="passphrase" name="passphrase" type="password" autocomplete="off" autofocus required />
       <button type="submit" class="big">Sign in</button>
     </form>
-    <p class="foot">This page is part of Scribe. Nothing here connects to any other product.</p>`);
+    <p class="foot">This page is part of ${PRODUCT}. Nothing here connects to any other product.</p>`);
   }
 
   function listPage(approvals, csrf, flash) {
@@ -153,10 +162,10 @@ export function approvalsRouter({ config }) {
     }).join('');
     const body = approvals.length
       ? rows
-      : '<p class="empty">Nothing is waiting for a decision. When an AI working through Scribe asks to change something, the request appears here.</p>';
-    return shell('Scribe approvals', `
-    <h1>Scribe approvals</h1>
-    <p class="sub">Every action below was requested through Scribe and is waiting for you. Nothing runs until you approve it.</p>
+      : `<p class="empty">Nothing is waiting for a decision. When an AI working through ${PRODUCT} asks to change something, the request appears here.</p>`;
+    return shell(`${PRODUCT} approvals`, `
+    <h1>${PRODUCT} approvals</h1>
+    <p class="sub">Every action below was requested through ${PRODUCT} and is waiting for you. Nothing runs until you approve it.</p>
     ${flashBlock}
     ${body}
     <p class="foot">Refresh this page to see new requests. Approvals expire on their own if you do not decide.</p>`);
@@ -184,7 +193,7 @@ export function approvalsRouter({ config }) {
     }
     strikes.count = 0;
     const s = makeSession();
-    res.set('Set-Cookie', `scribe_appr=${encodeURIComponent(s)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`);
+    res.set('Set-Cookie', `${COOKIE}=${encodeURIComponent(s)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`);
     return res.redirect(302, '/approvals');
   });
 
