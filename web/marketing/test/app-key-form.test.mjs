@@ -247,10 +247,16 @@ test('panel wiring: Connect\u2019s key answer opens the form in the panel — th
   assert.ok(!start.includes('openManageForSeat'), 'the key answer no longer funnels to the Agents tab');
   assert.ok(!start.includes('needs its key to connect'), 'the old toast is gone');
   assert.ok(!js.includes('needs its key to connect'), 'the old toast is gone everywhere');
-  // The funnel itself stands for its remaining users: the mirror
-  // rows and the Manage footer still ride openManageForSeat.
-  assert.ok(js.includes("onclick: () => openManageForSeat(which) }, libraryIconTile(row), text"), 'mirror rows still open the Agents tab');
-  assert.ok(js.includes("class: 'ew-picker-row ew-plus-manage', onclick: () => openManageForSeat(which)"), 'the Manage footer still opens the Agents tab');
+  // The funnel's remaining user (Troy's order, 2026-11-15): the
+  // mirror rows and the Manage footer no longer ride
+  // openManageForSeat — both open the in-panel Manage view
+  // (openConnectorManage). openManageForSeat itself stands for
+  // its one remaining caller, the Manage view's mirror block,
+  // whose account-page button is the road to the seat's own
+  // account page inside Helmian.
+  assert.ok(js.includes("onclick: () => openConnectorManage(which, row.seatId, row.entryId) }, libraryIconTile(row), text"), 'mirror rows open the in-panel Manage view');
+  assert.ok(js.includes("class: 'ew-picker-row ew-plus-manage', onclick: () => openConnectorManage(which, ws.libraryPanel.seatId)"), 'the Manage footer opens the in-panel Manage view');
+  assert.ok(js.includes("onclick: () => openManageForSeat(which)"), 'the Agents-tab road stands for the mirror block\u2019s account-page button');
   // The form's DOM: the secret input takes its type from the field
   // definition (password), and the node never writes a value back
   // into an input.
