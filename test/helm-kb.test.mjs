@@ -27,6 +27,7 @@ import {
   HELM_KB_KEY_PREFIX,
 } from '../src/cloud/helm-kb.mjs';
 import { createEnvoyStore, EMPTY_DESK_ANSWER_BODY, EMPTY_DESK_SUBJECT } from '../src/cloud/envoy-chat.mjs';
+import { roleAddresseeIn, ROLE_ADDRESSEES } from '../src/cloud/envoy-agents.mjs';
 
 const KB_TENANT = '11111111-1111-4111-8111-111111111111';
 const KB_CHANNEL = '33333333-3333-4333-8333-333333333333';
@@ -131,6 +132,33 @@ test('the pending step is the guide answer to this person, and only while it is 
   const deskLine = { id: 8, author_subject: HELM_KB_SUBJECT, author_kind: 'agent', idempotency_key: 'maestro-empty-desk:7', metadata: null };
   assert.equal(helmKbPendingNext([mine, deskLine, kbRow(7, 'connect-first-ai-1', 'user_owner')], { senderSubject: 'user_owner', beforeId: 9 }), 'connect-first-ai-1', 'the empty-desk line landing mid-chain does not end the walk');
   assert.equal(helmKbPendingNext([mine, kbRow(8, null, 'user_owner')], { senderSubject: 'user_owner', beforeId: 9 }), null, 'the chain end is not a pending step');
+});
+
+// ---------- hook precedence (Bite M1, DESIGN section 1.5) ----------
+
+test('role addressees parse from a leading vocative or an @mention, and only from there', () => {
+  assert.deepEqual([...ROLE_ADDRESSEES], ['maestro', 'helm', 'librarian']);
+  // Leading vocatives, the shapes tonight's test used.
+  assert.equal(roleAddresseeIn('Maestro: three-part job, one owner per part'), 'maestro');
+  assert.equal(roleAddresseeIn('Helm: state of this workspace in three lines'), 'helm');
+  assert.equal(roleAddresseeIn('Librarian: file this fact'), 'librarian');
+  assert.equal(roleAddresseeIn('Maestro, run a roll call'), 'maestro');
+  assert.equal(roleAddresseeIn('hey Helm, what do I do now'), 'helm');
+  assert.equal(roleAddresseeIn('Librarian, remember this'), 'librarian');
+  // @mentions of a role, at the start or anywhere.
+  assert.equal(roleAddresseeIn('@Maestro: same three-part job'), 'maestro');
+  assert.equal(roleAddresseeIn('@helm what is running here'), 'helm');
+  assert.equal(roleAddresseeIn('please ask @Librarian to file this'), 'librarian');
+  // Not addresses: a role named mid-message with no @mention, a
+  // longer word that merely opens with a role's name, an ordinary
+  // setup question. The guide keeps all of these, exactly as before.
+  assert.equal(roleAddresseeIn('how do I talk to Maestro?'), null);
+  assert.equal(roleAddresseeIn('what does the Librarian keep?'), null);
+  assert.equal(roleAddresseeIn('helmet sizing for the crew'), null);
+  assert.equal(roleAddresseeIn('How does the Weather connector work?'), null);
+  assert.equal(roleAddresseeIn('what do I do now'), null);
+  assert.equal(roleAddresseeIn(''), null);
+  assert.equal(roleAddresseeIn(null), null);
 });
 
 // ---------- the store road, on a scripted pool ----------
@@ -294,6 +322,55 @@ test('connected workspace: the Weather connector question is Maestro\u2019s, wor
   const human = messages.find((m) => m.id === Number(out.receipt.message.id));
   assert.deepEqual(human.metadata?.helmKb, { entry: 'connector-weather', answeredBy: 'maestro' }, 'the ask is marked, so the mesh never hands it to a seat');
   assert.equal(misses.length, 0, 'an answered question files no miss');
+});
+
+test('hook precedence: a role-addressed message containing a guide keyword never reaches the guide', async () => {
+  // Tonight's failure, pinned (YC, 2026-11-15): a Maestro-addressed
+  // job whose words matched the connector-weather entry was answered
+  // by the guide word for word, marked, and never handed to the crew.
+  // The same words under any role's name now pass the guide hook
+  // untouched: no guide post, no helmKb mark, no miss filed.
+  const connected = [{ provider_id: 'claude', credential_reference: 'vault://seat-credential' }];
+  for (const [role, body] of [
+    ['Maestro', 'Maestro: how does the Weather connector work?'],
+    ['Helm', 'Helm: how does the Weather connector work?'],
+    ['Librarian', 'Librarian: how does the Weather connector work?'],
+    ['Maestro (@mention)', '@Maestro: how does the Weather connector work?'],
+  ]) {
+    const { pool, messages, misses } = helmKbFakePool({ connections: connected });
+    const store = createEnvoyStore(pool);
+    const out = await store.appendMessage(kbOwner, { channelId: KB_CHANNEL, body, idempotencyKey: 'send-1' });
+    assert.equal(messages.length, 1, `${role}: the send itself is the only message, no guide answer posts`);
+    assert.equal(messages.filter((m) => String(m.idempotency_key).startsWith(HELM_KB_KEY_PREFIX)).length, 0, `${role}: no helm-kb post`);
+    const human = messages.find((m) => m.id === Number(out.receipt.message.id));
+    assert.equal(human.metadata?.helmKb, undefined, `${role}: the message carries no helmKb mark, so the mesh hands it on`);
+    assert.equal(misses.length, 0, `${role}: no miss is filed for a message the guide never saw`);
+  }
+});
+
+test('hook precedence: the same words unaddressed still get the guide answer, word for word', async () => {
+  // The paired pin: precedence changes who the guide answers, never
+  // what it answers. The unaddressed form of the exact sentence
+  // above is answered from the same entry, in the same words, with
+  // the same mark, as before this bite.
+  const { pool, messages, misses } = helmKbFakePool({ connections: [{ provider_id: 'claude', credential_reference: 'vault://seat-credential' }] });
+  const store = createEnvoyStore(pool);
+  const out = await store.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'how does the Weather connector work?', idempotencyKey: 'send-1' });
+  const answers = maestroMessages(messages);
+  assert.equal(answers.length, 1, 'one guide answer, as today');
+  assert.equal(answers[0].body, helmKbAnswerBody(helmKbEntryById('connector-weather')), 'the entry word for word');
+  const human = messages.find((m) => m.id === Number(out.receipt.message.id));
+  assert.deepEqual(human.metadata?.helmKb, { entry: 'connector-weather', answeredBy: 'maestro' });
+  assert.equal(misses.length, 0);
+});
+
+test('hook precedence on an empty desk: a role-addressed send gets no guide answer, and the empty-desk fall-through is unchanged', async () => {
+  const { pool, messages, misses } = helmKbFakePool();
+  const store = createEnvoyStore(pool);
+  await store.appendMessage(kbOwner, { channelId: KB_CHANNEL, body: 'Maestro: how does the Weather connector work?', idempotencyKey: 'send-1' });
+  assert.equal(messages.filter((m) => String(m.idempotency_key).startsWith(HELM_KB_KEY_PREFIX)).length, 0, 'no guide answer, even on an empty desk');
+  assert.equal(misses.length, 0, 'the guide never saw the message, so its miss queue stays out of it');
+  assert.equal(messages.filter((m) => m.body === EMPTY_DESK_ANSWER_BODY).length, 1, 'the third hook in the precedence order still answers, exactly as before');
 });
 
 test('a miss on an empty desk is filed to the unsorted queue, and the empty-desk answer still lands', async () => {
