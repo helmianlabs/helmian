@@ -80,7 +80,7 @@ test('agent icon validation rejects unknown providers', () => {
 test('agent icon store lists empty icons for a new user', async () => {
   const store = createAgentIconStore(iconPool());
   const result = await store.list(ACTOR);
-  assert.deepEqual(result.icons, { Maestro: null, Claude: null, ChatGPT: null, Grok: null, Gemini: null });
+  assert.deepEqual(result.icons, { Maestro: null, Claude: null, ChatGPT: null, Grok: null, Gemini: null, Mistral: null });
   assert.equal(result.iconsUnavailable, undefined);
 });
 

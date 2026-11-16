@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createNeonStore } from '../src/adapters/neon.mjs';
+
+// The expected pending set is derived from the sql/ directory with the
+// same selection and ordering rule the runner uses (loadMigrations in
+// src/adapters/neon.mjs). The hand-kept list this replaces stopped at
+// migration 056 while sql/ grew past it, so the preflight's full
+// enumeration read as a failure once the suite was wired into the gate.
+const migrationNames = readdirSync(fileURLToPath(new URL('../sql', import.meta.url)))
+  .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
+  .sort((a, b) => a.localeCompare(b));
 
 class PreflightPool {
   constructor() {
@@ -70,55 +81,7 @@ test('database preflight reports a fresh Helmion schema without writing', async 
   assert.equal(inspection.helmion.schemaExists, false);
   assert.deepEqual(
     inspection.migrations.map(({ name, status }) => [name, status]),
-    [
-      ['001_helmion.sql', 'pending'],
-      ['002_maestro_phase_one.sql', 'pending'],
-      ['003_human_confirmations.sql', 'pending'],
-      ['004_tenant_audit_outbox.sql', 'pending'],
-      ['005_tenant_audit_claims.sql', 'pending'],
-      ['006_tenant_audit_claim_operations.sql', 'pending'],
-      ['007_platform_action_policy.sql', 'pending'],
-      ['008_equipment_safety_action_policy.sql', 'pending'],
-      ['009_envoy_chat.sql', 'pending'],
-      ['010_cora_organization_config.sql', 'pending'],
-      ['011_cora_provider_usage.sql', 'pending'],
-      ['012_cora_workspace_preview_intents.sql', 'pending'],
-      ['013_cora_agent_task_intents.sql', 'pending'],
-      ['014_cora_agent_task_claims.sql', 'pending'],
-      ['015_cora_knowledge_retrieval_metadata.sql', 'pending'],
-      ['016_cora_artifact_studio_intents.sql', 'pending'],
-      ['017_cora_artifact_sources.sql', 'pending'],
-      ['018_cora_artifact_script_revisions.sql', 'pending'],
-      ['019_cora_artifact_execution_requests.sql', 'pending'],
-      ['020_cora_personal_preferences.sql', 'pending'],
-      ['021_organization_database_registry.sql', 'pending'],
-      ['022_workspace_layout_preferences.sql', 'pending'],
-      ['023_cora_knowledge_management.sql', 'pending'],
-      ['024_cora_usage_budget_allocations.sql', 'pending'],
-      ['025_cora_approval_decisions.sql', 'pending'],
-      ['026_cora_connector_registrations.sql', 'pending'],
-      ['030_helmion_billing_entitlements.sql', 'pending'],
-      ['031_helmion_provider_connections.sql', 'pending'],
-      ['032_workspace_projects.sql', 'pending'],
-      ['033_console_command_intents.sql', 'pending'],
-      ['034_helmion_provider_oauth.sql', 'pending'],
-      ['041_console_command_runs.sql', 'pending'],
-      ['042_app_sessions.sql', 'pending'],
-      ['043_org_invites_desktop_links.sql', 'pending'],
-      ['044_app_session_steps.sql', 'pending'],
-      ['045_cora_agent_task_runs.sql', 'pending'],
-      ['046_cora_artifact_execution_runs.sql', 'pending'],
-      ['047_guard_findings.sql', 'pending'],
-      ['048_workspace_active_project.sql', 'pending'],
-      ['049_workspace_repo_bindings.sql', 'pending'],
-      ['050_workspace_write_leases.sql', 'pending'],
-      ['051_artifact_execution_completed.sql', 'pending'],
-      ['052_connector_outbound_outbox.sql', 'pending'],
-      ['053_workspace_project_canvases.sql', 'pending'],
-      ['054_emoji_mode_preferences.sql', 'pending'],
-      ['055_workspace_agent_icons.sql', 'pending'],
-      ['056_workspace_project_decisions.sql', 'pending'],
-    ],
+    migrationNames.map((name) => [name, 'pending']),
   );
   assert.equal(inspection.migrationsReady, false);
   assert.deepEqual(pool.transactions, []);

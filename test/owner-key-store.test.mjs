@@ -42,7 +42,7 @@ async function pilotKeyFixture() {
   return { root, keyDirectory, publicOutput, recoveryOutput, created };
 }
 
-test('owner-key init writes only DPAPI ciphertext, public enrollment, and encrypted recovery', async () => {
+test('owner-key init writes only DPAPI ciphertext, public enrollment, and encrypted recovery', { skip: process.platform !== 'win32' }, async () => {
   const fixture = await pilotKeyFixture();
   try {
     const localText = await readFile(fixture.created.local_key_path, 'utf8');
@@ -74,7 +74,7 @@ test('owner-key init writes only DPAPI ciphertext, public enrollment, and encryp
   }
 });
 
-test('interactive approval helper signs exact Tier B action without exporting private key', async () => {
+test('interactive approval helper signs exact Tier B action without exporting private key', { skip: process.platform !== 'win32' }, async () => {
   const fixture = await pilotKeyFixture();
   try {
     const requestPath = join(fixture.root, 'request.json');
@@ -158,7 +158,7 @@ test('interactive approval helper signs exact Tier B action without exporting pr
   }
 });
 
-test('recovery passphrase restores the same key under current-user DPAPI', async () => {
+test('recovery passphrase restores the same key under current-user DPAPI', { skip: process.platform !== 'win32' }, async () => {
   const fixture = await pilotKeyFixture();
   try {
     const restored = await restoreOwnerKey({
@@ -233,7 +233,7 @@ test('daily signing and recovery passphrases must be different', async () => {
   }
 });
 
-test('same-length distinct signing and recovery passphrases initialize successfully', async () => {
+test('same-length distinct signing and recovery passphrases initialize successfully', { skip: process.platform !== 'win32' }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'helmion-owner-key-same-length-'));
   try {
     const result = await initializeOwnerKey({

@@ -283,14 +283,17 @@ test('parseCustomProviders reads the optional models block and rejects junk', ()
 });
 
 test('resolveProvider carries tier models through to the router', () => {
-  const env = { maestro: 'local', customProviders: [] };
+  // The custom provider is named 'mybox', not 'local': since 79943ab
+  // 'local' is the built-in Ollama alias and built-ins win, so a custom
+  // provider named 'local' is shadowed before the pools are consulted.
+  const env = { maestro: 'mybox', customProviders: [] };
   const overrides = parseCustomProviders(JSON.stringify([{
-    name: 'local',
+    name: 'mybox',
     baseUrl: 'http://127.0.0.1:11434/v1',
     model: 'mid',
     models: { fast: 'small', deep: 'big' },
   }]));
-  const provider = resolveProvider('local', env, overrides);
+  const provider = resolveProvider('mybox', env, overrides);
   assert.equal(provider.id, 'custom');
   assert.deepEqual(provider.models, { fast: 'small', deep: 'big' });
 
