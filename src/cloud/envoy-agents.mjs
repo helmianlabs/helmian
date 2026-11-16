@@ -49,9 +49,21 @@
 // What Helm does with the address (the presence law, the guide's
 // voice) is later bites' work; this registry change is identity
 // and presence only.
+//
+// The Librarian (bite L1): the third reserved presence, in the
+// same family. 'librarian' resolves in the alias table so
+// @librarian parses to a role addressee and describeAuthor can
+// name the 'agent:librarian' subject the Librarian's filing
+// confirmations and recall answers post under, with the same
+// guards as Helm everywhere the alias could leak: not in
+// AGENT_PROVIDERS, no engine, no prompt, no config seat, no
+// custom handle, never in a team or a due set. The Librarian is
+// the workspace's one pen: it acts only through deterministic
+// cloud code (envoy-librarian.mjs's store, envoy-chat.mjs's
+// filing hook), never through a runner.
 
 export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse']);
-export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', helm: 'Helm', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter', muse: 'Muse' });
+export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', helm: 'Helm', librarian: 'Librarian', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter', muse: 'Muse' });
 export const CUSTOM_AGENT_ENGINES = Object.freeze(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse', 'custom']);
 // One connect road (owner's law, 2026-11-01): a custom agent's account
 // connects with an email and a password, and the seat works off that
@@ -68,6 +80,10 @@ const ALIASES = Object.freeze({
   // The alias makes @helm resolve and 'agent:helm' describable;
   // every routing surface filters it back out (see the header).
   helm: 'helm',
+  // The Librarian (bite L1): the same reserved role handle shape.
+  // The alias makes @librarian resolve and 'agent:librarian'
+  // describable; every routing surface filters it back out.
+  librarian: 'librarian',
   claude: 'claude', anthropic: 'claude',
   chatgpt: 'openai', openai: 'openai', gpt: 'openai', codex: 'openai',
   grok: 'grok', xai: 'grok', supergrok: 'grok',
@@ -145,13 +161,13 @@ export function normalizeProvider(value) {
 export function normalizeEngine(value) {
   const key = String(value ?? '').trim().toLowerCase().replace(/^@/, '');
   const engine = ENGINE_ALIASES[key] ?? null;
-  // 'maestro' and 'helm' resolve as role handles above, but
-  // neither is an engine a custom agent may run on.
-  return engine && engine !== 'maestro' && engine !== 'helm' ? engine : null;
+  // 'maestro', 'helm' and 'librarian' resolve as role handles
+  // above, but none of them is an engine a custom agent may run on.
+  return engine && engine !== 'maestro' && engine !== 'helm' && engine !== 'librarian' ? engine : null;
 }
 
 const CUSTOM_HANDLE_RE = /^[a-z][a-z0-9_-]{1,31}$/;
-const RESERVED_HANDLES = new Set(['all', 'everyone', 'here', 'maestro', 'manager', 'helm', 'system', 'helmian']);
+const RESERVED_HANDLES = new Set(['all', 'everyone', 'here', 'maestro', 'manager', 'helm', 'librarian', 'system', 'helmian']);
 
 export function normalizeCustomHandle(value) {
   const key = String(value ?? '').trim().toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 32);
@@ -271,11 +287,11 @@ export function parseConfig(body) {
     }
     const agents = [...new Set((Array.isArray(raw.agents) ? raw.agents : []).map((a) => {
       const std = normalizeProvider(a);
-      // 'helm' resolves as a role handle but is never a channel
-      // member: a config naming it drops it (bite H1). Maestro's
-      // historical entries, by contrast, are kept and read as
-      // inert (see the header).
-      if (std) return std === 'helm' ? null : std;
+      // 'helm' and 'librarian' resolve as role handles but are
+      // never channel members: a config naming either drops it
+      // (bites H1 and L1). Maestro's historical entries, by
+      // contrast, are kept and read as inert (see the header).
+      if (std) return std === 'helm' || std === 'librarian' ? null : std;
       const h = normalizeCustomHandle(a);
       return h && seenCustom.has(h) ? h : null;
     }).filter(Boolean))].slice(0, MAX_CHANNEL_AGENTS);
@@ -450,9 +466,10 @@ export function agentsToAnswer(message, members, { desk = false, room = false, d
     const h = normalizeCustomHandle(m);
     return h && customSet.has(h) ? h : null;
   }).filter(Boolean))];
-  // 'maestro' is the human's seat and 'helm' is a reserved
-  // presence: neither is ever on a team or in a due set.
-  const team = roster.filter((p) => p !== 'maestro' && p !== 'helm');
+  // 'maestro' is the human's seat, 'helm' is a reserved presence
+  // and 'librarian' is the workspace's pen: none of the three is
+  // ever on a team or in a due set.
+  const team = roster.filter((p) => p !== 'maestro' && p !== 'helm' && p !== 'librarian');
   if (team.length === 0) return [];
   const text = String(message?.body ?? '');
   const kind = String(message?.authorKind ?? '');
@@ -474,7 +491,7 @@ export function agentsToAnswer(message, members, { desk = false, room = false, d
       const subj = String(message?.authorSubject ?? '');
       const rawAuthor = subj.startsWith('agent:') ? subj.slice(6).toLowerCase() : '';
       const authorId = normalizeProvider(rawAuthor) ?? (customSet.has(rawAuthor) ? rawAuthor : rawAuthor);
-      if (!authorId || authorId === 'maestro' || authorId === 'helm') return [];
+      if (!authorId || authorId === 'maestro' || authorId === 'helm' || authorId === 'librarian') return [];
       const peers = team.filter((p) => p !== authorId);
       if (peers.length === 0) return [];
       if (all) return peers;
@@ -562,6 +579,10 @@ export function agentPrompt({ provider, channelTitle, members, context = [], mes
   // that answers through deterministic cloud code, never a
   // runner turn (bite H1).
   if (p === 'helm') throw new Error('helm is not an agent provider');
+  // And no Librarian prompt: the Librarian files and confirms
+  // through deterministic cloud code, never a runner turn
+  // (bite L1).
+  if (p === 'librarian') throw new Error('librarian is not an agent provider');
   const custom = customMap.get(p);
   const me = custom ? `${custom.emoji} ${custom.name} (@${custom.handle})` : (AGENT_NAMES[p] ?? 'Agent');
   const others = (members ?? []).map((x) => {

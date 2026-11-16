@@ -158,6 +158,108 @@ export async function postEmptyDeskAnswerIfNeeded({ pool, tenantId, channelId, m
   } finally { client.release(); }
 }
 
+// ---------- the Librarian filing (bite L1, 2026-11-15) ----------
+// A human who addresses the Librarian with a file request ("Librarian:
+// file this fact. X", "Librarian, remember: X") is not asking the
+// desk a question: they are handing the workspace's memory keeper a
+// fact to file. Before this bite there was no such road — the send
+// washed through dispatch as an ordinary ask, and the desk improvised
+// competing filings (a JSON file delivered as "the filing", seats
+// claiming they had filed, seats declining). Now the send is caught
+// here, on the send path, in the hook precedence of DESIGN section
+// 1.5 (coordinator, Helm, Librarian, guide, empty-desk): the fact is
+// written through the Librarian's one store (envoy-librarian.mjs
+// fileFact, under the tenant's own slug, never NULL), the Librarian
+// confirms in the channel as agent:librarian quoting what was filed,
+// and the human message is marked (metadata.librarianFact) so the
+// mesh never hands it to the desk as an ask — the guide's mark
+// pattern, one namespace over. A Librarian-addressed send that is
+// NOT a file request parses to nothing here and falls through to
+// ordinary dispatch untouched: the Librarian's name never swallows
+// an ordinary ask. Filing is best-effort in the house shape: a
+// failure is logged by the caller and never fails the send, and an
+// unfiled fact is never confirmed — the confirmation posts only
+// after the store's write lands.
+export const LIBRARIAN_SUBJECT = 'agent:librarian';
+export const LIBRARIAN_FACT_KEY_PREFIX = 'librarian-fact:';
+
+// The address at the head of the send: the roleAddresseeIn
+// vocative shapes (an optional greeting, an optional @, an
+// optional "the"), then the role's name and its punctuation. The
+// filing instruction must lead what remains — a file request
+// named mid-message is a sentence about filing, not a filing.
+const LIBRARIAN_ADDRESS_RE = /^\s*(?:(?:hey|hi|hello)\s+)?@?(?:the\s+)?librarian\b\s*[:,]?\s*/i;
+const LIBRARIAN_FILE_FACT_RE = /^file\s+this\s+fact\b\s*[.:]?\s*/i;
+const LIBRARIAN_REMEMBER_RE = /^remember\b\s*[:]?\s*/i;
+
+/**
+ * The fact a Librarian-addressed send asks to file, or null when
+ * the send is not a file request. Pure and deterministic: the
+ * fact is the text after the file instruction, in the two shapes
+ * the design names ("file this fact" and "remember"), and a
+ * request with no fact after the instruction files nothing.
+ */
+export function librarianFactRequestIn(body) {
+  const text = String(body ?? '');
+  const address = LIBRARIAN_ADDRESS_RE.exec(text);
+  if (!address) return null;
+  const rest = text.slice(address[0].length);
+  const instruction = LIBRARIAN_FILE_FACT_RE.exec(rest) ?? LIBRARIAN_REMEMBER_RE.exec(rest);
+  if (!instruction) return null;
+  const fact = rest.slice(instruction[0].length).trim();
+  return fact || null;
+}
+
+/**
+ * File one Librarian-addressed send's fact and confirm it in the
+ * channel. Runs after the send is durable, like the guide and
+ * empty-desk answers: the store write runs in the store's own
+ * tenant transaction; the confirmation and the mark run in one
+ * transaction of their own, and only when the write landed — a
+ * confirmation is posted exactly once per send (idempotency key
+ * librarian-fact:<messageId>), and the mark lands only with it,
+ * so a filed-but-unconfirmed send is never hidden from the desk
+ * by a mark whose confirmation failed to post. Returns
+ * { filed, confirmed?, key? } — a thrown error is the caller's
+ * to log; this helper never swallows one silently.
+ */
+export async function postLibrarianFactIfNeeded({ pool, tenantId, channelId, messageId, senderSubject, senderName = null, senderRole, body, store = null, at = null } = {}) {
+  const fact = librarianFactRequestIn(body);
+  if (!fact) return { filed: false };
+  const librarian = store ?? createLibrarianStore(pool);
+  const filed = await librarian.fileFact(
+    { tenantId, subject: senderSubject, role: senderRole },
+    { messageId, channelId, humanName: senderName, humanSubject: senderSubject, fact, at: at ?? new Date().toISOString() },
+  );
+  if (!filed?.filed) return { filed: false, reason: filed?.reason ?? 'not-filed' };
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query(`select set_config('helmion.tenant_id', $1, true)`, [String(tenantId)]);
+    const inserted = await client.query(
+      `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key, metadata)
+       values ($1,$2,$3,'agent',$4,$5,$6)
+       on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing
+       returning id`,
+      [String(tenantId), String(channelId), LIBRARIAN_SUBJECT, `Filed: ${filed.fact}`, `${LIBRARIAN_FACT_KEY_PREFIX}${messageId}`,
+        JSON.stringify({ librarianFact: { key: filed.key, forSubject: String(senderSubject) } })],
+    );
+    if (inserted.rowCount !== 1) { await client.query('commit'); return { filed: true, confirmed: false, key: filed.key }; }
+    await client.query(
+      `update helmion.envoy_messages
+          set metadata = coalesce(metadata, '{}'::jsonb) || $5::jsonb
+        where tenant_id=$1 and channel_id=$2 and id=$3 and author_subject=$4`,
+      [String(tenantId), String(channelId), messageId, String(senderSubject),
+        JSON.stringify({ librarianFact: { key: filed.key, filedBy: 'librarian' } })],
+    );
+    await client.query('commit');
+    return { filed: true, confirmed: true, key: filed.key, messageId: String(inserted.rows[0].id) };
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally { client.release(); }
+}
+
 export function createEnvoyStore(pool) {
   return Object.freeze({
     async listChannels(actor) {
@@ -282,6 +384,15 @@ export function createEnvoyStore(pool) {
         // to the empty-desk answer below, exactly as a send the
         // guide leaves unanswered does.
         //
+        // The Librarian's filing hook (bite L1) is the first role
+        // hook to land in that slot: a Librarian-addressed file
+        // request is filed through the one store and confirmed in
+        // the channel, and a filed send is answered, so the
+        // empty-desk answer does not also fire under it. A
+        // Librarian-addressed send that is not a file request is
+        // left exactly as it was: ordinary dispatch, and the
+        // empty-desk answer on an empty desk.
+        //
         // Helm's setup guide (helm-kb.mjs), for unaddressed
         // messages only: a setup question is answered by Maestro
         // from the guide — word for word, one step at a time —
@@ -291,15 +402,24 @@ export function createEnvoyStore(pool) {
         // guide leaves unanswered falls through to the empty-desk
         // answer below, so a fresh send gets at most one Maestro
         // message and the two never fight.
+        const role = roleAddresseeIn(message.body);
         let kbAnswer = null;
-        if (!roleAddresseeIn(message.body)) {
+        let factAnswer = null;
+        if (role === 'librarian') {
+          try {
+            factAnswer = await postLibrarianFactIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id, senderSubject: message.authorSubject, senderName: out.receipt.message.authorName ?? null, senderRole: actor.role, body: message.body });
+          } catch (error) {
+            console.error('[envoy-chat] librarian fact filing failed:', error.message);
+          }
+        }
+        if (!role) {
           try {
             kbAnswer = await postHelmKbAnswerIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id, senderSubject: message.authorSubject, body: message.body });
           } catch (error) {
             console.error('[envoy-chat] helm kb answer failed:', error.message);
           }
         }
-        if (!kbAnswer?.answered) {
+        if (!kbAnswer?.answered && !factAnswer?.filed) {
           try {
             await postEmptyDeskAnswerIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id });
           } catch (error) {
@@ -321,6 +441,7 @@ import { withTenantTransaction, requireActiveTenantMembership } from '../core/te
 import { appendAuditEvent } from './audit-event-repository.mjs';
 import { tenantAgentStateOn } from './tenant-agent-state.mjs';
 import { CONFIG_SUBJECT, describeAuthor, normalizeMessageMetadata, parseConfig, roleAddresseeIn } from './envoy-agents.mjs';
+import { createLibrarianStore } from './envoy-librarian.mjs';
 import { discordBotStatus, slackBotStatus } from './bot-status.mjs';
 import { postHelmKbAnswerIfNeeded } from './helm-kb.mjs';
 
