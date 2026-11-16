@@ -69,12 +69,18 @@
 //   submenu           a "›" row holding further items (Skills ›,
 //                     Connectors ›, Plugins ›, More ›, Tools ›,
 //                     Connected Apps ›).
-//   manage-link       the footer row — always Helmian's own
-//                     Integrations view ('integrations'). A vendor's
-//                     own manager is never a menu row: Troy's ruling
-//                     (2026-11-08) — a seat's connections are managed
-//                     inside Helmian, never on a vendor page the
-//                     customer has to go manage.
+//   manage-link       the footer row — opens the seat's connector
+//                     management INSIDE this panel ('panel'): each
+//                     connector's state, arm switch, tool access
+//                     and disconnect for that seat, in place
+//                     (Troy's order, 2026-11-15 — Manage must
+//                     manage the connector for that seat, not
+//                     navigate away to the Integrations page). A
+//                     vendor's own manager is never a menu row:
+//                     Troy's ruling (2026-11-08) — a seat's
+//                     connections are managed inside Helmian,
+//                     never on a vendor page the customer has to
+//                     go manage.
 //
 // GROUP BINDINGS. A connector group binds its rows in exactly one of
 // two ways: `entryIds` — ids into the shipped catalog
@@ -94,7 +100,7 @@
 // plugins) or deleted (the vendor skills mirror, Mistral's agents;
 // M7 re-points Mistral's at Helmian's custom agents). A feed-bound
 // group names no connector, so it can never invent one.
-import { LIBRARY_SEATS } from './connector-panel.mjs?v=d3ad99781863e8ad';
+import { LIBRARY_SEATS } from './connector-panel.mjs?v=eecf35f828d565e6';
 
 export const MENU_ITEM_TYPES = Object.freeze([
   'attach', 'capability', 'action', 'projects', 'live-toggle-group', 'mirror-group', 'submenu', 'manage-link',
@@ -129,23 +135,31 @@ const NATIVES = ['helmian-github'];
 // The seat-agnostic Source 3 shelf (connector-catalog.mjs, from
 // src/cloud/mcp-registry-curation.mjs — the official MCP Registry
 // imports): offered on EVERY seat and Helmian-brokered like the
-// natives, so it rides the same live toggle groups. Today: the
-// weather pick (a US National Weather Service data server).
-const REGISTRY_SHELF = ['registry-weather'];
+// natives, so it rides the same live toggle groups. All five
+// curated picks: Weather (a US National Weather Service data
+// server), Atlassian, Notion, Linear, Stripe.
+const REGISTRY_SHELF = ['registry-weather', 'registry-atlassian', 'registry-notion', 'registry-linear', 'registry-stripe'];
 // The Source 4 vendor-published servers (connector-catalog.mjs): a
 // vendor's own MCP server Helmian brokers directly — Vercel's, plus
 // Bite R2's team-work family (Slack, Asana, HubSpot), plus the
 // Google family (Gmail, Google Calendar, Google Drive), plus the
 // DCR long tail (Meltwater, S&P Global, Idiolect, Gamma), plus the
-// fixed tail (Canva, Dropbox) — riding
-// the live groups of the seats their catalog entries stock
-// (claude, chatgpt, grok).
-const BROKERED_SERVERS = ['helmian-vercel', 'helmian-slack', 'helmian-asana', 'helmian-hubspot', 'helmian-gmail', 'helmian-google-calendar', 'helmian-google-drive', 'helmian-meltwater', 'helmian-sp-global', 'helmian-idiolect', 'helmian-gamma', 'helmian-canva', 'helmian-dropbox', 'helmian-onedrive', 'helmian-outlook', 'helmian-microsoft-teams', 'helmian-sharepoint', 'helmian-box', 'helmian-salesforce'];
-const manageInHelmian = () => manageLink({ label: 'Manage connectors', target: 'integrations' });
+// fixed tail (Canva, Dropbox), plus the Microsoft family and the
+// tenant-pair pair (Box, Salesforce), plus Cloudflare Docs —
+// riding the live groups of EVERY seat: universal stocking
+// (Troy's order, 2026-11-15) stocks the catalog's whole
+// Helmian-brokered set on every seat alike.
+const BROKERED_SERVERS = ['helmian-vercel', 'helmian-slack', 'helmian-asana', 'helmian-hubspot', 'helmian-gmail', 'helmian-google-calendar', 'helmian-google-drive', 'helmian-meltwater', 'helmian-sp-global', 'helmian-idiolect', 'helmian-gamma', 'helmian-canva', 'helmian-dropbox', 'helmian-onedrive', 'helmian-outlook', 'helmian-microsoft-teams', 'helmian-sharepoint', 'helmian-box', 'helmian-salesforce', 'cloudflare-docs'];
+// The universal live set: every Helmian-brokered entry the catalog
+// stocks, bound by every seat's live toggle group (universal
+// stocking, Troy's order, 2026-11-15). A seat's vendor mirrors
+// ride beside it in that seat's mirror group, as data.
+const UNIVERSAL_LIVE = [...NATIVES, ...REGISTRY_SHELF, ...BROKERED_SERVERS];
+const manageInHelmian = () => manageLink({ label: 'Manage connectors', target: 'panel' });
 // The plain Helmian list (REPORT §3.6–§3.10 + §3.11): seats with no
 // vendor furniture get attach, the live toggles, and the manager —
 // in Helmian's own words, with no invented vendor furniture.
-const helmianList = ({ entryIds = [...NATIVES, ...REGISTRY_SHELF], note = null, requiresToolCapableModel = false } = {}) => [
+const helmianList = ({ entryIds = [...UNIVERSAL_LIVE], note = null, requiresToolCapableModel = false } = {}) => [
   attach('Add files'),
   liveGroup({ label: 'Connectors', entryIds, ...(note ? { note } : {}), requiresToolCapableModel }),
   manageInHelmian(),
@@ -181,10 +195,10 @@ export const MENU_DEFINITIONS = deepFreeze({
       liveGroup({ feed: 'helmian-skills' }),
     ]),
     submenu('Connectors', [
-      // Source 3 service picks for this seat ride beside their
-      // vendor mirrors below (different ids, different pipes):
-      // Helmian's own brokered road to the same service.
-      liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF, 'registry-atlassian', 'registry-notion', 'registry-linear', 'registry-stripe', ...BROKERED_SERVERS] }),
+      // The universal live set: Source 3 service picks ride beside
+      // their vendor mirrors below (different ids, different
+      // pipes) — Helmian's own brokered road to the same service.
+      liveGroup({ entryIds: [...UNIVERSAL_LIVE] }),
       mirrorGroup({
         managedIn: 'Claude',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'github', 'slack', 'notion', 'linear', 'stripe', 'atlassian', 'canva', 'idiolect', 'figma'],
@@ -220,7 +234,7 @@ export const MENU_DEFINITIONS = deepFreeze({
   chatgpt: [
     attach('Add photos & files'),
     submenu('More', [
-      liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF, 'registry-notion', ...BROKERED_SERVERS] }),
+      liveGroup({ entryIds: [...UNIVERSAL_LIVE] }),
       mirrorGroup({
         managedIn: 'ChatGPT',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'slack', 'notion', 'github', 'canva', 'dropbox', 'figma'],
@@ -238,7 +252,7 @@ export const MENU_DEFINITIONS = deepFreeze({
   grok: [
     attach('Files'),
     submenu('Connectors', [
-      liveGroup({ entryIds: ['github', ...NATIVES, ...REGISTRY_SHELF, 'registry-notion', 'registry-linear', ...BROKERED_SERVERS] }),
+      liveGroup({ entryIds: ['github', ...UNIVERSAL_LIVE] }),
       mirrorGroup({
         managedIn: 'Grok', rowShape: 'state',
         entryIds: ['gmail', 'google-calendar', 'google-drive', 'onedrive', 'outlook', 'microsoft-teams', 'sharepoint', 'salesforce', 'box', 'canva', 'gamma', 'linear', 'meltwater', 'notion', 'sp-global', 'vercel'],
@@ -262,7 +276,7 @@ export const MENU_DEFINITIONS = deepFreeze({
         entryIds: ['gmail', 'google-drive', 'google-calendar'],
       }),
     ]),
-    liveGroup({ label: 'Connectors', entryIds: [...NATIVES, ...REGISTRY_SHELF] }),
+    liveGroup({ label: 'Connectors', entryIds: [...UNIVERSAL_LIVE] }),
     manageInHelmian(),
   ],
 
@@ -277,7 +291,7 @@ export const MENU_DEFINITIONS = deepFreeze({
   mistral: [
     attach('Add files'),
     submenu('Tools', [
-      liveGroup({ entryIds: [...NATIVES, ...REGISTRY_SHELF] }),
+      liveGroup({ entryIds: [...UNIVERSAL_LIVE] }),
       mirrorGroup({ managedIn: 'Mistral', entryIds: [] }),
     ]),
     // The Agents mirror group (feed 'vendor-agents') was deleted in
@@ -312,8 +326,9 @@ export const MENU_DEFINITIONS = deepFreeze({
 
   // ------------------------------------------------------ Cloudflare
   // REPORT §3.10: plain list; Cloudflare's hosted MCP servers are
-  // ordinary Helmian-brokered catalog entries (cloudflare-docs).
-  cloudflare: helmianList({ entryIds: ['cloudflare-docs', ...NATIVES, ...REGISTRY_SHELF] }),
+  // ordinary Helmian-brokered catalog entries (cloudflare-docs
+  // rides the universal set like every other brokered entry).
+  cloudflare: helmianList(),
 
   // ------------------------------------------------------------ Qwen
   // REPORT §3.7: PIPE seat; plain list, live toggles only. Model
