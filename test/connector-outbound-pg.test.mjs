@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { createConnectorOutboundWorker, enqueueConnectorMessage } from '../src/cora/connector-outbound-worker.mjs';
+import { resolveOutboundDestination } from '../src/cloud/connector-destinations.mjs';
 
 const pgUrl = process.env.HELMIAN_TEST_PG_URL;
 const pgSkip = pgUrl ? false : 'HELMIAN_TEST_PG_URL is not set';
@@ -123,6 +124,204 @@ test('outbox: a failing delivery ends failed at the cap, audited, not stuck or l
     assert.equal(audit[0].decision, 'DENY');
   } finally {
     await cleanup(pool, tenantId);
+    await pool.end();
+  }
+});
+
+// ---------------------------------------------------------------------
+// Bite F: per-tenant routing against the real worker and real SQL.
+// The resolver is injected (or is the real resolver over a fake
+// credential client); delivery is the recording seam. Assertions stay
+// scoped to each test's own tenants, as above.
+
+async function rowsFor(pool, tenantId) {
+  const result = await pool.query(
+    'select status, attempts, receipt, text from helmion.connector_outbound_messages where tenant_id=$1 order by id',
+    [tenantId],
+  );
+  return result.rows;
+}
+
+test('outbox: two tenants interleaved in one drain each receive only their own destination', { skip: pgSkip }, async () => {
+  const { default: pg } = await import('pg');
+  const pool = new pg.Pool({ connectionString: pgUrl });
+  const tenantA = `t-${randomUUID().slice(0, 8)}`;
+  const tenantB = `t-${randomUUID().slice(0, 8)}`;
+  try {
+    await seedTenant(pool, tenantA);
+    await seedTenant(pool, tenantB);
+    const urlA = 'https://discord.com/api/webhooks/pg-tenant-a';
+    const urlB = 'https://discord.com/api/webhooks/pg-tenant-b';
+    for (const [tenantId, text] of [[tenantA, 'pg-a1'], [tenantB, 'pg-b1'], [tenantA, 'pg-a2'], [tenantB, 'pg-b2']]) {
+      await enqueueConnectorMessage({ pool, tenantId, provider: 'discord', text });
+    }
+    const posted = [];
+    const resolveCalls = [];
+    const worker = createConnectorOutboundWorker({
+      pool, workerId: 'worker:pg-test', env: {},
+      resolveDestination: async ({ tenantId, provider }) => {
+        resolveCalls.push(`${tenantId} ${provider}`);
+        if (tenantId === tenantA) return { kind: 'tenant', webhookUrl: urlA };
+        if (tenantId === tenantB) return { kind: 'tenant', webhookUrl: urlB };
+        return { kind: 'none' };
+      },
+      postMessage: async ({ text, webhookUrl }) => { posted.push({ text, webhookUrl }); return { delivered: true, status: 204 }; },
+      log: () => {},
+    });
+    await worker.runOnce();
+    const own = posted.filter((p) => ['pg-a1', 'pg-a2', 'pg-b1', 'pg-b2'].includes(p.text));
+    assert.equal(own.length, 4, 'each interleaved message is delivered exactly once');
+    const byText = Object.fromEntries(own.map((p) => [p.text, p.webhookUrl]));
+    assert.equal(byText['pg-a1'], urlA);
+    assert.equal(byText['pg-a2'], urlA);
+    assert.equal(byText['pg-b1'], urlB);
+    assert.equal(byText['pg-b2'], urlB);
+    assert.equal(resolveCalls.filter((c) => c === `${tenantA} discord`).length, 1, 'tenant A resolved once for the whole group');
+    assert.equal(resolveCalls.filter((c) => c === `${tenantB} discord`).length, 1, 'tenant B resolved once for the whole group');
+    for (const tenantId of [tenantA, tenantB]) {
+      const rows = await rowsFor(pool, tenantId);
+      assert.equal(rows.length, 2);
+      assert.ok(rows.every((r) => r.status === 'sent'), 'both tenants rows settle sent');
+    }
+  } finally {
+    await cleanup(pool, tenantA);
+    await cleanup(pool, tenantB);
+    await pool.end();
+  }
+});
+
+test('outbox: one tenant failing destination does not block the other tenant in the same drain', { skip: pgSkip }, async () => {
+  const { default: pg } = await import('pg');
+  const pool = new pg.Pool({ connectionString: pgUrl });
+  const tenantA = `t-${randomUUID().slice(0, 8)}`;
+  const tenantB = `t-${randomUUID().slice(0, 8)}`;
+  try {
+    await seedTenant(pool, tenantA);
+    await seedTenant(pool, tenantB);
+    await enqueueConnectorMessage({ pool, tenantId: tenantA, provider: 'discord', text: 'pg-ok' });
+    await enqueueConnectorMessage({ pool, tenantId: tenantB, provider: 'discord', text: 'pg-dead' });
+    const urlB = 'https://discord.com/api/webhooks/pg-dead-tenant';
+    const worker = createConnectorOutboundWorker({
+      pool, workerId: 'worker:pg-test', env: {},
+      resolveDestination: async ({ tenantId }) => (tenantId === tenantB
+        ? { kind: 'tenant', webhookUrl: urlB }
+        : { kind: 'tenant', webhookUrl: 'https://discord.com/api/webhooks/pg-ok-tenant' }),
+      postMessage: async ({ webhookUrl }) => {
+        if (webhookUrl === urlB) throw new Error('410 Gone');
+        return { delivered: true, status: 204 };
+      },
+      log: () => {},
+    });
+    await worker.runOnce();
+    const [rowA] = await rowsFor(pool, tenantA);
+    assert.equal(rowA.status, 'sent');
+    const [rowB] = await rowsFor(pool, tenantB);
+    assert.equal(rowB.status, 'queued', 'the failing tenant row stays queued for a later drain');
+    assert.equal(rowB.attempts, 1);
+  } finally {
+    await cleanup(pool, tenantA);
+    await cleanup(pool, tenantB);
+    await pool.end();
+  }
+});
+
+test('outbox: a tenant with no destination fails named on first drain, with zero delivery attempts', { skip: pgSkip }, async () => {
+  const { default: pg } = await import('pg');
+  const pool = new pg.Pool({ connectionString: pgUrl });
+  const tenantId = `t-${randomUUID().slice(0, 8)}`;
+  try {
+    await seedTenant(pool, tenantId);
+    await enqueueConnectorMessage({ pool, tenantId, provider: 'discord', text: 'pg-nodest' });
+    const posted = [];
+    const worker = createConnectorOutboundWorker({
+      pool, workerId: 'worker:pg-test',
+      env: { HELMION_DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/pg-env' },
+      resolveDestination: async () => ({ kind: 'none' }),
+      postMessage: async (args) => { posted.push(args); return { delivered: true, status: 204 }; },
+      log: () => {},
+    });
+    await worker.runOnce();
+    const [row] = await rowsFor(pool, tenantId);
+    assert.equal(row.status, 'failed');
+    assert.equal(row.attempts, 3, 'terminal on the first drain, like webhook_not_configured');
+    assert.equal(row.receipt.reason, 'tenant_destination_not_configured');
+    assert.equal(posted.filter((p) => p.text === 'pg-nodest').length, 0, 'no delivery is attempted without a destination');
+    const audit = await auditRows(pool, tenantId);
+    assert.equal(audit.length, 1);
+    assert.equal(audit[0].action_type, 'connector.outbound.failed');
+    assert.equal(audit[0].actor_role, 'member');
+    assert.equal(audit[0].decision, 'DENY');
+  } finally {
+    await cleanup(pool, tenantId);
+    await pool.end();
+  }
+});
+
+test('outbox: the operator tenant falls back to the env webhook; a non-operator tenant does not', { skip: pgSkip }, async () => {
+  const { default: pg } = await import('pg');
+  const pool = new pg.Pool({ connectionString: pgUrl });
+  const operator = `t-${randomUUID().slice(0, 8)}`;
+  const other = `t-${randomUUID().slice(0, 8)}`;
+  try {
+    await seedTenant(pool, operator);
+    await seedTenant(pool, other);
+    await enqueueConnectorMessage({ pool, tenantId: operator, provider: 'discord', text: 'pg-op' });
+    await enqueueConnectorMessage({ pool, tenantId: other, provider: 'discord', text: 'pg-other' });
+    const envUrl = 'https://discord.com/api/webhooks/pg-env-fallback';
+    const opEnv = { HELMION_OPERATOR_TENANT_ID: operator, HELMION_DISCORD_WEBHOOK_URL: envUrl };
+    const posted = [];
+    const worker = createConnectorOutboundWorker({
+      pool, workerId: 'worker:pg-test', env: opEnv,
+      resolveDestination: ({ tenantId, provider }) => resolveOutboundDestination({ credentials: null, tenantId, provider, env: opEnv, actorContext: null }),
+      postMessage: async (args) => { posted.push(args); return { delivered: true, status: 204 }; },
+      log: () => {},
+    });
+    await worker.runOnce();
+    const [opRow] = await rowsFor(pool, operator);
+    assert.equal(opRow.status, 'sent');
+    assert.equal(posted.find((p) => p.text === 'pg-op')?.webhookUrl, envUrl, 'the operator row is delivered to the env webhook');
+    const [otherRow] = await rowsFor(pool, other);
+    assert.equal(otherRow.status, 'failed');
+    assert.equal(otherRow.receipt.reason, 'tenant_destination_not_configured');
+    assert.equal(posted.filter((p) => p.text === 'pg-other').length, 0);
+  } finally {
+    await cleanup(pool, operator);
+    await cleanup(pool, other);
+    await pool.end();
+  }
+});
+
+test('outbox: a stored tenant destination wins over the env fallback', { skip: pgSkip }, async () => {
+  const { default: pg } = await import('pg');
+  const pool = new pg.Pool({ connectionString: pgUrl });
+  const operator = `t-${randomUUID().slice(0, 8)}`;
+  try {
+    await seedTenant(pool, operator);
+    await enqueueConnectorMessage({ pool, tenantId: operator, provider: 'discord', text: 'pg-op-tenant' });
+    const envUrl = 'https://discord.com/api/webhooks/pg-env-loses';
+    const tenantUrl = 'https://discord.com/api/webhooks/pg-tenant-wins';
+    const opEnv = { HELMION_OPERATOR_TENANT_ID: operator, HELMION_DISCORD_WEBHOOK_URL: envUrl };
+    const credentials = {
+      async resolveVaultCredential(input) {
+        return input.providerId === 'discord-outbound'
+          ? { accepted: true, credential: tenantUrl }
+          : { accepted: false, status: 'credential_not_available' };
+      },
+    };
+    const actorContext = { actorSubject: 'worker:pg-test', actorRole: 'member', sessionId: 'sess-pg', requestId: 'req-pg' };
+    const posted = [];
+    const worker = createConnectorOutboundWorker({
+      pool, workerId: 'worker:pg-test', env: opEnv,
+      resolveDestination: ({ tenantId, provider }) => resolveOutboundDestination({ credentials, tenantId, provider, env: opEnv, actorContext }),
+      postMessage: async (args) => { posted.push(args); return { delivered: true, status: 204 }; },
+      log: () => {},
+    });
+    await worker.runOnce();
+    const [row] = await rowsFor(pool, operator);
+    assert.equal(row.status, 'sent');
+    assert.equal(posted.find((p) => p.text === 'pg-op-tenant')?.webhookUrl, tenantUrl);
+  } finally {
+    await cleanup(pool, operator);
     await pool.end();
   }
 });
