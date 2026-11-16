@@ -108,12 +108,16 @@ Shared memory is built into Helmian. There is no connector to add, no
 passphrase, and nothing to install:
 
 - Your workspace has its own shared notebook in Helmian's database
-  (Neon Postgres). Every seat in the workspace reads and writes the
-  same notebook.
-- **The Librarian** keeps it. When a seat works something out — a
-  fix, a mistake, the solution that worked — the Librarian files it,
-  and the seats recall it automatically when they answer. What one
-  AI picks up, the others can use.
+  (Neon Postgres). Every seat reads the same notebook in its prompt
+  when it answers: at most 40 lines per section, at most 300
+  characters per line, and at most 6,000 characters in total. Seats
+  do not write the notebook themselves.
+- **The Librarian** keeps it. It files a short record of every ask
+  the desk is given, and files an ask the Guard refused as an open
+  incident. The seats recall the notebook automatically when they
+  answer. The Librarian's solve and re-file operations exist and
+  are tested, but no shipped surface calls them yet, so fixes and
+  solutions are not filed automatically today.
 - Under the hood it is a Neon Postgres endpoint with Helmian's own
   MCP door over the same store — all inside Helmian. The memory
   belongs to the workspace, never to a person, a facility, or
