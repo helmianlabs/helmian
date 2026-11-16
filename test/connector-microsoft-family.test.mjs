@@ -130,9 +130,9 @@ const noFetch = async () => { throw new Error('no network in tests'); };
 
 // ------------------------------------------------------------ catalog
 
-test('catalog: the Microsoft four are stocked brokered on claude, chatgpt, grok — and nowhere else', () => {
+test('catalog: the Microsoft four are stocked brokered on every seat (universal stocking, 2026-11-15)', () => {
   for (const fam of FAMILY) {
-    for (const seatId of SEATS) {
+    for (const seatId of LIVE_SEATS) {
       const def = catalogEntryById(seatId, fam.entryId);
       assert.ok(def, `${seatId}/${fam.entryId}: stocked`);
       assert.equal(def.name, fam.name);
@@ -149,10 +149,6 @@ test('catalog: the Microsoft four are stocked brokered on claude, chatgpt, grok 
       assert.ok(def.scopesSummary.length > 20, `${seatId}/${fam.entryId}: plain-words connect summary present`);
     }
     for (const seatId of LIVE_SEATS) {
-      if (SEATS.includes(seatId)) continue;
-      assert.equal(catalogEntryById(seatId, fam.entryId), null, `${seatId}: not stocked in this bite`);
-    }
-    for (const seatId of SEATS) {
       const ids = catalogEntriesForSeat(seatId).map((d) => d.id);
       assert.equal(ids.filter((id) => id === fam.entryId).length, 1, `${seatId}: exactly one ${fam.entryId}`);
     }
@@ -625,52 +621,60 @@ test('read: all four rows read connected; siblings carry the shared detail; coun
   }
 });
 
-test('read: a connected family projects as ROWS onto a seat that stocks none of them (Gemini)', async () => {
+test('read: the family connection joins onto a seat\u2019s own stocked rows (Gemini, universal stocking)', async () => {
   const { store, read } = await makeWorld();
 
-  // Gemini stocks no Microsoft entry (the catalog placement pinned
-  // above), and the projection is connection-driven: with the
-  // family unconnected, no family row stands there — nothing is
-  // invented for a seat the catalog does not stock the family on.
+  // Universal stocking (2026-11-15): Gemini stocks the Microsoft
+  // four in its own library now, so the four rows stand from the
+  // first read — not connected, because nothing is connected yet.
+  // (Before universal stocking this seat stocked none of the four
+  // and the rows existed only as projections of a connection made
+  // on another seat; the entry records are the seat's own now,
+  // and the family's one connection joins onto them the same way.)
   const before = await read.readSeatLibrary(TENANT, { personId: PERSON, seatId: 'gemini' });
-  assert.equal(
-    before.rows.filter((r) => FAMILY_IDS.includes(r.entryId)).length, 0,
-    'unconnected: no family rows on a non-stocking seat',
-  );
+  const beforeRows = before.rows.filter((r) => FAMILY_IDS.includes(r.entryId));
+  assert.equal(beforeRows.length, 4, 'unconnected: the seat\u2019s own four rows stand');
+  for (const row of beforeRows) {
+    assert.equal(row.state, 'not-connected', `${row.entryId}: not connected before the family connects`);
+  }
 
   await connectFamily(store);
 
   // The connection side has always projected the family's one
-  // connection onto all four members here; the ROWS must stand
-  // too — the read joins connections onto entry rows, so every
-  // member's entry row has to join the seat's list (the store's
-  // listEntries family widening), or three of the four names stay
-  // invisible on exactly the seats the widening exists for.
+  // connection onto all four members; the read joins that
+  // connection onto the seat's own entry rows, so every member
+  // reads connected through the one family connection.
   const view = await read.readSeatLibrary(TENANT, { personId: PERSON, seatId: 'gemini' });
   const rows = view.rows.filter((r) => FAMILY_IDS.includes(r.entryId));
-  assert.equal(rows.length, 4, 'all four members stand as rows on the seat that stocks none of them');
+  assert.equal(rows.length, 4, 'all four members stand as rows');
   for (const fam of FAMILY) {
     const row = rows.find((r) => r.entryId === fam.entryId);
     assert.ok(row, `gemini/${fam.entryId}: row present`);
     assert.equal(row.state, 'connected', `gemini/${fam.entryId}: connected through the family`);
     assert.equal(row.accountIdentity, 'troy@contoso.example', `gemini/${fam.entryId}: the family's account`);
-    assert.equal(row.workspaceSet, true, `gemini/${fam.entryId}: the row names its road — the workspace set`);
-    assert.equal(row.provenanceSeatId, 'claude', `gemini/${fam.entryId}: the entry record lives on the seat that stocks it`);
+    assert.equal(row.workspaceSet, undefined, `gemini/${fam.entryId}: the row is the seat's own entry record, not a workspace-set projection (universal stocking)`);
+    assert.equal(row.provenanceSeatId, undefined, `gemini/${fam.entryId}: no provenance marker — provenance rides projected rows only`);
   }
   for (const fam of FAMILY.slice(1)) {
     const row = rows.find((r) => r.entryId === fam.entryId);
     assert.deepEqual(
       row.stateDetail?.sharedConnection,
       { family: 'microsoft', recordedUnderEntryId: 'helmian-onedrive' },
-      `gemini/${fam.entryId}: the shared detail rides the projected row`,
+      `gemini/${fam.entryId}: the shared detail rides the row`,
     );
   }
 
-  // The walls hold on the projected rows too.
+  // The walls hold: another person and another tenant hold the
+  // same stocked rows, but the family connection never shows on
+  // them — their rows stand not-connected.
   const other = await read.readSeatLibrary(TENANT, { personId: OTHER_PERSON, seatId: 'gemini' });
-  assert.equal(other.rows.filter((r) => FAMILY_IDS.includes(r.entryId)).length, 0, 'another person: no family rows');
+  const otherRows = other.rows.filter((r) => FAMILY_IDS.includes(r.entryId));
+  assert.equal(otherRows.length, 4, 'another person: the stocked rows stand');
+  assert.ok(otherRows.every((r) => r.state !== 'connected'), 'another person: the family connection never shows');
   const otherTenant = await read.readSeatLibrary(TENANT_B, { personId: PERSON, seatId: 'gemini' });
-  assert.equal(otherTenant.rows.filter((r) => FAMILY_IDS.includes(r.entryId)).length, 0, 'another tenant: no family rows');
+  const otherTenantRows = otherTenant.rows.filter((r) => FAMILY_IDS.includes(r.entryId));
+  assert.equal(otherTenantRows.length, 4, 'another tenant: the stocked rows stand');
+  assert.ok(otherTenantRows.every((r) => r.state !== 'connected'), 'another tenant: the family connection never shows');
 });
 
 // ----------------------------------------------------- write route
