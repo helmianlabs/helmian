@@ -28,6 +28,7 @@ import assert from 'node:assert/strict';
 
 import {
   CONNECTOR_CATALOG,
+  LIVE_SEATS,
   catalogEntryById,
   createCatalogRefresh,
 } from '../src/cloud/connector-catalog.mjs';
@@ -358,9 +359,9 @@ function handlerAs(actor, deps) {
 
 // ------------------------------------------------------------ catalog + kind
 
-test('catalog: Salesforce is stocked brokered on claude, chatgpt, grok — the endpoint is the per-org TEMPLATE, the published scopes declared', () => {
-  assert.equal(CONNECTOR_CATALOG.length, 134, 'the census: 131 + Salesforce on three seats');
-  for (const seatId of SEATS) {
+test('catalog: Salesforce is stocked brokered on every seat (universal stocking, 2026-11-15) — the endpoint is the per-org TEMPLATE, the published scopes declared', () => {
+  assert.equal(CONNECTOR_CATALOG.length, 405, 'the census: 134 (pre-universal) + registry picks on every seat (+49) + brokered servers on every seat (+209) + Cloudflare Docs from Source 1 to Source 4 (+13 net)');
+  for (const seatId of LIVE_SEATS) {
     const entry = catalogEntryById(seatId, 'helmian-salesforce');
     assert.ok(entry, `${seatId}: Salesforce is stocked`);
     assert.equal(entry.name, 'Salesforce');
@@ -372,7 +373,7 @@ test('catalog: Salesforce is stocked brokered on claude, chatgpt, grok — the e
     assert.match(entry.scopesSummary, /External Client App/);
     assert.match(entry.scopesSummary, /MCP server path/, 'the copy names the server path as part of the setup');
   }
-  assert.equal(catalogEntryById('gemini', 'helmian-salesforce'), null, 'not stocked on gemini');
+  assert.ok(catalogEntryById('gemini', 'helmian-salesforce'), 'stocked on gemini too (universal stocking, 2026-11-15)');
 });
 
 test('kind: Salesforce resolves the fixed kind under provider salesforce, a tenant-pair provider at the tenant address', () => {

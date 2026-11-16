@@ -26,12 +26,13 @@
 //       projects row — pinned in the same projection;
 //   (6) the module is pure (no DOM, no fetch, one relative import)
 //       and the definitions are frozen;
-//   (7) the manage footer is Helmian's Integrations view for EVERY
-//       seat (Troy's ruling, 2026-11-08): REPORT §3's vendor manage
-//       rows are deliberately NOT carried — no definition holds a
-//       'vendor' target or a manage URL, because a seat's
-//       connections are managed inside Helmian, never in a vendor
-//       window.
+//   (7) the manage footer opens the seat's connector management
+//       inside the panel for EVERY seat (Troy's order, 2026-11-15,
+//       superseding the 2026-11-08 Integrations landing): REPORT
+//       §3's vendor manage rows are deliberately NOT carried — no
+//       definition holds a 'vendor' target or a manage URL,
+//       because a seat's connections are managed inside Helmian,
+//       never in a vendor window.
 //
 // The live half of the gate (the rendered menu in the real room,
 // served bytes byte-compared) belongs to bite 3R-b — see the bite
@@ -78,21 +79,22 @@ function project(items) {
 }
 
 const NATIVES = 'helmian-github';
-// Source 3 (MCP Registry imports): the weather pick rides every
-// seat's live group beside the native; the service picks ride only
-// their seats (mirrored in connector-menu.mjs's REGISTRY_SHELF and
-// the per-seat live groups).
-const SHELF = 'registry-weather';
+// Source 3 (MCP Registry imports): all five curated picks ride
+// every seat's live group beside the native (universal stocking,
+// 2026-11-15; mirrored in connector-menu.mjs's REGISTRY_SHELF).
+const SHELF = 'registry-weather,registry-atlassian,registry-notion,registry-linear,registry-stripe';
 // Source 4 (vendor-published servers): Helmian brokers the vendors'
 // own published MCP servers directly, so their entries ride the live
-// groups of the seats they stock — claude, chatgpt, grok. Vercel's
+// groups of EVERY seat (universal stocking, 2026-11-15). Vercel's
 // was the first; Bite R2 added the team-work family (Slack, Asana,
 // HubSpot), the Google family bite added Gmail, Google Calendar and
-// Google Drive, and the DCR long-tail bite added Meltwater, S&P
-// Global, Idiolect and Gamma — each in the order the catalog lists
-// them.
-const BROKERED = 'helmian-vercel,helmian-slack,helmian-asana,helmian-hubspot,helmian-gmail,helmian-google-calendar,helmian-google-drive,helmian-meltwater,helmian-sp-global,helmian-idiolect,helmian-gamma,helmian-canva,helmian-dropbox,helmian-onedrive,helmian-outlook,helmian-microsoft-teams,helmian-sharepoint,helmian-box,helmian-salesforce';
-const PLAIN_LIST = [`attach:Add files`, `live:Connectors:${NATIVES},${SHELF}`, 'manage:Manage connectors:integrations'];
+// Google Drive, the DCR long-tail bite added Meltwater, S&P Global,
+// Idiolect and Gamma, the fixed tail added Canva and Dropbox, then
+// the Microsoft family and the tenant-pair pair (Box, Salesforce),
+// and Cloudflare Docs moved here from Source 1 — each in the order
+// the catalog lists them.
+const BROKERED = 'helmian-vercel,helmian-slack,helmian-asana,helmian-hubspot,helmian-gmail,helmian-google-calendar,helmian-google-drive,helmian-meltwater,helmian-sp-global,helmian-idiolect,helmian-gamma,helmian-canva,helmian-dropbox,helmian-onedrive,helmian-outlook,helmian-microsoft-teams,helmian-sharepoint,helmian-box,helmian-salesforce,cloudflare-docs';
+const PLAIN_LIST = [`attach:Add files`, `live:Connectors:${NATIVES},${SHELF},${BROKERED}`, 'manage:Manage connectors:panel'];
 
 const EXPECTED = {
   claude: [
@@ -103,46 +105,46 @@ const EXPECTED = {
     'submenu:Skills',
     'live:-:feed:helmian-skills',
     'submenu:Connectors',
-    `live:-:${NATIVES},${SHELF},registry-atlassian,registry-notion,registry-linear,registry-stripe,${BROKERED}`,
+    `live:-:${NATIVES},${SHELF},${BROKERED}`,
     'mirror:-:Claude:mirror:gmail,google-calendar,google-drive,github,slack,notion,linear,stripe,atlassian,canva,idiolect,figma',
     'action:Tool access:tool-access',
     'submenu:Plugins',
     'live:-:feed:bridge-plugins',
     'capability:Web search:web-search',
-    'manage:Manage connectors:integrations',
+    'manage:Manage connectors:panel',
   ],
   chatgpt: [
     'attach:Add photos & files',
     'submenu:More',
-    `live:-:${NATIVES},${SHELF},registry-notion,${BROKERED}`,
+    `live:-:${NATIVES},${SHELF},${BROKERED}`,
     'mirror:-:ChatGPT:mirror:gmail,google-calendar,google-drive,slack,notion,github,canva,dropbox,figma',
-    'manage:Manage connectors:integrations',
+    'manage:Manage connectors:panel',
   ],
   grok: [
     'attach:Files',
     'submenu:Connectors',
-    `live:-:github,${NATIVES},${SHELF},registry-notion,registry-linear,${BROKERED}`,
+    `live:-:github,${NATIVES},${SHELF},${BROKERED}`,
     'mirror:-:Grok:state:gmail,google-calendar,google-drive,onedrive,outlook,microsoft-teams,sharepoint,salesforce,box,canva,gamma,linear,meltwater,notion,sp-global,vercel',
-    'manage:Manage connectors:integrations',
+    'manage:Manage connectors:panel',
   ],
   gemini: [
     'attach:Add photos & files',
     'submenu:Connected Apps',
     'mirror:-:Gemini:state:gmail,google-drive,google-calendar',
-    `live:Connectors:${NATIVES},${SHELF}`,
-    'manage:Manage connectors:integrations',
+    `live:Connectors:${NATIVES},${SHELF},${BROKERED}`,
+    'manage:Manage connectors:panel',
   ],
   mistral: [
     'attach:Add files',
     'submenu:Tools',
-    `live:-:${NATIVES},${SHELF}`,
+    `live:-:${NATIVES},${SHELF},${BROKERED}`,
     'mirror:-:Mistral:mirror:',
-    'manage:Manage connectors:integrations',
+    'manage:Manage connectors:panel',
   ],
-  groq: ['attach:Add files', `live:Connectors:${NATIVES},${SHELF}:note:Beta — Groq remote MCP`, 'manage:Manage connectors:integrations'],
+  groq: ['attach:Add files', `live:Connectors:${NATIVES},${SHELF},${BROKERED}:note:Beta — Groq remote MCP`, 'manage:Manage connectors:panel'],
   nvidia: PLAIN_LIST,
-  openrouter: ['attach:Add files', `live:Connectors:${NATIVES},${SHELF}:requiresToolCapableModel`, 'manage:Manage connectors:integrations'],
-  cloudflare: ['attach:Add files', `live:Connectors:cloudflare-docs,${NATIVES},${SHELF}`, 'manage:Manage connectors:integrations'],
+  openrouter: ['attach:Add files', `live:Connectors:${NATIVES},${SHELF},${BROKERED}:requiresToolCapableModel`, 'manage:Manage connectors:panel'],
+  cloudflare: ['attach:Add files', `live:Connectors:${NATIVES},${SHELF},${BROKERED}`, 'manage:Manage connectors:panel'],
   qwen: PLAIN_LIST,
   muse: PLAIN_LIST,
   maestro: PLAIN_LIST,
@@ -275,15 +277,15 @@ test('row shapes: Grok and Gemini mirrors are account-level state rows; the rest
   }
 });
 
-// --------------------------------- (7) the manage footer is Helmian's
+// --------------------- (7) the manage footer is the panel's own
 
-test('manage footer: every seat closes on Helmian\'s Integrations — no vendor target, no manage URL, anywhere', () => {
+test('manage footer: every seat closes on the in-panel Manage — no vendor target, no manage URL, anywhere', () => {
   for (const seatId of MENU_SEAT_IDS) {
     const manages = [...walkMenuItems(menuForSeat(seatId))].filter(({ item }) => item.type === 'manage-link');
     assert.equal(manages.length, 1, seatId);
     const { item } = manages[0];
     assert.equal(item.label, 'Manage connectors', seatId);
-    assert.equal(item.target, 'integrations', seatId);
+    assert.equal(item.target, 'panel', seatId);
     assert.deepEqual(Object.keys(item).sort(), ['label', 'target', 'type'], `${seatId}: the manage item carries no url field`);
   }
   const source = readFileSync(new URL('../web/marketing/app/connector-menu.mjs', import.meta.url), 'utf8');

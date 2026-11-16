@@ -27,6 +27,7 @@ import { randomBytes } from 'node:crypto';
 
 import {
   CONNECTOR_CATALOG,
+  LIVE_SEATS,
   catalogEntriesForSeat,
   catalogEntryById,
   createCatalogRefresh,
@@ -418,11 +419,11 @@ function fakeVaultPool() {
 
 // ------------------------------------------------------------ catalog + kind
 
-test('catalog: Box is stocked brokered on claude, chatgpt, grok — endpoint Box\u2019s own, no declared scopes, console-chosen access in the copy', () => {
+test('catalog: Box is stocked brokered on every seat (universal stocking, 2026-11-15) — endpoint Box\u2019s own, no declared scopes, console-chosen access in the copy', () => {
   // The total census is pinned by the census pin files (seed,
   // vercel, longtail, mcp-registry) — this test pins Box's own
   // shape, so a later bite's additions do not stale it.
-  for (const seatId of SEATS) {
+  for (const seatId of LIVE_SEATS) {
     const entry = catalogEntryById(seatId, 'helmian-box');
     assert.ok(entry, `${seatId}: Box is stocked`);
     assert.equal(entry.name, 'Box');
@@ -433,7 +434,7 @@ test('catalog: Box is stocked brokered on claude, chatgpt, grok — endpoint Box
     assert.match(entry.scopesSummary, /Box\u2019s own sign-in page/, 'the copy says Connect opens Box\u2019s own door');
     assert.ok(catalogEntriesForSeat(seatId).some((e) => e.id === 'helmian-box'));
   }
-  assert.equal(catalogEntryById('gemini', 'helmian-box'), null, 'not stocked on gemini');
+  assert.ok(catalogEntryById('gemini', 'helmian-box'), 'stocked on gemini too (universal stocking, 2026-11-15)');
 });
 
 test('kind: Box resolves the fixed kind under provider box; the registry holds NO env client for box or salesforce, by design', () => {
