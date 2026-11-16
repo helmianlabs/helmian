@@ -12,7 +12,9 @@
 // two parts, two owners — each owner's work item contains only its
 // part, no other seat receives a work item, and the channel record
 // shows the assignment post followed by the two owners' replies
-// and no one else's. It runs when HELMIAN_TEST_PG_URL points at a
+// and no one else's. (Bite M4 later added Maestro's close line
+// after the last reply; the record assertion below reads the
+// record with it.) It runs when HELMIAN_TEST_PG_URL points at a
 // scratch database with the full sql/ chain applied; skipped
 // otherwise.
 import assert from 'node:assert/strict';
@@ -216,12 +218,17 @@ test('mesh assignment dispatch on Postgres: one message, two owners, per-part wo
     // owners' replies and no one else's. Agent-authored messages
     // only: the debate-mode change in phase 2 leaves a system
     // notice in the record, which is channel traffic, not a reply.
+    // Bite M4: the settle watcher runs in the poll's deferred
+    // tail and posts the close line now that both parts are in;
+    // drain the tail so the record read below is deterministic.
+    await mesh.drainFilingTail();
     const record = (await chat.listMessages(owner, channel.id)).messages;
     const after = record.slice(record.findIndex((m) => m.id === human.id) + 1).filter((m) => m.authorKind === 'agent');
-    assert.deepEqual(after.map((m) => m.authorSubject), ['agent:maestro', 'agent:claude', 'agent:gemini'],
-      'assignment post, then the two owners\u2019 replies, and no one else\u2019s');
+    assert.deepEqual(after.map((m) => m.authorSubject), ['agent:maestro', 'agent:claude', 'agent:gemini', 'agent:maestro'],
+      'assignment post, then the two owners\u2019 replies, then the bite M4 close line, and no one else\u2019s');
     assert.equal(after[1].id, claudeReply.id);
     assert.equal(after[2].id, geminiReply.id);
+    assert.equal(after[3].body, 'All parts are in', 'the fourth agent row is the bite M4 close line');
 
     // Phase 5 (control): debate routing itself is alive — an
     // ordinary agent post in the same channel, same mode, DOES
