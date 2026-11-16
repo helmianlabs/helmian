@@ -294,12 +294,14 @@ test('brokerMode follows §3.1: vendor-brokered ecosystems mirror; only reachabl
   assert.equal(byId('cloudflare', 'cloudflare-docs').brokerMode, 'helmian');
   // Natives are Helmian's own pipes.
   assert.equal(byId('owner', 'helmian-github').brokerMode, 'helmian');
-  // Seats with no documented vendor library seed Source 2 plus the
-  // seat-agnostic Source 3 shelf (today: the weather pick) — no
-  // Source 1 mirror is ever invented for them.
-  for (const seat of ['mistral', 'groq', 'nvidia', 'openrouter', 'qwen', 'muse', 'maestro', 'helm', 'owner']) {
+  // Seats with no documented vendor library seed the universal
+  // sources only: Source 2 natives, the seat-agnostic Source 3
+  // registry shelf, and the Source 4 vendor-published servers
+  // (universal stocking, Troy's order 2026-11-15) — no Source 1
+  // mirror is ever invented for them.
+  for (const seat of ['mistral', 'groq', 'nvidia', 'openrouter', 'cloudflare', 'qwen', 'muse', 'maestro', 'helm', 'owner']) {
     const defs = catalogEntriesForSeat(seat);
-    assert.ok(defs.every((d) => d.kind === 'helmian-native' || d.registryName), `${seat}: natives + registry shelf only`);
+    assert.ok(defs.every((d) => d.kind === 'helmian-native' || d.registryName || d.vendorPublished), `${seat}: natives + registry shelf + vendor-published only`);
     assert.equal(defs.filter((d) => d.kind === 'helmian-native').length, 1, `${seat}: exactly the one native`);
   }
 });
