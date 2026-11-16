@@ -1267,14 +1267,14 @@
    "answer": {
     "label": null,
     "next": "start-what-now",
-    "speak": "I can walk you through setup, one step at a time, and explain how each part of Helmian works. When you connect your own AIs, they take over the heavy work.",
+    "speak": "I can walk you through setup, one step at a time, and explain how each part of Helmian works. I can answer questions and search the web for you. When you connect your AIs, they take over the heavy work.",
     "then": "Say setup, and I will start the walk.",
     "where": null
    },
    "category": "concepts",
    "id": "what-can-helm-do",
    "layer": "content",
-   "note": "The setup walk ships with this KB. The web search clause from V1 was trimmed by the wiring bite (2026-11-09) because Helm H2 (the search piece) has not passed its gate; restore that clause the day H2 lands.",
+   "note": "The setup walk ships with this KB. The web search clause from V1 was trimmed by the wiring bite (2026-11-09) because the search piece had not passed its gate; restored by fix programme bite H5 (2026-11-16), the day the search piece landed.",
    "priority": 330,
    "questions": [
     "what can you do",

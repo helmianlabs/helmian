@@ -37,10 +37,16 @@
 //     the honest line "I have nothing filed about that", and
 //     the question files to the miss queue.
 //   - A general question that is neither is not answered from
-//     prose (D3, until the search piece lands in H5): Helm
-//     posts the honest availability line and files the question
-//     to the miss queue — helm-kb.mjs's fileHelmKbMiss, the one
-//     queue DESIGN 3.5 names for guide misses and unanswered
+//     prose (D3): the fact road returns the honest availability
+//     line, and since bite H5 the mesh tries the search road
+//     (helmSearchAnswer, below) before that line posts — rent a
+//     search, read the top pages, answer from the retrieved
+//     text with citations naming the pages read, and file the
+//     answer through the Librarian. Only when no search
+//     provider is configured, or the search cannot serve, does
+//     the availability line post and the question file to the
+//     miss queue — helm-kb.mjs's fileHelmKbMiss, the one queue
+//     DESIGN 3.5 names for guide misses and unanswered
 //     questions alike — where a person grows the guide and the
 //     records from real unanswered questions.
 //
@@ -66,6 +72,7 @@
 
 import { AGENT_NAMES } from './envoy-agents.mjs';
 import { fileHelmKbMiss, helmKbEntryById, helmKbPendingNext } from './helm-kb.mjs';
+import { composeHelmSearchAnswer, HELM_SEARCH_MAX_READS } from './helm-search.mjs';
 import { kbCandidateTriggers, kbFindWords } from './envoy-librarian.mjs';
 import { createConnectorLibraryStore } from './connector-library.mjs';
 import { joinedState } from './connector-library-read.mjs';
@@ -77,9 +84,10 @@ export const HELM_KEY_PREFIX = 'helm:';
 
 // The honest availability line (DESIGN 3.3, verbatim): the
 // answer for a general question Helm cannot answer from
-// records — it says Helm does not have it and that no seat is
-// available to answer, and the question files to the miss
-// queue (decision D3, until bite H5 lands).
+// records and the search road (bite H5) cannot serve either —
+// no provider configured, an outage, an empty result — it
+// says Helm does not have it and that no seat is available to
+// answer, and the question files to the miss queue (D3).
 export const HELM_AVAILABILITY_LINE = 'No seat is connected to answer that here';
 
 // The honest line for a fact question with nothing filed
@@ -258,7 +266,12 @@ export function findFiledEntry(entries, question) {
  * question, or a lookup that never ran because the entries
  * read failed (entries null) — gets the availability line and
  * files to the miss queue, H3's behaviour for exactly the
- * cases H4 cannot ground. Pure over the entries.
+ * cases H4 cannot ground. Pure over the entries. The mesh
+ * layers bite H5's search road over exactly one of these
+ * outcomes — a general question whose lookup ran and missed
+ * (entries an array, the availability line returned) — and
+ * posts the searched answer instead when the road serves;
+ * every other outcome is posted as returned here.
  */
 export function helmFactAnswer(entries, question) {
   if (Array.isArray(entries)) {
@@ -267,6 +280,75 @@ export function helmFactAnswer(entries, question) {
     if (isHelmFactShaped(question)) return { body: HELM_NOTHING_FILED_LINE, fileMiss: true };
   }
   return { body: HELM_AVAILABILITY_LINE, fileMiss: true };
+}
+
+// ------------------------------------------------------------ the search road
+
+/**
+ * The search road (bite H5, DESIGN 3.3): answer one general
+ * question from a live search, through the one provider
+ * interface in helm-search.mjs. The flow is the design's two
+ * tools in order: search_web rents the search; read_page
+ * reads the top results (at most HELM_SEARCH_MAX_READS) — a
+ * page whose read fails falls back to the search result's own
+ * cleaned text, which both providers return with the result;
+ * the answer is then composed from the retrieved text alone
+ * (composeHelmSearchAnswer: excerpts of the pages' own words,
+ * citations naming every page read). No model composes
+ * anything, and no text enters the answer but the retrieved
+ * text.
+ *
+ * Returns { body, sources, provider, mayFileAnswers } — the
+ * serving provider's name and its filing posture (helm-search
+ * .mjs's terms reading: Tavily answers file through the
+ * Librarian under helm:<messageId>; Exa answers are answered
+ * from but not filed) — or null when the road cannot serve:
+ * no searcher (no key configured), a search that throws or
+ * returns nothing usable, reads that yield no text, or an
+ * answer that cannot name its sources within its bounds. A
+ * null is the caller's cue to post the availability line and
+ * file the miss, exactly as before this bite. Never throws.
+ */
+export async function helmSearchAnswer({ search, question, log = null } = {}) {
+  if (!search || typeof search.searchWeb !== 'function') return null;
+  const fail = (error) => {
+    (log ?? ((...args) => console.error(...args)))(`[envoy-helm] search FAILED for question "${String(question ?? '').slice(0, 120)}": ${error?.message ?? error} — Helm falls back to the availability line; dispatch is unchanged.`);
+    return null;
+  };
+  let found;
+  try {
+    found = await search.searchWeb(String(question ?? ''));
+  } catch (error) {
+    return fail(error);
+  }
+  if (!found || !Array.isArray(found.results) || !found.results.length) return null;
+  const pages = [];
+  for (const result of found.results) {
+    if (pages.length >= HELM_SEARCH_MAX_READS) break;
+    let text = '';
+    let title = String(result?.title ?? '');
+    try {
+      const page = typeof found.readPage === 'function' ? await found.readPage(result?.url) : null;
+      if (page?.text) {
+        text = String(page.text);
+        title = String(page.title ?? '') || title;
+      }
+    } catch {
+      // A failed read falls back to the search result's own
+      // text below; the read is a deepening, not a gate.
+    }
+    if (!text) text = String(result?.content ?? '');
+    if (text.trim()) pages.push({ title: title || String(result?.url ?? ''), url: String(result?.url ?? ''), text });
+  }
+  if (!pages.length) return null;
+  const composed = composeHelmSearchAnswer({ question, pages });
+  if (!composed) return null;
+  return {
+    body: composed.body,
+    sources: composed.sources,
+    provider: String(found.provider ?? ''),
+    mayFileAnswers: found.mayFileAnswers === true,
+  };
 }
 
 // ------------------------------------------------------------ the state composer
