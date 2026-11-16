@@ -370,13 +370,13 @@ export function createEnvoyStore(pool) {
       // so the answer lands on the sender's own post-send reload
       // and on every client's next poll, like any stored reply.
       if (!out.receipt.replayed && message.authorKind === 'human') {
-        // Hook precedence (DESIGN section 1.5): role-addressed
-        // routing first, the guide matcher second, the empty-desk
-        // answer third, enforced here in one place so no later
-        // hook can reintroduce a preemption. A message addressed
-        // to Maestro, Helm, or the Librarian is owned by that
-        // role's hook and never reaches the guide matcher: a
-        // dispatch order that happens to name a connector is a
+        // Hook precedence (DESIGN section 1.5, decision D6):
+        // the coordinator first, then the guide matcher, then
+        // the empty-desk answer, enforced here in one place so
+        // no later hook can reintroduce a preemption. A message
+        // addressed to Maestro, Helm, or the Librarian is owned
+        // by that role's hook and never reaches the guide matcher:
+        // a dispatch order that happens to name a connector is a
         // job for the crew, not a setup question, and answering
         // it with a guide entry word for word is the failure this
         // order exists to prevent. A role-addressed send the
@@ -384,14 +384,21 @@ export function createEnvoyStore(pool) {
         // to the empty-desk answer below, exactly as a send the
         // guide leaves unanswered does.
         //
-        // The Librarian's filing hook (bite L1) is the first role
-        // hook to land in that slot: a Librarian-addressed file
-        // request is filed through the one store and confirmed in
-        // the channel, and a filed send is answered, so the
-        // empty-desk answer does not also fire under it. A
-        // Librarian-addressed send that is not a file request is
-        // left exactly as it was: ordinary dispatch, and the
-        // empty-desk answer on an empty desk.
+        // The Maestro coordinator (envoy-assignments.mjs), the
+        // first hook in the order: a Maestro-addressed message
+        // that parses into explicitly enumerated parts gets ONE
+        // assignment post naming one owner per part, and that is
+        // the send's one Maestro message. A message the
+        // coordinator cannot structure is left exactly as it was:
+        // no post, no mark, ordinary dispatch.
+        let assignment = null;
+        if (roleAddresseeIn(message.body) === 'maestro') {
+          try {
+            assignment = await postMaestroAssignmentIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id, senderSubject: message.authorSubject, body: message.body });
+          } catch (error) {
+            console.error('[envoy-chat] maestro assignment failed:', error.message);
+          }
+        }
         //
         // Helm's setup guide (helm-kb.mjs), for unaddressed
         // messages only: a setup question is answered by Maestro
@@ -402,6 +409,14 @@ export function createEnvoyStore(pool) {
         // guide leaves unanswered falls through to the empty-desk
         // answer below, so a fresh send gets at most one Maestro
         // message and the two never fight.
+        // The Librarian's filing hook (bite L1), in that slot
+        // after the coordinator: a Librarian-addressed file
+        // request is filed through the one store and confirmed in
+        // the channel, and a filed send is answered, so the
+        // empty-desk answer does not also fire under it. A
+        // Librarian-addressed send that is not a file request is
+        // left exactly as it was: ordinary dispatch, and the
+        // empty-desk answer on an empty desk.
         const role = roleAddresseeIn(message.body);
         let kbAnswer = null;
         let factAnswer = null;
@@ -419,7 +434,7 @@ export function createEnvoyStore(pool) {
             console.error('[envoy-chat] helm kb answer failed:', error.message);
           }
         }
-        if (!kbAnswer?.answered && !factAnswer?.filed) {
+        if (!assignment?.assigned && !kbAnswer?.answered && !factAnswer?.filed) {
           try {
             await postEmptyDeskAnswerIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id });
           } catch (error) {
@@ -444,6 +459,7 @@ import { CONFIG_SUBJECT, describeAuthor, normalizeMessageMetadata, parseConfig, 
 import { createLibrarianStore } from './envoy-librarian.mjs';
 import { discordBotStatus, slackBotStatus } from './bot-status.mjs';
 import { postHelmKbAnswerIfNeeded } from './helm-kb.mjs';
+import { postMaestroAssignmentIfNeeded } from './envoy-assignments.mjs';
 
 // The channels list carries each channel's Discord / Slack link (from
 // its newest config row, the same rows the bridges read) plus the bot
