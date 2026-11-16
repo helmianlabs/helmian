@@ -78,14 +78,88 @@ export function createMemoryAuditLog() {
 }
 
 // Guard approval gate: submits the gated credential action to the
-// Executive Guard as a decision request and, when the Guard asks, waits
-// for the human decision on the approval. Fail-closed throughout: deny,
+// Executive Guard as a decision request. Fail-closed throughout: deny,
 // expiry, timeout, or an unreachable Guard all mean NOT approved.
-export function createGuardApprovalGate({ guardUrl, deviceToken, fetchImpl = globalThis.fetch, pollIntervalMs = 2000, timeoutMs = 15 * 60 * 1000, now = Date.now } = {}) {
+//
+// TWO ROADS, ONE GATE (reconcile of the repo copy and the deployed
+// credential-service image copy, 2026-11-16; the per-hunk account is
+// in the vault-reconcile REPORT):
+//  - PROMPT ROAD (the deployed service's behaviour since 2026-11-14):
+//    a 202 + approvalId returns NOT approved at once, so the vault
+//    maps the refusal to guard_approval_required and the caller parks
+//    under that true name. This gate used to hold the resolve open,
+//    polling the approval for up to 15 minutes while the caller
+//    waited; the caller's unbounded fetch died first and the whole
+//    establishment parked under the false name
+//    credential_service_unreachable. Rediscovery: the approvalId is
+//    recorded under a deterministic key — action + tenant + provider
+//    + credential kind + reference, no timestamp anywhere in the
+//    identity — and a later call for the same key polls that SAME
+//    approval exactly once: approved returns approved (and consumes
+//    the entry), denied returns refused (entry dropped), still
+//    pending returns not approved promptly, and an expired or
+//    vanished approval drops the entry and falls through to raise a
+//    fresh approval. The approvals keep the Guard's own lifetime;
+//    nothing here extends or shortens it. The map lives in this
+//    process: a service restart forgets outstanding approvals and
+//    the next resolve simply raises a fresh one, as every resolve
+//    did before the rediscovery was added.
+//  - WAITING ROAD (the repo copy's original behaviour): when the
+//    caller passes a polling budget (pollIntervalMs and/or
+//    timeoutMs), the gate instead polls the approval itself until
+//    the human decision lands or the budget runs out — the road for
+//    in-process callers that can afford to wait. The production
+//    entrypoint (bin/helmion-credential-service.mjs) passes no
+//    polling budget, so the deployed service runs the prompt road,
+//    exactly as the live image does today.
+// The rediscovery check runs on both roads: a call whose key already
+// has an outstanding approval never raises a duplicate — the prompt
+// road answers from the recorded approval's state as above, and the
+// waiting road polls that same approval instead of a fresh one.
+export function createGuardApprovalGate({ guardUrl, deviceToken, fetchImpl = globalThis.fetch, pollIntervalMs, timeoutMs, now = Date.now } = {}) {
   if (!guardUrl || !deviceToken) throw new TypeError('guard gate requires guardUrl and deviceToken');
   const base = String(guardUrl).replace(/\/$/, '');
   const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
+  const waitForDecision = pollIntervalMs !== undefined || timeoutMs !== undefined;
+  const pollMs = pollIntervalMs ?? 2000;
+  const waitMs = timeoutMs ?? 15 * 60 * 1000;
+  const pendingApprovals = new Map(); // dedupeKey -> approvalId
+  async function approvalState(approvalId) {
+    const poll = await fetchImpl(`${base}/v1/approvals/${approvalId}`, { headers: { authorization: `Bearer ${deviceToken}` } });
+    if (!poll.ok) return 'gone';
+    const state = await poll.json().catch(() => ({}));
+    if (state.status === 'approved') return 'approved';
+    if (state.status === 'denied') return 'denied';
+    if (state.status === 'expired') return 'expired';
+    return 'pending';
+  }
+  async function pollUntilDecided(approvalId) {
+    const deadline = now() + waitMs;
+    while (now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      const state = await approvalState(approvalId);
+      if (state === 'approved') return true;
+      if (state === 'denied' || state === 'expired') return false;
+      // 'pending', and 'gone' (a poll that came back not-ok), keep
+      // waiting — the original loop did the same on a failed poll.
+    }
+    return false;
+  }
   return async function guardGate({ action, tenantId, actorSubject, providerId, credentialKind, credentialReference }) {
+    const dedupeKey = sha256(`${action}:${tenantId}:${providerId}:${credentialKind ?? ''}:${credentialReference}`);
+    const knownApprovalId = pendingApprovals.get(dedupeKey);
+    if (knownApprovalId) {
+      const state = await approvalState(knownApprovalId);
+      if (state === 'approved') { pendingApprovals.delete(dedupeKey); return { approved: true }; }
+      if (state === 'denied') { pendingApprovals.delete(dedupeKey); return { approved: false }; }
+      if (state === 'pending') {
+        if (!waitForDecision) return { approved: false };
+        const approved = await pollUntilDecided(knownApprovalId);
+        if (approved) pendingApprovals.delete(dedupeKey);
+        return { approved };
+      }
+      pendingApprovals.delete(dedupeKey); // expired or gone: raise a fresh approval below
+    }
     const summary = action === 'credential.password_resolve'
       ? `Helmian sign-in needs the stored password for ${providerId} (tenant ${tenantId}, asked by ${actorSubject}).`
       : `Replace the stored ${credentialKind ?? 'credential'} for ${providerId} (tenant ${tenantId}, asked by ${actorSubject}).`;
@@ -98,16 +172,11 @@ export function createGuardApprovalGate({ guardUrl, deviceToken, fetchImpl = glo
     const decision = await decided.json().catch(() => ({}));
     if (decided.status === 200) return { approved: decision.verdict === 'allow' };
     if (decided.status !== 202 || !decision.approvalId) return { approved: false };
-    const deadline = now() + timeoutMs;
-    while (now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-      const poll = await fetchImpl(`${base}/v1/approvals/${decision.approvalId}`, { headers: { authorization: `Bearer ${deviceToken}` } });
-      if (!poll.ok) continue;
-      const state = await poll.json().catch(() => ({}));
-      if (state.status === 'approved') return { approved: true };
-      if (state.status === 'denied' || state.status === 'expired') return { approved: false };
-    }
-    return { approved: false };
+    pendingApprovals.set(dedupeKey, decision.approvalId);
+    if (!waitForDecision) return { approved: false };
+    const approved = await pollUntilDecided(decision.approvalId);
+    if (approved) pendingApprovals.delete(dedupeKey);
+    return { approved };
   };
 }
 
