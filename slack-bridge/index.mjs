@@ -6,7 +6,9 @@
 // Socket Mode has no per-message HTTP signature by design: the connection
 // itself is the authentication. Only a socket opened with the app-level
 // token (apps.connections.open) receives events, and every bridge -> cloud
-// call carries the shared HELMIAN_ENVOY_BRIDGE_TOKEN bearer. The signed
+// call carries the bridge's cloud bearer: its own
+// HELMIAN_ENVOY_BRIDGE_TOKEN_SLACK when set, else the shared
+// HELMIAN_ENVOY_BRIDGE_TOKEN. The signed
 // HTTP pipe (HELMION_SLACK_SIGNING_SECRET, verifySlackRequest) stays in
 // place for the outbound webhook path.
 //
@@ -18,21 +20,25 @@
 //                               outbound is off (/healthz reports outbound:
 //                               webhook-only — Envoy reaches Slack only through
 //                               the HELMION_SLACK_WEBHOOK_URL pipe, unnamed)
-//   HELMIAN_ENVOY_BRIDGE_TOKEN  shared secret, same value as the Vercel env var
+//   HELMIAN_ENVOY_BRIDGE_TOKEN_SLACK  this bridge's own cloud secret, same value
+//                               as the cloud env var of that name; presented first
+//                               when set (see envoyBridgeToken in bridge-core.mjs)
+//   HELMIAN_ENVOY_BRIDGE_TOKEN  shared secret, same value as the Vercel env var;
+//                               the fallback while the per-provider rotation runs
 //   HELMIAN_CLOUD               default https://helmian.cloud
 //   HEALTH_PORT / HEALTH_HOST   default 8096 on 0.0.0.0 inside the container; publish it as 127.0.0.1:8096 only
 import http from 'node:http';
-import { createBridge, normalizeSlackEvent, outboundMode } from './bridge-core.mjs';
+import { createBridge, envoyBridgeToken, normalizeSlackEvent, outboundMode } from './bridge-core.mjs';
 
 const cloud = process.env.HELMIAN_CLOUD || 'https://helmian.cloud';
-const bridgeToken = String(process.env.HELMIAN_ENVOY_BRIDGE_TOKEN ?? '').trim();
+const bridgeToken = envoyBridgeToken();
 const appToken = String(process.env.SLACK_APP_TOKEN ?? '').trim();
 const botToken = String(process.env.SLACK_BOT_TOKEN ?? '').trim();
 const log = (...a) => console.log(new Date().toISOString(), '[slack-bridge]', ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const health = { slack: appToken ? 'connecting' : 'not_configured', cloud: bridgeToken ? 'unknown' : 'not_configured', connections: 0, outbound: outboundMode(Boolean(botToken)) };
-const bridge = bridgeToken ? createBridge({ cloud, token: bridgeToken }) : null;
+const bridge = bridgeToken ? createBridge({ cloud, token: bridgeToken, provider: 'slack' }) : null;
 
 http.createServer((req, res) => {
   if (req.url !== '/healthz') { res.writeHead(404); res.end(); return; }
@@ -124,7 +130,7 @@ async function runSocket() {
 }
 
 async function main() {
-  if (!bridge) { log('HELMIAN_ENVOY_BRIDGE_TOKEN is not set; idle.'); return; }
+  if (!bridge) { log('HELMIAN_ENVOY_BRIDGE_TOKEN_SLACK / HELMIAN_ENVOY_BRIDGE_TOKEN are not set; idle.'); return; }
   try { await bridge.refreshLinks(); health.cloud = 'ok'; log(`cloud ok, ${bridge.links.length} linked channel(s)`); }
   catch (e) { health.cloud = `error: ${e.message}`; log('cloud check failed:', e.message); }
   setInterval(() => { bridge.refreshLinks().then(() => { health.cloud = 'ok'; }).catch((e) => { health.cloud = `error: ${e.message}`; }); }, 30_000).unref();

@@ -156,8 +156,20 @@ function titleForClass(cls, channelSlug) {
  * ISO string; the store stamps its own first/last-seen times, and
  * this one rides in the detail so the record says when THIS screen
  * happened.
+ *
+ * The author rides too (fix-a10, closing audit AT-3b's T9 naming
+ * leg): `authorSubject` verbatim and `authorSource` in the
+ * operator's vocabulary (desk / discord / slack, as the mesh
+ * derives them from describeAuthor). Before this, the detail
+ * carried only authorKind, so a flagged message that arrived
+ * through a bridge was indistinguishable in the findings feed
+ * from one typed at the desk unless someone joined back to the
+ * message row by hand. Both fields are present only when the
+ * caller supplies them: a finding filed without them (every
+ * finding filed before this change) reads as "source not
+ * recorded" — the feed never guesses one.
  */
-export function siteGuardFindingsForScreening(screening, { channelId, channelSlug = null, messageId, authorKind = null, at } = {}) {
+export function siteGuardFindingsForScreening(screening, { channelId, channelSlug = null, messageId, authorKind = null, authorSubject = null, authorSource = null, at } = {}) {
   if (!screening?.classes?.length) return [];
   return screening.classes.map((entry) => Object.freeze({
     fingerprint: `${SITE_GUARD_FINGERPRINT_PREFIX}:${entry.class}:${String(messageId)}`,
@@ -173,6 +185,8 @@ export function siteGuardFindingsForScreening(screening, { channelId, channelSlu
       ...(channelSlug ? { channelSlug: String(channelSlug) } : {}),
       messageId: String(messageId),
       ...(authorKind ? { authorKind: String(authorKind) } : {}),
+      ...(authorSubject ? { authorSubject: String(authorSubject) } : {}),
+      ...(authorSource ? { authorSource: String(authorSource) } : {}),
       screenedAt: String(at),
     }),
     pageRef: null,
@@ -370,9 +384,12 @@ export function createSiteGuardRateLimiter({ now = () => Date.now() } = {}) {
  * convention: the flag is a warning; the stop — a turn refused —
  * is critical. Detail is metadata only: counts, thresholds, the
  * window, ids, the sender identity. No message text is ever an
- * input to this function, so none can ride the finding.
+ * input to this function, so none can ride the finding. The
+ * author subject and source ride under the same fix-a10 rule as
+ * the screen's findings: present when the caller supplies them,
+ * never guessed when absent.
  */
-export function siteGuardFindingForRateLimit(verdict, { tenantId, channelId, channelSlug = null, messageId, authorKind = null } = {}) {
+export function siteGuardFindingForRateLimit(verdict, { tenantId, channelId, channelSlug = null, messageId, authorKind = null, authorSubject = null, authorSource = null } = {}) {
   if (!verdict?.tripped) return null;
   const stop = verdict.tripped === 'stop';
   const where = channelSlug ? ` in #${channelSlug}` : '';
@@ -396,6 +413,8 @@ export function siteGuardFindingForRateLimit(verdict, { tenantId, channelId, cha
       stopThreshold: verdict.stopThreshold,
       senderKey: verdict.senderKey,
       ...(authorKind ? { authorKind: String(authorKind) } : {}),
+      ...(authorSubject ? { authorSubject: String(authorSubject) } : {}),
+      ...(authorSource ? { authorSource: String(authorSource) } : {}),
       channelId: String(channelId),
       ...(channelSlug ? { channelSlug: String(channelSlug) } : {}),
       messageId: String(messageId),

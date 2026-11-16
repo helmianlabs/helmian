@@ -638,7 +638,7 @@ test('stale-check repair: a 23514 widens the check to the list with qwen, then t
   assert.deepEqual(rows.map((r) => [r.provider, r.connected]), [['qwen', true]]);
 });
 
-test('sync route stamps qwen, not ollama', async () => {
+test('sync route stamps exactly the providers the sync writes', async () => {
   const store = createRunnerPresenceStore(makeFullFakePool());
   const captured = {};
   const handled = await handleRunnerPresenceRoute({
@@ -650,13 +650,25 @@ test('sync route stamps qwen, not ollama', async () => {
     TenantAuthorizationError: FakeTenantAuthorizationError,
     readJson: async () => ({ syncProfile: true }),
     store,
-    profileSyncJobs: { enqueue: async () => ({ id: 'job-qwen', status: 'queued' }) },
+    profileSyncJobs: { enqueue: async () => ({ id: 'job-sync', status: 'queued' }), desktopLinked: async () => true },
   });
   assert.equal(handled, true);
   assert.equal(captured.status, 202);
-  assert.ok(captured.body.syncedProviders.includes('qwen'), 'the sync stamps her own name');
-  assert.ok(!captured.body.syncedProviders.includes('ollama'), 'the sync no longer stamps the engine name for her seat');
+  // The write set: the four installer targets under their presence
+  // names. Four writes, four stamps — a provider the sync writes
+  // nothing for is never stamped synced.
+  assert.deepEqual(
+    [...captured.body.syncedProviders].sort(),
+    ['claude', 'gemini', 'grok', 'openai'],
+    'the stamp set equals the write set',
+  );
+  for (const notWritten of ['mistral', 'runway', 'qwen', 'ollama']) {
+    assert.ok(!captured.body.syncedProviders.includes(notWritten), `${notWritten} is not stamped`);
+  }
   const rows = await store.list('t1');
-  assert.ok(rows.some((r) => r.provider === 'qwen'));
-  assert.ok(!rows.some((r) => r.provider === 'ollama'));
+  assert.deepEqual(
+    rows.map((r) => r.provider).sort(),
+    ['claude', 'gemini', 'grok', 'openai'],
+    'the presence rows stamped are exactly the write set',
+  );
 });

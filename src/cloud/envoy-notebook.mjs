@@ -24,15 +24,21 @@
 // up there is a box-side follow-up, not part of this bite.
 //
 // Scoping. The notebook tables predate tenants and are keyed by
-// project_slug (sql/001), with NULL meaning the shared rows every
-// project read has always included (getContext's exact semantics:
-// project_slug = $1 OR project_slug IS NULL). This read keeps those
-// semantics with the tenant's own id as the slug: a seat sees its own
-// tenant's rows plus the shared rows, and another tenant's rows can
-// never appear — the WHERE clause is the whole isolation story, and
-// the seam test proves it with two tenants' entries side by side.
-// Where a context key exists both as a tenant row and a shared row,
-// the tenant row wins.
+// project_slug (sql/001). They once carried a shared namespace —
+// rows filed under a NULL slug that every project's read included
+// alongside its own. Fix A9 (audit AT-5/T13) closed that namespace
+// on the read side: every read now binds the tenant's own id as
+// the slug, exactly, so a NULL-slug row is visible to NO tenant
+// and another tenant's rows can never appear — the WHERE clause
+// is the whole isolation story, and the seam test proves it with
+// two tenants' entries side by side. The write side never could
+// produce a NULL slug (the Librarian store is the only writer and
+// binds the membership-checked tenant's slug on every filing —
+// the one-pen pin), and production's one surviving NULL row is
+// dispositioned at deploy time; until then it reads as nothing,
+// to anyone. Within a tenant's rows a repeated key resolves to
+// its newest filing: rows arrive newest first and the first
+// sighting of a key wins.
 //
 // Bounds follow the session-start-context precedent (the PC seats'
 // hook, templates/agent-os/hooks/session-start-context.mjs): at most
@@ -124,12 +130,13 @@ export function formatNotebookBlock({ blockers = [], entries = [], lessons = [] 
 /**
  * Read the tenant's notebook ENTRIES, structured (fix programme
  * bite H4): the same scoping and the same per-key discipline as
- * the block read below — the tenant's own rows plus the shared
- * rows, a key filed both under the tenant and in the shared rows
- * resolving to the tenant's row, newest first — but returned as
- * rows ({ key, value }) instead of rendered text, for a reader
- * that must quote an entry's own text rather than the block's
- * bounded rendering of it (Helm's fact answers, envoy-helm.mjs).
+ * the block read below — the tenant's own rows only (fix A9: the
+ * shared NULL namespace no longer reads, for anyone), newest
+ * first, a repeated key resolving to its newest filing — but
+ * returned as rows ({ key, value }) instead of rendered text,
+ * for a reader that must quote an entry's own text rather than
+ * the block's bounded rendering of it (Helm's fact answers,
+ * envoy-helm.mjs).
  * Returns the entries (possibly none), or null on any read
  * failure, logged loudly: unlike the block read, the failure is
  * distinguishable from an empty notebook, because a caller
@@ -142,8 +149,8 @@ export async function readNotebookEntries(pool, tenantId, { log = (...args) => c
   try {
     const entries = await pool.query(
       `select project_slug, key, value from helmion.context_entries
-        where project_slug = $1 or project_slug is null
-        order by (project_slug is null), updated_at desc, key`,
+        where project_slug = $1
+        order by updated_at desc, key`,
       [slug],
     );
     const seenKeys = new Set();
@@ -180,28 +187,28 @@ export async function readNotebookBlock(pool, tenantId, { log = (...args) => con
       pool.query(
         `select severity, description from helmion.blockers
           where status in ('OPEN','ACTIVE','BLOCKED')
-            and (project_slug = $1 or project_slug is null)
+            and project_slug = $1
           order by case severity when 'critical' then 0 when 'high' then 1 when 'medium' then 2 else 3 end, created_at`,
         [slug],
       ),
       pool.query(
         `select project_slug, key, value from helmion.context_entries
-          where project_slug = $1 or project_slug is null
-          order by (project_slug is null), updated_at desc, key`,
+          where project_slug = $1
+          order by updated_at desc, key`,
         [slug],
       ),
       pool.query(
         `select lesson from helmion.blockers
           where status = 'RESOLVED' and lesson is not null and nullif(trim(lesson), '') is not null
-            and (project_slug = $1 or project_slug is null)
+            and project_slug = $1
           order by resolved_at desc nulls last, id desc
           limit ${NOTEBOOK_MAX_LINES_PER_SECTION}`,
         [slug],
       ),
     ]);
-    // A key filed both under the tenant and in the shared rows is the
-    // tenant's fact: the query already sorts tenant rows first, so
-    // the first sighting of a key wins and later ones are dropped.
+    // A repeated key resolves to its newest filing: the query sorts
+    // newest first, so the first sighting of a key wins and later
+    // ones are dropped.
     const seenKeys = new Set();
     const dedupedEntries = [];
     for (const row of entries.rows) {

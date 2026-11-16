@@ -29,6 +29,17 @@
 
 export const LINK_RE = /^\s*[!/]?helmian\s+link\s+([A-Za-z2-9]{8})\s*$/i;
 
+// The cloud credential this bridge presents: its own per-provider
+// token (HELMIAN_ENVOY_BRIDGE_TOKEN_SLACK) when that value is set,
+// the shared HELMIAN_ENVOY_BRIDGE_TOKEN otherwise. The fallback
+// is what lets the bridge keep working through the per-provider
+// rotation: the cloud accepts the shared token on the Slack-scoped
+// routes until the rotation completes.
+export function envoyBridgeToken(env = process.env) {
+  return String(env.HELMIAN_ENVOY_BRIDGE_TOKEN_SLACK ?? '').trim()
+    || String(env.HELMIAN_ENVOY_BRIDGE_TOKEN ?? '').trim();
+}
+
 // A raw Slack events_api event -> the shape the core works with, or null
 // for anything that is not a plain message event. `teamId` comes from the
 // envelope payload (events do not always carry it).
@@ -93,7 +104,7 @@ export function outboundParts(message) {
   return splitForSlack(body, 3900 - nameLine.length - 1).map((chunk) => `${nameLine}\n${chunk}`);
 }
 
-export function createBridge({ cloud, token, fetchImpl = fetch, now = () => Date.now() }) {
+export function createBridge({ cloud, token, provider = null, fetchImpl = fetch, now = () => Date.now() }) {
   let links = [];
   // Slack redelivers events when an ack is slow; a message's ts is unique
   // per channel, so a bounded in-memory seen-set stops a redelivery from
@@ -113,7 +124,11 @@ export function createBridge({ cloud, token, fetchImpl = fetch, now = () => Date
   const outPostedQueue = [];
 
   async function api(path, { method = 'GET', body = null } = {}) {
-    const res = await fetchImpl(`${cloud}/api/admin/envoy/bridge/${path}`, {
+    // With a provider, calls ride the provider-scoped routes
+    // (bridge/slack/<route>): the route itself names the provider
+    // whose token the cloud checks. Without one, the legacy
+    // unscoped routes, exactly as before.
+    const res = await fetchImpl(`${cloud}/api/admin/envoy/bridge/${provider ? `${provider}/` : ''}${path}`, {
       method,
       headers: { authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,

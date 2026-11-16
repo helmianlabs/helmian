@@ -4,13 +4,29 @@
 //       with the old hardcoded file list or a markSynced-only path;
 //   (b) the device side runs the real installer and its report matches
 //       the files actually on disk in a temp HOME, hashes included —
-//       and a no-op run reports an empty list, not a success story;
+//       and a no-op run reports every examined file as "current" with
+//       its hash, never a padded write list and never silence;
 //   (c) the page's result model renders exactly the device-reported
 //       list, and failure/empty render as what they are.
+// FIX-A5 (2026-11-16) adds the fourth:
+//   (d) a report is checked, not believed — every job carries the
+//       expected kit hashes from enqueue time; a reported kit file
+//       whose hash differs renders FAILED and fails the sync's
+//       rendered state, a matching one renders verified, and anything
+//       no expectation covers renders as reported by the PC, not
+//       verified — never a checkmark it did not earn (AT-4 T10 leg 2).
+//
+// Composition note (push batch 2026-11-16): FIX-S1's report-verb half
+// and FIX-A5's kit-check half are composed in this file exactly as
+// their sources are composed in src/cloud/profile-sync.mjs — the
+// device-run tests are FIX-S1's (the 'current' verb is real in the
+// composed report), the store and page-model tests are FIX-A5's
+// (fileChecks are real in the composed store), and FIX-S1's canary
+// test rides along below.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,12 +34,16 @@ import {
   createProfileSyncJobStore,
   handleProfileSyncRoute,
   sanitizeProfileSyncFiles,
+  buildExpectedKitHashes,
+  verifyProfileSyncFiles,
+  reportedKitRelativePath,
   PROFILE_SYNC_PATH,
   PROFILE_SYNC_NO_DESKTOP_CODE,
   PROFILE_SYNC_NO_DESKTOP_MESSAGE,
   PROFILE_SYNC_EXPIRED_MESSAGE,
   PROFILE_SYNC_PENDING_TTL_MS,
 } from '../src/cloud/profile-sync.mjs';
+import { installAgentOsTargets, DEFAULT_TEMPLATES_ROOT, loadAgentOsTemplates, renderAgentOsFiles } from '../src/core/agent-os.mjs';
 import { handleRunnerPresenceRoute } from '../src/cloud/runner-presence.mjs';
 import { executeProfileSync } from '../src/core/profile-sync-report.mjs';
 import { profileSyncResultModel } from '../web/marketing/app/app-model.mjs';
@@ -50,7 +70,7 @@ function makeFakeJobPool({ missingTable = false, desktops = 1 } = {}) {
         return { rows: [{ n: desktops }] };
       }
       if (sql.includes('insert into helmion.profile_sync_jobs')) {
-        const row = { id: nextId++, kind: params[0], status: 'pending', requested_by: params[1], result: null, error: null, created_at: new Date(), claimed_at: null, completed_at: null };
+        const row = { id: nextId++, kind: params[0], status: 'pending', requested_by: params[1], result: null, error: null, created_at: new Date(), claimed_at: null, completed_at: null, expected_files: params[2] ? JSON.parse(params[2]) : null };
         rowsFor().push(row);
         return { rows: [row], rowCount: 1 };
       }
@@ -327,17 +347,91 @@ test('an unreadable report body answers its error, never an enqueue', async () =
 });
 
 test('sanitize keeps only well-formed file entries', () => {
+  const current = { ...VALID_FILE, action: 'current' };
   const out = sanitizeProfileSyncFiles([
     VALID_FILE,
+    current,
     { ...VALID_FILE, action: 'deleted' },
     { ...VALID_FILE, sha256: 'zz' },
     { ...VALID_FILE, path: '' },
     'a string',
     null,
   ]);
-  assert.deepEqual(out, [VALID_FILE]);
+  assert.deepEqual(out, [VALID_FILE, current], 'created/updated/current survive; every other verb is dropped');
   assert.deepEqual(sanitizeProfileSyncFiles(undefined), []);
   assert.deepEqual(sanitizeProfileSyncFiles('nope'), []);
+});
+
+// ── (d) the report is checked against the expected kit ─────────────
+
+test('the expected kit covers exactly the cloud-predictable files, hashed from the installer render', async () => {
+  const templates = await loadAgentOsTemplates();
+  const expected = buildExpectedKitHashes(templates);
+  const contextFiles = { claude: 'CLAUDE.md', codex: 'AGENTS.md', gemini: 'GEMINI.md', grok: 'AGENTS.md' };
+  for (const target of ['claude', 'codex', 'gemini', 'grok']) {
+    const table = expected[target];
+    // In: companions, the managed index, the hook scripts — bytes the
+    // shipped templates fully determine.
+    for (const rel of ['LESSONS.md', 'LEARNINGS.md', 'BLOCKERS.md', 'WINS.md', 'SESSION_BOARD.md', 'memory/MEMORY.md', 'agent-os/AGENT_OS.md', 'agent-os/hooks/session-start-context.mjs', 'agent-os/hooks/stop-capture.mjs']) {
+      assert.ok(/^[a-f0-9]{64}$/.test(table[rel] ?? ''), `${target}:${rel} carries an expected hash`);
+    }
+    // Out: the context file (an append lands in the user's own bytes),
+    // the hooks snippet and the merge instructions (both embed the
+    // PC's own install path), and anything estate-shaped.
+    assert.equal(table[contextFiles[target]], undefined, `${target}: the context file is never expected`);
+    assert.equal(table['agent-os/settings.hooks.json'], undefined, `${target}: the snippet embeds the install path`);
+    assert.equal(table['agent-os/hooks.json'], undefined, `${target}: the snippet embeds the install path`);
+    assert.equal(table['agent-os/MERGE_HOOKS.md'], undefined, `${target}: the merge instructions embed the install path`);
+    assert.ok(!Object.keys(table).some((rel) => rel.includes('estate')), `${target}: no estate path is ever expected`);
+    // The expectation IS the installer's render, byte for byte.
+    const rendered = renderAgentOsFiles({ target, templates, installDir: '/anywhere' });
+    for (const [rel, hash] of Object.entries(table)) {
+      const file = rendered.find((f) => f.path === rel);
+      assert.ok(file, `${target}:${rel} is a rendered kit file`);
+      assert.equal(hash, createHash('sha256').update(file.content, 'utf8').digest('hex'), `${target}:${rel} hash is the render's hash`);
+    }
+  }
+});
+
+test('verifyProfileSyncFiles: kit match verifies, kit fabrication mismatches, the rest are reported', async () => {
+  const expected = buildExpectedKitHashes(await loadAgentOsTemplates());
+  const kitHash = expected.claude['agent-os/AGENT_OS.md'];
+  const fabricated = createHash('sha256').update('a string that is not the installed file').digest('hex');
+  const files = [
+    { path: 'C:\\Users\\x\\.claude\\agent-os\\AGENT_OS.md', target: 'claude', action: 'updated', sha256: kitHash },
+    { path: '/home/x/.codex/agent-os/AGENT_OS.md', target: 'codex', action: 'created', sha256: fabricated },
+    { path: 'C:\\Users\\x\\.claude\\agent-os\\estate\\LESSONS.md', target: 'claude', action: 'created', sha256: fabricated },
+    { path: 'C:\\Users\\x\\.claude\\CLAUDE.md', target: 'claude', action: 'updated', sha256: kitHash },
+    { path: 'C:\\Users\\x\\.claude\\agent-os\\AGENT_OS.md', target: 'mistral', action: 'updated', sha256: kitHash },
+  ];
+  assert.deepEqual(verifyProfileSyncFiles(files, expected), ['verified', 'mismatch', 'reported', 'reported', 'reported']);
+  assert.deepEqual(verifyProfileSyncFiles(files, null), ['reported', 'reported', 'reported', 'reported', 'reported'], 'no expectation: nothing is verified, nothing is checkmarked');
+  assert.equal(reportedKitRelativePath(files[0]), 'agent-os/AGENT_OS.md');
+  assert.equal(reportedKitRelativePath({ path: 'no-target-dir-here.md', target: 'claude' }), null);
+});
+
+test('job store: a fabricated kit hash reads back as a mismatch and fails the page model', async () => {
+  const store = createProfileSyncJobStore(makeFakeJobPool());
+  const expected = buildExpectedKitHashes(await loadAgentOsTemplates());
+  const job = await store.enqueue('t1', { requestedBy: 'user-1' });
+  assert.deepEqual(job.fileChecks, [], 'a pending job has no report to check');
+  await store.claimNext('t1');
+  const fabricated = createHash('sha256').update('well-formed, and not any installed file').digest('hex');
+  const done = await store.report('t1', job.id, {
+    status: 'done',
+    files: [
+      { path: 'C:\\Users\\x\\.claude\\agent-os\\AGENT_OS.md', target: 'claude', action: 'updated', sha256: fabricated },
+      { path: 'C:\\Users\\x\\.claude\\agent-os\\hooks\\stop-capture.mjs', target: 'claude', action: 'created', sha256: expected.claude['agent-os/hooks/stop-capture.mjs'] },
+      { path: 'C:\\Users\\x\\.claude\\agent-os\\estate\\lessons\\lesson-001.md', target: 'claude', action: 'created', sha256: fabricated },
+    ],
+  });
+  assert.equal(done.status, 'done', 'the device report still closes the job — the verdict rides beside it');
+  assert.deepEqual(done.fileChecks, ['mismatch', 'verified', 'reported']);
+  const reread = await store.get('t1', job.id);
+  assert.deepEqual(reread.fileChecks, ['mismatch', 'verified', 'reported'], 'the verdict survives the read-back');
+  const model = profileSyncResultModel(reread);
+  assert.equal(model.state, 'failed');
+  assert.deepEqual(model.lines.map((l) => l.mark), ['failed', 'verified', 'reported']);
 });
 
 // ── (b) the device run reports what is actually on disk ─────────────
@@ -355,7 +449,15 @@ test('executeProfileSync reports files that match the disk, hashes included', as
     assert.equal(f.sha256, createHash('sha256').update(bytes).digest('hex'), `${f.path} hash matches the disk`);
   }
   const second = await executeProfileSync({ home, targets: ['claude'] });
-  assert.deepEqual(second.files, [], 'a no-op sync reports an empty list, not a success story');
+  assert.ok(second.files.length > 0, 'a no-op sync still reports the seat — as current, not silence');
+  assert.ok(
+    second.files.every((f) => f.action === 'current'),
+    'nothing is claimed written on a no-op run',
+  );
+  for (const f of second.files) {
+    const bytes = await readFile(f.path);
+    assert.equal(f.sha256, createHash('sha256').update(bytes).digest('hex'), `${f.path} current hash matches the disk`);
+  }
 });
 
 test('executeProfileSync carries the estate and reports hashes that equal the sources', async () => {
@@ -363,10 +465,11 @@ test('executeProfileSync carries the estate and reports hashes that equal the so
   const sha = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
   const sources = {
     // The source doubles as the claude seat's context file and already
-    // carries the agent OS block — the state the estate inventory found on
-    // the real machine — so the sync leaves the source itself untouched
-    // and the estate snapshot is stable across runs.
-    'CLAUDE.md': '# Hand-built rules\n\nEverything I taught this seat, in my own words.\n\n<!-- BEGIN AGENT OS -->\n@agent-os/AGENT_OS.md\n<!-- END AGENT OS -->\n',
+    // carries the CURRENT agent OS block — so the sync leaves the source
+    // itself untouched and the estate snapshot is stable across runs.
+    // (A stale block would be refreshed in place; that is D2, pinned by
+    // the agent-os tests.)
+    'CLAUDE.md': '# Hand-built rules\n\nEverything I taught this seat, in my own words.\n\n<!-- BEGIN AGENT OS -->\nAgent OS is installed. The core rules, the self-improvement loop, and the\nadvisory lane are in the imported file below. Your own grown files — your\nrules document and the flywheel companions, copied from your source seat\nand refreshed on every sync — are imported after it.\n\n@agent-os/AGENT_OS.md\n@agent-os/estate/CLAUDE-ESTATE.md\n@agent-os/estate/LESSONS.md\n@agent-os/estate/LEARNINGS.md\n<!-- END AGENT OS -->\n',
     'LESSONS.md': '# LESSONS\n\nThe grown flywheel, one hundred lessons deep.\n',
     'LEARNINGS.md': '# LEARNINGS\n\n- The copy is the proof.\n',
   };
@@ -395,26 +498,82 @@ test('executeProfileSync carries the estate and reports hashes that equal the so
     }
   }
 
-  // Unchanged sources: the estate stays out of the report entirely — a
-  // no-op sync never pads its list.
+  // Unchanged sources: nothing is written, and the estate copies are
+  // reported as current — with the sources' hashes, so the report still
+  // proves what each seat is running instead of going silent.
   const second = await executeProfileSync({ home, targets: ['claude', 'grok'] });
-  assert.deepEqual(second.files, []);
+  assert.ok(second.files.length > 0, 'a no-op sync reports current files, not an empty list');
+  assert.ok(second.files.every((f) => f.action === 'current'), 'a no-op sync claims no writes');
+  for (const target of ['claude', 'grok']) {
+    for (const [source, dest] of Object.entries(destFor)) {
+      const entry = second.files.find(
+        (f) => f.target === target && f.path === join(home, `.${target}`, 'agent-os', 'estate', dest),
+      );
+      assert.ok(entry, `${target} still reports its estate copy of ${source}, as current`);
+      assert.equal(entry.sha256, sha(sources[source]), `${target}:${dest} current hash equals the source hash`);
+    }
+  }
 
-  // One source grows: exactly its two copies are reported, as updates.
+  // One source grows: exactly its two copies are reported as updates;
+  // everything else stays current.
   const grown = `${sources['LESSONS.md']}One more lesson.\n`;
   await writeFile(join(home, '.claude', 'LESSONS.md'), grown, 'utf8');
   const third = await executeProfileSync({ home, targets: ['claude', 'grok'] });
-  assert.equal(third.files.length, 2, 'only the refreshed estate copies are reported');
-  for (const entry of third.files) {
-    assert.equal(entry.action, 'updated');
+  const updated = third.files.filter((f) => f.action === 'updated');
+  assert.equal(updated.length, 2, 'only the refreshed estate copies are reported as updated');
+  assert.ok(third.files.every((f) => f.action === 'updated' || f.action === 'current'));
+  for (const entry of updated) {
     assert.ok(entry.path.endsWith(join('estate', 'LESSONS.md')));
     assert.equal(entry.sha256, sha(grown));
+  }
+});
+
+test('FIX-S1: a canary rules change shows in the second sync report for codex and grok', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'profile-sync-canary-'));
+  const sha = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
+  await mkdir(join(home, '.codex'), { recursive: true });
+  await mkdir(join(home, '.grok'), { recursive: true });
+  await writeFile(join(home, '.codex', 'AGENTS.md'), '# Codex own rules\n', 'utf8');
+  await writeFile(join(home, '.grok', 'AGENTS.md'), '# Grok own rules\n', 'utf8');
+
+  // Two template trees: the kit as shipped, and the kit with a canary
+  // rule planted in the core rules.
+  const rootV1 = await mkdtemp(join(tmpdir(), 'agent-os-templates-v1-'));
+  await cp(DEFAULT_TEMPLATES_ROOT, rootV1, { recursive: true });
+  const rootV2 = await mkdtemp(join(tmpdir(), 'agent-os-templates-v2-'));
+  await cp(DEFAULT_TEMPLATES_ROOT, rootV2, { recursive: true });
+  const rulesPath = join(rootV2, 'core', 'CORE_RULES.md');
+  const rules = await readFile(rulesPath, 'utf8');
+  await writeFile(rulesPath, `${rules}\nCANARY-RULE-7749: always check the canary.\n`, 'utf8');
+
+  const installWith = (templatesRoot) => ({ targets, apply, home: h }) =>
+    installAgentOsTargets({ targets, apply, home: h, templatesRoot });
+
+  await executeProfileSync({ home, targets: ['codex', 'grok'], installImpl: installWith(rootV1) });
+  const second = await executeProfileSync({ home, targets: ['codex', 'grok'], installImpl: installWith(rootV2) });
+  for (const target of ['codex', 'grok']) {
+    const entry = second.files.find((f) => f.target === target && f.path.endsWith('AGENTS.md'));
+    assert.ok(entry, `${target}: its AGENTS.md is in the second report`);
+    assert.equal(entry.action, 'updated', `${target}: the report shows the refresh landed`);
+    const text = await readFile(entry.path, 'utf8');
+    assert.ok(text.includes('CANARY-RULE-7749'), `${target}: the canary is in the loaded cargo`);
+    assert.ok(text.includes(`# ${target === 'codex' ? 'Codex' : 'Grok'} own rules`), `${target}: the seat own content survives`);
+    assert.equal(entry.sha256, sha(text), `${target}: the reported hash is the refreshed file hash`);
+  }
+
+  const third = await executeProfileSync({ home, targets: ['codex', 'grok'], installImpl: installWith(rootV2) });
+  for (const target of ['codex', 'grok']) {
+    const entry = third.files.find((f) => f.target === target && f.path.endsWith('AGENTS.md'));
+    assert.equal(entry.action, 'current', `${target}: a landed refresh settles to current`);
   }
 });
 
 // ── (c) the page model renders exactly the device report ────────────
 
 test('result model renders exactly the reported list on done', () => {
+  // No fileChecks ride this job (the shape a job enqueued before the
+  // kit check existed reads back as): nothing was verified, so every
+  // line renders as reported by the PC, not verified — no checkmarks.
   const job = {
     status: 'done',
     files: [
@@ -424,11 +583,38 @@ test('result model renders exactly the reported list on done', () => {
   };
   const model = profileSyncResultModel(job);
   assert.equal(model.state, 'done');
-  assert.equal(model.statusText, 'Synced 2 files — as reported by your PC');
+  assert.equal(model.statusText, 'Synced 2 files — reported by your PC, not verified');
   assert.deepEqual(model.lines, [
-    'C:\\Users\\x\\.claude\\CLAUDE.md (updated)',
-    'C:\\Users\\x\\.codex\\AGENTS.md (created)',
+    { text: 'C:\\Users\\x\\.claude\\CLAUDE.md (updated) — reported by your PC, not verified', mark: 'reported' },
+    { text: 'C:\\Users\\x\\.codex\\AGENTS.md (created) — reported by your PC, not verified', mark: 'reported' },
   ]);
+});
+
+test('result model: a kit mismatch fails the rendered sync, a match verifies, the rest stay reported', () => {
+  const job = {
+    status: 'done',
+    files: [
+      { path: 'C:\\Users\\x\\.claude\\agent-os\\AGENT_OS.md', target: 'claude', action: 'updated', sha256: 'a'.repeat(64) },
+      { path: 'C:\\Users\\x\\.claude\\agent-os\\hooks\\stop-capture.mjs', target: 'claude', action: 'created', sha256: 'b'.repeat(64) },
+      { path: 'C:\\Users\\x\\.claude\\agent-os\\estate\\LESSONS.md', target: 'claude', action: 'created', sha256: 'c'.repeat(64) },
+    ],
+    fileChecks: ['mismatch', 'verified', 'reported'],
+  };
+  const model = profileSyncResultModel(job);
+  assert.equal(model.state, 'failed', 'a mismatched kit file fails the rendered state even though the device said done');
+  assert.match(model.statusText, /did not match the files Helmian shipped/);
+  assert.deepEqual(model.lines.map((l) => l.mark), ['failed', 'verified', 'reported']);
+  assert.match(model.lines[0].text, /FAILED: not the file Helmian shipped/);
+  assert.equal(model.lines[1].text, 'C:\\Users\\x\\.claude\\agent-os\\hooks\\stop-capture.mjs (created)');
+  assert.match(model.lines[2].text, /reported by your PC, not verified/);
+
+  const clean = profileSyncResultModel({ ...job, fileChecks: ['verified', 'verified', 'reported'] });
+  assert.equal(clean.state, 'done');
+  assert.equal(clean.statusText, 'Synced 3 files — 2 verified against the kit Helmian shipped, 1 reported by your PC and not verified');
+
+  const allVerified = profileSyncResultModel({ status: 'done', files: job.files.slice(0, 2), fileChecks: ['verified', 'verified'] });
+  assert.equal(allVerified.state, 'done');
+  assert.equal(allVerified.statusText, 'Synced 2 files — verified against the kit Helmian shipped');
 });
 
 test('result model: empty report, failure, and pending never look like success', () => {
@@ -520,6 +706,11 @@ test('presence sync press with a desktop linked still enqueues and stamps, as be
   assert.equal(sent[0].body.syncJob.status, 'pending');
   assert.deepEqual(sent[0].body.syncedFiles, []);
   assert.ok(stamped.includes('claude'), 'the happy path still stamps');
+  assert.deepEqual(
+    [...stamped].sort(),
+    ['claude', 'gemini', 'grok', 'openai'],
+    'the stamp set is exactly the write set — four stamps for four writes',
+  );
   const latest = await store.latest('t1');
   assert.equal(latest.id, sent[0].body.syncJob.id);
   assert.equal(latest.status, 'pending');
@@ -602,7 +793,7 @@ test('the Devices sync card renders the newest job, not a resting lie', () => {
   assert.equal(expired.statusText, PROFILE_SYNC_EXPIRED_MESSAGE);
   const done = cardFor({ status: 'done', files: [VALID_FILE] });
   assert.equal(done.status, 'on');
-  assert.equal(done.statusText, 'Synced 1 file — as reported by your PC');
+  assert.equal(done.statusText, 'Synced 1 file — reported by your PC, not verified');
 });
 
 test('web sources: the state read is wired and no surface stamps a fake success', async () => {

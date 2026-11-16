@@ -6,15 +6,18 @@
 // unique canary strings, the real modules, and assertions that one
 // tenant's canary never appears in the other tenant's reads.
 //
-// The notebook surface pins the CURRENT behaviour honestly, including
-// the shared NULL namespace: a row with project_slug NULL is read by
-// every tenant (that is the documented pre-tenant semantics, and
-// production holds exactly one such row, key
-// seat-build-winner-2026-11-06). These tests prove the boundary that
-// exists today: tenant-owned rows never cross, the tenant row wins a
-// shared key, and the Muse connector's stricter read excludes even
-// the NULL rows. Whether the NULL namespace itself should exist is a
-// separate decision, not this bite.
+// The notebook surface pins the CURRENT behaviour honestly. When
+// this suite was written, the reads carried a shared NULL
+// namespace: a row with project_slug NULL was read by every tenant
+// (the documented pre-tenant semantics; production held exactly
+// one such row, key seat-build-winner-2026-11-06). Fix A9 (audit
+// AT-5/T13) took the decision and closed the namespace on the
+// read side: every read binds the tenant slug exactly, so a
+// NULL-slug row is now visible to NO tenant, and the production
+// row is dispositioned at deploy time. These tests prove the
+// boundary that exists today: tenant-owned rows never cross,
+// NULL rows never surface, and the Muse connector's read —
+// tenant-only from the start — is unchanged.
 //
 // Runs when HELMIAN_TEST_PG_URL points at a scratch database with the
 // repo's sql/ migrations applied, and skips cleanly without one (the
@@ -103,7 +106,8 @@ async function seedNotebook(pool, t) {
   await entry(A, 'canary-a-fact', CANARY_A);
   await entry(B, 'canary-b-fact', CANARY_B);
   // The production NULL row's exact key, carrying a canary value: a
-  // row of this shape is what rides every tenant's prompt today.
+  // row of this shape rode every tenant's prompt until fix A9;
+  // today it must surface for no one.
   await entry(null, 'seat-build-winner-2026-11-06', CANARY_SHARED);
   // Same key filed by tenant A and by the shared namespace.
   await entry(A, 'canary-shared-key', `${CANARY_A}-WINS`);
@@ -125,7 +129,7 @@ async function seedNotebook(pool, t) {
   await blocker(B, 'RESOLVED', `${CANARY_B}-OLD`, `${CANARY_B}-LESSON`);
 }
 
-test('notebook: a tenant seat read carries its own rows plus the shared rows, never the other tenant', { skip: pgSkip }, async () => {
+test('notebook: a tenant seat read carries only its own rows — never the other tenant, never the shared rows', { skip: pgSkip }, async () => {
   const { readNotebookBlock } = await import('../src/cloud/envoy-notebook.mjs');
   const t = makeTenants();
   const pool = await makePool();
@@ -134,23 +138,25 @@ test('notebook: a tenant seat read carries its own rows plus the shared rows, ne
     await seedNotebook(pool, t);
     const blockA = await readNotebookBlock(pool, t.A, { log: () => {} });
     assert.ok(blockA, 'tenant A has a notebook block');
-    for (const expected of [t.CANARY_A, `${t.CANARY_A}-BLOCKER`, `${t.CANARY_A}-LESSON`, t.CANARY_SHARED, `${t.CANARY_SHARED}-BLOCKER`]) {
+    for (const expected of [t.CANARY_A, `${t.CANARY_A}-BLOCKER`, `${t.CANARY_A}-LESSON`]) {
       assert.ok(blockA.includes(expected), `tenant A block carries ${expected}`);
     }
     assert.ok(!blockA.includes(t.CANARY_B), 'tenant A block never carries tenant B canary');
+    assert.ok(!blockA.includes(t.CANARY_SHARED), 'tenant A block never carries the shared NULL rows (fix A9)');
     const blockB = await readNotebookBlock(pool, t.B, { log: () => {} });
     assert.ok(blockB, 'tenant B has a notebook block');
-    for (const expected of [t.CANARY_B, `${t.CANARY_B}-BLOCKER`, `${t.CANARY_B}-LESSON`, t.CANARY_SHARED, `${t.CANARY_SHARED}-BLOCKER`]) {
+    for (const expected of [t.CANARY_B, `${t.CANARY_B}-BLOCKER`, `${t.CANARY_B}-LESSON`]) {
       assert.ok(blockB.includes(expected), `tenant B block carries ${expected}`);
     }
     assert.ok(!blockB.includes(t.CANARY_A), 'tenant B block never carries tenant A canary');
+    assert.ok(!blockB.includes(t.CANARY_SHARED), 'tenant B block never carries the shared NULL rows (fix A9)');
   } finally {
     await cleanup(pool, t);
     await pool.end();
   }
 });
 
-test('notebook: where a key exists for the tenant and in the shared rows, the tenant row wins', { skip: pgSkip }, async () => {
+test('notebook: where a key exists for the tenant and in the shared rows, the tenant row is the only one ever seen', { skip: pgSkip }, async () => {
   const { readNotebookBlock } = await import('../src/cloud/envoy-notebook.mjs');
   const t = makeTenants();
   const pool = await makePool();
@@ -159,9 +165,10 @@ test('notebook: where a key exists for the tenant and in the shared rows, the te
     await seedNotebook(pool, t);
     const blockA = await readNotebookBlock(pool, t.A, { log: () => {} });
     assert.ok(blockA.includes(`${t.CANARY_A}-WINS`), 'tenant A sees its own value for the shared key');
-    assert.ok(!blockA.includes(`${t.CANARY_SHARED}-VALUE`), 'the shared value is shadowed for tenant A');
+    assert.ok(!blockA.includes(`${t.CANARY_SHARED}-VALUE`), 'the shared value never surfaces for tenant A');
     const blockB = await readNotebookBlock(pool, t.B, { log: () => {} });
-    assert.ok(blockB.includes(`${t.CANARY_SHARED}-VALUE`), 'tenant B, with no row of its own, sees the shared value');
+    assert.ok(!blockB.includes(`${t.CANARY_SHARED}-VALUE`), 'tenant B, with no row of its own, no longer sees the shared value (fix A9)');
+    assert.ok(!blockB.includes('canary-shared-key'), 'the shared key itself never surfaces for tenant B');
   } finally {
     await cleanup(pool, t);
     await pool.end();
@@ -179,11 +186,12 @@ test('notebook: the pre-tenant MCP read (Neon adapter getContext) keeps the same
     const ctxA = await store.getContext(t.A);
     const aText = JSON.stringify(ctxA);
     assert.ok(aText.includes(t.CANARY_A), 'getContext(A) carries tenant A rows');
-    assert.ok(aText.includes(t.CANARY_SHARED), 'getContext(A) carries the shared rows, the documented semantics');
+    assert.ok(!aText.includes(t.CANARY_SHARED), 'getContext(A) carries no shared rows — fix A9 closed the NULL namespace');
     assert.ok(!aText.includes(t.CANARY_B), 'getContext(A) never carries tenant B rows');
     const ctxB = await store.getContext(t.B);
     const bText = JSON.stringify(ctxB);
     assert.ok(bText.includes(t.CANARY_B), 'getContext(B) carries tenant B rows');
+    assert.ok(!bText.includes(t.CANARY_SHARED), 'getContext(B) carries no shared rows — fix A9 closed the NULL namespace');
     assert.ok(!bText.includes(t.CANARY_A), 'getContext(B) never carries tenant A rows');
   } finally {
     await cleanup(pool, t);

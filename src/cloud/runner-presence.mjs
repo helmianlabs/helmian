@@ -37,6 +37,7 @@ import { Pool } from 'pg';
 import { PROVIDER_KEY_ENV } from '../runner/vault.mjs';
 import { connectionProvider } from './tenant-agent-state.mjs';
 import { createProfileSyncJobStore, PROFILE_SYNC_NO_DESKTOP_CODE, PROFILE_SYNC_NO_DESKTOP_MESSAGE } from './profile-sync.mjs';
+import { PROFILE_SYNC_STAMP_PROVIDERS } from '../core/agent-os.mjs';
 
 export const RUNNER_PRESENCE_PATH = '/api/admin/envoy/runner/presence';
 
@@ -506,9 +507,13 @@ export async function handleRunnerPresenceRoute({
         // provider's presence row with the sync time (markSynced) so the
         // surfaces can say "Synced" — the connected boolean is the
         // bridge's claim to make, and this branch never touches it.
-        // The qwen seat stamps under her own name ('qwen'), not her
-        // engine's — the presence-vocabulary split above admits it.
-        const syncedProviders = ['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'qwen'];
+        // The stamp set is the installer's write set — exactly the
+        // providers whose seats the sync writes files for, taken from
+        // the installer itself (PROFILE_SYNC_STAMP_PROVIDERS) so the two
+        // can never drift apart. A provider the sync writes nothing for
+        // (mistral, runway, qwen, ollama) is never stamped: seven stamps
+        // for four writes overstated what the press actually did.
+        const syncedProviders = [...PROFILE_SYNC_STAMP_PROVIDERS];
         for (const prov of syncedProviders) {
           await store.markSynced(actor.tenantId, prov).catch(() => {});
         }

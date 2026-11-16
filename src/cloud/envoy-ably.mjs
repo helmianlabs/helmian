@@ -215,9 +215,13 @@ export async function handleEnvoyAblyRoute({
       const actor = await activeTenantActor(request);
       const { createRunnerPresenceStore } = await import('./runner-presence.mjs');
       const { createProfileSyncJobStore, PROFILE_SYNC_NO_DESKTOP_CODE, PROFILE_SYNC_NO_DESKTOP_MESSAGE } = await import('./profile-sync.mjs');
+      const { PROFILE_SYNC_STAMP_PROVIDERS } = await import('../core/agent-os.mjs');
       const { Pool } = await import('pg');
       const cs = String(process.env.HELMION_DATABASE_URL ?? '').trim();
-      const syncedProviders = ['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama'];
+      // The stamp set is the installer's write set, shared with the
+      // presence route — exactly the providers the sync writes files
+      // for, never a provider it wrote nothing for.
+      const syncedProviders = [...PROFILE_SYNC_STAMP_PROVIDERS];
       if (!cs) {
         send(response, 503, JSON.stringify({ valid: false, error: 'database not configured' }));
         return true;

@@ -65,8 +65,18 @@ function titleFor(evaluation, seat) {
  * `at` is the evaluation instant as an ISO string; the store stamps
  * its own first/last-seen times, and this one rides in the detail so
  * the record says when THIS evaluation happened.
+ *
+ * The ask's author rides too (fix-a10, closing audit AT-3b's T9
+ * naming leg): `authorSubject` verbatim and `authorSource` in the
+ * operator's vocabulary (desk / discord / slack, as the mesh
+ * derives them from describeAuthor) — the same pair the Site
+ * Guard's findings carry, so a governance refusal of a
+ * bridge-borne ask names its road in the feed exactly as a screen
+ * flag does. Both are present only when the caller supplies them;
+ * a finding filed without them reads as "source not recorded",
+ * never a guessed one.
  */
-export function guardFindingForEvaluation(evaluation, { seat, seatSubject = null, channelId, channelSlug = null, messageId, at } = {}) {
+export function guardFindingForEvaluation(evaluation, { seat, seatSubject = null, channelId, channelSlug = null, messageId, authorSubject = null, authorSource = null, at } = {}) {
   if (!evaluation) return null;
   const type = evaluation.action?.type ?? 'chat';
   const flags = (evaluation.flags ?? []).map((flag) => {
@@ -84,6 +94,8 @@ export function guardFindingForEvaluation(evaluation, { seat, seatSubject = null
     channelId: String(channelId),
     ...(channelSlug ? { channelSlug: String(channelSlug) } : {}),
     messageId: String(messageId),
+    ...(authorSubject ? { authorSubject: String(authorSubject) } : {}),
+    ...(authorSource ? { authorSource: String(authorSource) } : {}),
     ...((evaluation.hits ?? []).length ? { hits: [...evaluation.hits] } : {}),
     ...(flags.length ? { flags } : {}),
     ...(evaluation.failedClosed ? { failedClosed: true } : {}),

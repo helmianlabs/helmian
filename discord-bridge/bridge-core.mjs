@@ -13,6 +13,17 @@ import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export const LINK_RE = /^\s*[!/]?helmian\s+link\s+([A-Za-z2-9]{8})\s*$/i;
+
+// The cloud credential this bridge presents: its own per-provider
+// token (HELMIAN_ENVOY_BRIDGE_TOKEN_DISCORD) when that value is
+// set, the shared HELMIAN_ENVOY_BRIDGE_TOKEN otherwise. The
+// fallback is what lets the bridge keep working through the
+// per-provider rotation: the cloud accepts the shared token on the
+// Discord-scoped routes until the rotation completes.
+export function envoyBridgeToken(env = process.env) {
+  return String(env.HELMIAN_ENVOY_BRIDGE_TOKEN_DISCORD ?? '').trim()
+    || String(env.HELMIAN_ENVOY_BRIDGE_TOKEN ?? '').trim();
+}
 const AGENT_AVATARS = {
   Maestro: 'https://helmian.cloud/assets/agents/maestro.png',
   Claude: 'https://helmian.cloud/assets/agents/claude.png',
@@ -51,7 +62,7 @@ export function inboundText(msg) {
   return parts.filter(Boolean).join('\n').slice(0, 4000);
 }
 
-export function createBridge({ cloud, token, fetchImpl = fetch, stateDir, log = console.log, now = () => Date.now() }) {
+export function createBridge({ cloud, token, provider = null, fetchImpl = fetch, stateDir, log = console.log, now = () => Date.now() }) {
   const statePath = join(stateDir, 'discord-bridge-state.json');
   let state = { webhooks: {}, since: null, posted: [] };
   let links = [];
@@ -59,7 +70,11 @@ export function createBridge({ cloud, token, fetchImpl = fetch, stateDir, log = 
   const stats = { inbound: 0, outbound: 0, linked: 0, errors: 0, lastOutboundPoll: null, lastError: null };
 
   async function api(path, { method = 'GET', body = null } = {}) {
-    const res = await fetchImpl(`${cloud}/api/admin/envoy/bridge/${path}`, {
+    // With a provider, calls ride the provider-scoped routes
+    // (bridge/discord/<route>): the route itself names the provider
+    // whose token the cloud checks. Without one, the legacy
+    // unscoped routes, exactly as before.
+    const res = await fetchImpl(`${cloud}/api/admin/envoy/bridge/${provider ? `${provider}/` : ''}${path}`, {
       method,
       headers: { authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,

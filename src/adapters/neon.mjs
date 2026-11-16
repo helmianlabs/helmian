@@ -406,19 +406,19 @@ export async function createNeonStore(
         pool.query(
           `select * from helmion.blockers
            where status in ('OPEN','ACTIVE','BLOCKED')
-             and (project_slug = $1 or project_slug is null)
+             and project_slug = $1
            order by severity desc, created_at`,
           [projectSlug],
         ),
         pool.query(
           `select * from helmion.autonomy_rules
-           where active and (project_slug = $1 or project_slug is null)
+           where active and project_slug = $1
            order by case severity when 'block' then 0 else 1 end, created_at`,
           [projectSlug],
         ),
         pool.query(
           `select key, value from helmion.context_entries
-           where project_slug = $1 or project_slug is null
+           where project_slug = $1
            order by key`,
           [projectSlug],
         ),
@@ -430,7 +430,7 @@ export async function createNeonStore(
       const result = await pool.query(
         `select * from helmion.blockers
          where status in ('OPEN','ACTIVE','BLOCKED')
-           and ($1::text is null or project_slug = $1 or project_slug is null)
+           and ($1::text is null or project_slug = $1)
          order by severity desc, created_at`,
         [projectSlug],
       );
@@ -1015,19 +1015,19 @@ export async function createNeonStore(
             client.query(
               `select * from helmion.blockers
                where status in ('OPEN','ACTIVE','BLOCKED')
-                 and (project_slug=$1 or project_slug is null)
+                 and project_slug=$1
                order by severity desc, id`,
               [projectSlug],
             ),
             client.query(
               `select key, value, updated_at from helmion.context_entries
-               where project_slug=$1 or project_slug is null
+               where project_slug=$1
                order by key`,
               [projectSlug],
             ),
             client.query(
               `select * from helmion.autonomy_rules
-               where active and (project_slug=$1 or project_slug is null)
+               where active and project_slug=$1
                order by severity desc, id`,
               [projectSlug],
             ),

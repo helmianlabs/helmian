@@ -8,11 +8,20 @@
 // Two boundaries this module never crosses:
 //
 //   1. It does not overwrite user content. Files outside `agent-os/` are
-//      created once and thereafter skipped. A context file that already exists
-//      gets a delimited block appended, never a rewrite.
-//   2. It does not edit a settings file. Hook configuration is written as a
-//      snippet next to the settings file with merge instructions, because
-//      settings files carry keys this installer knows nothing about.
+//      created once and thereafter skipped, with two delimited exceptions:
+//      a context file that already exists gets a delimited block appended,
+//      and on later syncs that block — and only that block — is refreshed
+//      in place, so the seat always runs the current rules; and the hook
+//      entries are merged into the tool's settings file (boundary 2).
+//      Everything outside the markers, and every settings key the merge
+//      does not own, is left byte-for-byte as it was.
+//   2. It edits a settings file only by merging. The hook entries are
+//      merged into the file the tool actually reads — appended under the
+//      events they belong to, never replacing the file — because settings
+//      files carry keys this installer knows nothing about. A settings
+//      file that cannot be parsed as JSON is left untouched, the snippet
+//      is written beside it with manual merge instructions, and the
+//      result reports the hooks as not wired.
 //
 // The estate cargo (see ESTATE_CARGO below) is the one exception to the
 // "created once" rule, and it stays inside boundary 1: the user's own grown
@@ -39,6 +48,24 @@ export const AGENT_OS_MARKER_END = '<!-- END AGENT OS -->';
 export const MANAGED_DIR = 'agent-os';
 
 export const AGENT_OS_TARGETS = Object.freeze(['claude', 'codex', 'gemini', 'grok']);
+
+/**
+ * The presence-row name each target's seat answers to. A profile sync
+ * stamps exactly these providers — the seats it actually writes files
+ * for — and no others: a provider with no install target (a voice
+ * engine, a seat with no local files) is never stamped "synced" by a
+ * profile sync, because the sync wrote nothing for it.
+ */
+export const TARGET_PRESENCE_PROVIDERS = Object.freeze({
+  claude: 'claude',
+  codex: 'openai',
+  gemini: 'gemini',
+  grok: 'grok',
+});
+
+export const PROFILE_SYNC_STAMP_PROVIDERS = Object.freeze(
+  AGENT_OS_TARGETS.map((target) => TARGET_PRESENCE_PROVIDERS[target]),
+);
 
 // Per-tool facts, each from that tool's own documentation:
 //
@@ -432,6 +459,16 @@ export function renderAgentOsFiles({ target, templates, installDir }) {
     'managed',
   );
 
+  // The settings file itself — the merge target (boundary 2). Its rendered
+  // content is the snippet: exactly what the file should hold when it does
+  // not exist yet. planAgentOsInstall treats this path specially: an
+  // existing file is merged, never overwritten.
+  add(
+    spec.settingsFile,
+    render(requireTemplate(templates, spec.snippetTemplate), { HOOKS_DIR: hooksDir }),
+    'settings',
+  );
+
   add(
     `${MANAGED_DIR}/MERGE_HOOKS.md`,
     render(requireTemplate(templates, 'shared/MERGE_HOOKS.md'), {
@@ -450,27 +487,59 @@ export function renderAgentOsFiles({ target, templates, installDir }) {
 }
 
 /**
- * The block appended to a context file that already exists.
- *
- * Import mode points at the managed file, so the user's own file grows by four
- * lines. Inline mode carries the rules themselves, for a tool with no import
- * syntax.
+ * The inner text of a rendered context file: its content with the marker
+ * pair stripped. The rendered context file carries its own markers; a
+ * block appended to a user file wraps the body in ONE pair — embedding
+ * the rendered file whole used to nest a second pair inside the first.
  */
-export function appendBlockFor({ target, renderedContext }) {
+export function agentOsBlockBody(renderedContext) {
+  const text = trimBody(String(renderedContext ?? ''));
+  const begin = text.indexOf(AGENT_OS_MARKER_BEGIN);
+  const end = text.lastIndexOf(AGENT_OS_MARKER_END);
+  if (begin === -1 || end === -1 || end < begin) return text;
+  // trimBody trims the tail only; the slice starts with the newline that
+  // followed the BEGIN marker, so trim the head too.
+  return trimBody(text.slice(begin + AGENT_OS_MARKER_BEGIN.length, end).replace(/^\s+/, ''));
+}
+
+/**
+ * The body of the delimited block for one target — the exact text a sync
+ * keeps current inside the markers, whether the block was appended to a
+ * user file or the context file was created whole. Import mode points at
+ * the managed file and at the estate imports: the pointer IS the
+ * consumption path, the imports are what the tool actually loads. Inline
+ * mode carries the rules themselves, for a tool with no import syntax.
+ */
+export function appendBlockBodyFor({ target, renderedContext }) {
   const spec = TARGET_SPECS[target];
-  const body = spec.appendMode === 'import'
-    ? [
+  if (spec.appendMode === 'import') {
+    return [
       'Agent OS is installed. The core rules, the self-improvement loop, and the',
-      'advisory lane are in the imported file below.',
+      'advisory lane are in the imported file below. Your own grown files — your',
+      'rules document and the flywheel companions, copied from your source seat',
+      'and refreshed on every sync — are imported after it.',
       '',
       `@${MANAGED_DIR}/AGENT_OS.md`,
-    ].join('\n')
-    : trimBody(renderedContext);
+      `@${MANAGED_DIR}/estate/CLAUDE-ESTATE.md`,
+      `@${MANAGED_DIR}/estate/LESSONS.md`,
+      `@${MANAGED_DIR}/estate/LEARNINGS.md`,
+    ].join('\n');
+  }
+  return agentOsBlockBody(renderedContext);
+}
 
+/**
+ * The block appended to a context file that already exists.
+ *
+ * Import mode points at the managed file, so the user's own file grows by
+ * the pointer block only. Inline mode carries the rules themselves, for a
+ * tool with no import syntax.
+ */
+export function appendBlockFor({ target, renderedContext }) {
   return [
     '',
     AGENT_OS_MARKER_BEGIN,
-    body,
+    appendBlockBodyFor({ target, renderedContext }),
     AGENT_OS_MARKER_END,
     '',
   ].join('\n');
@@ -521,15 +590,90 @@ export function renderEstateFiles(estateContents = {}) {
 }
 
 /**
+ * Merge the hook snippet's entries into a settings file's text.
+ *
+ * Pure: returns { ok: true, content, changed } or { ok: false, reason }.
+ * The merge appends each snippet hook group under its event in the
+ * settings file's `hooks` object, skipping any group whose hook command
+ * is already wired there, and preserves every other key and entry. When
+ * nothing needs adding, the original text comes back with changed: false
+ * — the user's own formatting is never rewritten for its own sake. A
+ * settings file that is not a JSON object, or whose `hooks` shape is not
+ * the object-of-arrays every one of these tools reads, is refused, never
+ * guessed at: the caller leaves the file untouched and reports the skip.
+ */
+export function mergeHookSettings(settingsText, snippetText) {
+  const refuse = (reason) => ({ ok: false, reason });
+  const byHand = 'the snippet beside it (MERGE_HOOKS.md) says how to merge by hand';
+  let snippet;
+  try {
+    snippet = JSON.parse(snippetText);
+  } catch {
+    return refuse('the hook snippet is not valid JSON — settings left untouched');
+  }
+  const snippetHooks = snippet?.hooks;
+  if (!snippetHooks || typeof snippetHooks !== 'object' || Array.isArray(snippetHooks)) {
+    return refuse('the hook snippet carries no hooks object — settings left untouched');
+  }
+  let settings;
+  try {
+    settings = JSON.parse(settingsText);
+  } catch {
+    return refuse(`your settings file is not valid JSON — left untouched; ${byHand}`);
+  }
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    return refuse(`your settings file is not a JSON object — left untouched; ${byHand}`);
+  }
+  if (settings.hooks !== undefined
+    && (typeof settings.hooks !== 'object' || settings.hooks === null || Array.isArray(settings.hooks))) {
+    return refuse(`the hooks entry in your settings file is not an object — left untouched; ${byHand}`);
+  }
+  for (const event of Object.keys(snippetHooks)) {
+    const existing = settings.hooks?.[event];
+    if (existing !== undefined && !Array.isArray(existing)) {
+      return refuse(`the ${event} hooks in your settings file are not a list — left untouched; ${byHand}`);
+    }
+  }
+
+  const merged = JSON.parse(JSON.stringify(settings));
+  if (merged.hooks === undefined) merged.hooks = {};
+  let added = 0;
+  for (const [event, groups] of Object.entries(snippetHooks)) {
+    if (!Array.isArray(groups)) continue;
+    const existing = Array.isArray(merged.hooks[event]) ? merged.hooks[event] : [];
+    const wiredCommands = new Set();
+    for (const group of existing) {
+      for (const hook of group?.hooks ?? []) {
+        if (typeof hook?.command === 'string') wiredCommands.add(hook.command);
+      }
+    }
+    const additions = groups.filter((group) => !(Array.isArray(group?.hooks)
+      && group.hooks.some((hook) => typeof hook?.command === 'string' && wiredCommands.has(hook.command))));
+    if (additions.length > 0) {
+      merged.hooks[event] = [...existing, ...additions];
+      added += additions.length;
+    }
+  }
+  if (added === 0) return { ok: true, content: settingsText, changed: false };
+  return { ok: true, content: `${JSON.stringify(merged, null, 2)}\n`, changed: true };
+}
+
+/**
  * Decide what to do with each file, without touching disk.
  *
  * `existing` maps a relative path to its current content, or undefined when the
  * file is absent. Actions:
  *   create    — no file there, write it
  *   append    — context file exists without our marker, add a delimited block
- *   update    — managed file whose content changed, refresh it
- *   unchanged — managed file already identical
- *   skip      — user file already present, leave it exactly as it is
+ *   update    — managed file whose content changed, refresh it; also a
+ *               context file whose delimited block is stale (the block, and
+ *               only the block, is replaced with the current rules), and a
+ *               settings file the hook entries were merged into
+ *   unchanged — file already identical, its block already current, or its
+ *               hooks already wired
+ *   skip      — user file already present, leave it exactly as it is; also
+ *               a file whose markers or settings JSON are in a shape this
+ *               installer cannot safely touch
  */
 export function planAgentOsInstall({ target, files, existing = {} }) {
   const spec = TARGET_SPECS[target];
@@ -544,14 +688,81 @@ export function planAgentOsInstall({ target, files, existing = {} }) {
     }
 
     if (file.path === spec.contextFile) {
-      if (current.includes(AGENT_OS_MARKER_BEGIN)) {
-        actions.push({ ...file, action: 'unchanged', reason: 'agent OS block already present' });
-      } else {
+      if (!current.includes(AGENT_OS_MARKER_BEGIN)) {
         actions.push({
           ...file,
           action: 'append',
           reason: 'file exists — appending a delimited block, leaving your content intact',
           appendText: appendBlockFor({ target, renderedContext: file.content }),
+        });
+        continue;
+      }
+      // A block is already there: refresh it in place, so the seat runs
+      // the CURRENT rules after every sync, not the rules from the sync
+      // that first wrote the block. The block runs from the first BEGIN
+      // marker to the last END marker. One pair is the shape this
+      // installer writes; two nested pairs is the shape an older
+      // installer wrote when it embedded the rendered context file
+      // whole. Anything else — a marker quoted in prose, an END with no
+      // BEGIN after it — is not a shape this installer can prove it
+      // owns, and the file is left untouched.
+      const beginCount = current.split(AGENT_OS_MARKER_BEGIN).length - 1;
+      const endCount = current.split(AGENT_OS_MARKER_END).length - 1;
+      const beginIdx = current.indexOf(AGENT_OS_MARKER_BEGIN);
+      const endIdx = current.lastIndexOf(AGENT_OS_MARKER_END);
+      const secondBeginIdx = current.indexOf(AGENT_OS_MARKER_BEGIN, beginIdx + 1);
+      const firstEndIdx = current.indexOf(AGENT_OS_MARKER_END);
+      const singlePair = beginCount === 1 && endCount === 1;
+      const nestedPair = beginCount === 2 && endCount === 2
+        && secondBeginIdx !== -1 && firstEndIdx > secondBeginIdx;
+      if ((!singlePair && !nestedPair) || endIdx <= beginIdx) {
+        actions.push({
+          ...file,
+          action: 'skip',
+          reason: 'agent OS markers are in a shape this installer cannot refresh safely — left untouched',
+        });
+        continue;
+      }
+      const outsideBlock = `${current.slice(0, beginIdx)}${current.slice(endIdx + AGENT_OS_MARKER_END.length)}`.trim();
+      // A file the installer created whole is refreshed to the current
+      // rendered context; a block appended to a user file is refreshed
+      // to the block body for the target's mode. Either way the seat
+      // ends up running the current rules, and everything outside the
+      // markers is preserved byte-for-byte.
+      const desiredBody = outsideBlock === ''
+        ? agentOsBlockBody(file.content)
+        : appendBlockBodyFor({ target, renderedContext: file.content });
+      const desiredBlock = [AGENT_OS_MARKER_BEGIN, desiredBody, AGENT_OS_MARKER_END].join('\n');
+      const currentBlock = current.slice(beginIdx, endIdx + AGENT_OS_MARKER_END.length);
+      if (currentBlock === desiredBlock) {
+        actions.push({ ...file, action: 'unchanged', reason: 'agent OS block already current' });
+      } else {
+        actions.push({
+          ...file,
+          action: 'update',
+          content: `${current.slice(0, beginIdx)}${desiredBlock}${current.slice(endIdx + AGENT_OS_MARKER_END.length)}`,
+          reason: 'agent OS block refreshed with the current rules — your content outside the block is untouched',
+        });
+      }
+      continue;
+    }
+
+    if (file.path === spec.settingsFile) {
+      if (current === file.content) {
+        actions.push({ ...file, action: 'unchanged', reason: 'hook entries already in place' });
+        continue;
+      }
+      const merged = mergeHookSettings(current, file.content);
+      if (!merged.ok) {
+        actions.push({ ...file, action: 'skip', reason: merged.reason });
+      } else if (!merged.changed) {
+        actions.push({ ...file, action: 'unchanged', reason: 'hooks already wired into your settings file' });
+      } else {
+        actions.push({
+          ...file,
+          action: 'update',
+          content: merged.content,
+          reason: 'hook entries merged into your settings file — everything else in it is preserved',
         });
       }
       continue;
@@ -779,6 +990,14 @@ export async function installAgentOs({
 
   const estateActions = actions.filter((action) => action.cargo === 'estate');
 
+  // hooksWired is the truth about the settings file the tool reads: true
+  // when this run leaves the hook entries in it (created with them,
+  // merged into it, or already there), false when the merge could not
+  // run and the file was left untouched. On a dry run it reports what
+  // applying the plan would leave.
+  const settingsAction = actions.find((action) => action.path === spec.settingsFile);
+  const hooksWired = Boolean(settingsAction) && settingsAction.action !== 'skip';
+
   return {
     target: spec.id,
     label: spec.label,
@@ -786,7 +1005,7 @@ export async function installAgentOs({
     applied: apply,
     settingsFile: join(installDir, spec.settingsFile),
     settingsSnippet: join(installDir, MANAGED_DIR, spec.snippetFile),
-    hooksWired: false, // Always false: this installer never edits a settings file.
+    hooksWired,
     counts,
     estate: {
       carried: estateActions.filter((action) => action.action !== 'skip').length,
