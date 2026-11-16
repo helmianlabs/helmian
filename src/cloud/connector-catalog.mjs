@@ -224,28 +224,32 @@ const GEMINI_CATALOG = Object.freeze([
 
 // --------------------------------------------------------------- Cloudflare
 // Cloudflare publishes its own remote MCP server catalog (its docs /
-// agents platform). Those servers are plain public MCP endpoints
-// Helmian can reach and handshake directly, so by the §3.1 rule they
-// ship 'helmian' — Helmian's Connect flow applies, no mirror pretence.
-const CLOUDFLARE_CATALOG = Object.freeze([
-  catalogEntry('cloudflare', {
-    id: 'cloudflare-docs', name: 'Cloudflare Docs',
-    oneLiner: 'Search and read Cloudflare’s developer documentation',
-    iconRef: icon('cloudflare'), vendorName: 'Cloudflare', trustLabel: 'verified', category: 'development',
-    pipe: { mode: 'helmian', endpoint: 'https://docs.mcp.cloudflare.com/mcp', authMode: 'none' },
-  }),
-]);
+// agents platform). Its one catalogued server here, the Docs server,
+// is a plain public MCP endpoint Helmian can reach and handshake
+// directly, so by the §3.1 rule it ships 'helmian' — Helmian's
+// Connect flow applies, no mirror pretence. It is stocked as a
+// Source 4 vendor-published entry (see BROKERED_SERVERS below), not
+// as Source 1: under universal stocking (Troy's order, 2026-11-15)
+// the Docs server rides every seat with the same entry id and the
+// same definition it always carried (name, one-liner, endpoint,
+// authMode 'none', trust 'verified'), so a stored row from its
+// Source 1 days matches the new definition field for field and no
+// refresh sees a change. Cloudflare's seat keeps no Source 1 of its
+// own — its vendor directory was this one server, and the server
+// now lives where every seat can reach it.
 
 // Seats whose vendor publishes no connector library in the research
-// (mistral, groq, nvidia, openrouter, qwen, muse, maestro, helm, owner)
-// get Source 2 only — an empty Source 1 is the honest seed; inventing a
-// mirror for a catalog nobody documented would be a fake library.
+// (mistral, groq, nvidia, openrouter, cloudflare, qwen, muse,
+// maestro, helm, owner) get no Source 1 — an empty Source 1 is the
+// honest seed; inventing a mirror for a catalog nobody documented
+// would be a fake library. They stock the universal sources
+// instead: the registry picks (Source 3), the vendor-published
+// servers (Source 4), and the Helmian native (Source 2).
 const SOURCE1_BY_SEAT = Object.freeze({
   claude: CLAUDE_CATALOG,
   chatgpt: CHATGPT_CATALOG,
   grok: GROK_CATALOG,
   gemini: GEMINI_CATALOG,
-  cloudflare: CLOUDFLARE_CATALOG,
 });
 
 // ------------------------------------------------- Source 2 — Helmian-native
@@ -347,7 +351,23 @@ function registryEntriesForSeat(seatId) {
 // --------------------------- Source 4 — vendor-published servers
 // A vendor's OWN published MCP server, offered as a Helmian-brokered
 // connector in its own right — not a mirror (Source 1), not a
-// registry import (Source 3). One entry today:
+// registry import (Source 3).
+//
+// PLACEMENT IS UNIVERSAL (Troy's order, 2026-11-15 — connectors
+// across the board): every Source 4 entry stocks on EVERY seat
+// (seats: LIVE_SEATS below). The per-family placement notes
+// further down ("Placement follows Source 4's geography —
+// claude, chatgpt, grok", and its fixed-tail / fixed-geography
+// variants) record the geography each family was BUILT under;
+// that geography is superseded by this order. A vendor-published
+// server is the same published endpoint for every seat, so
+// stocking it everywhere invents nothing — the connection itself
+// is still the person's own sign-in or key pair, per seat, at
+// connect time, and connection state never travels between
+// seats. Source 1 mirrors are untouched by this order: a mirror
+// is that vendor's own directory for that seat's account, and no
+// mirror is invented for a seat whose vendor directory was
+// never documented. One entry today:
 //
 //   helmian-vercel — Vercel's official MCP server. Vercel's own docs
 //     ("Use Vercel", vercel.com/docs/agent-resources/vercel-mcp,
@@ -414,8 +434,8 @@ function registryEntriesForSeat(seatId) {
 //     seat's library. The row a person sees for the name is this
 //     brokered one; the connectors tab represents a name by its
 //     brokered row.
-//   - Placement follows Source 3's geography — the seats named for
-//     it: claude, chatgpt, grok.
+//   - Placement: every seat (universal stocking — see the
+//     Source 4 header note).
 //   - trustLabel 'verified': Vercel's own published server, the
 //     same label Grok's mirror already carries for Vercel.
 //   - The definition carries `vendorPublished: true` as provenance
@@ -425,7 +445,7 @@ function registryEntriesForSeat(seatId) {
 //     published reachable pipe is 'helmian', not a mirror.
 const BROKERED_SERVERS = Object.freeze([
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-vercel',
       name: 'Vercel',
@@ -447,6 +467,30 @@ const BROKERED_SERVERS = Object.freeze([
         endpoint: 'https://mcp.vercel.com',
         authMode: 'oauth',
         scopesSummary: 'Connect opens Vercel\u2019s own sign-in page: you sign in with your Vercel account and approve the connection there \u2014 nothing to paste, no token to create. What the connection can reach is the access your own Vercel account already has.',
+      },
+    }),
+  }),
+  // Cloudflare Docs — Cloudflare's own published documentation
+  // server, carried here since universal stocking (2026-11-15).
+  // It began as the cloudflare seat's one Source 1 entry (a
+  // Helmian pipe from the start: public endpoint, no sign-in);
+  // the definition below is that same entry field for field, so
+  // its identity never changed — only its shelf did. The server
+  // is public read-only documentation: no credential, no sign-in,
+  // Connect simply turns the pipe on for the seat.
+  Object.freeze({
+    seats: LIVE_SEATS,
+    def: Object.freeze({
+      id: 'cloudflare-docs',
+      name: 'Cloudflare Docs',
+      oneLiner: 'Search and read Cloudflare\u2019s developer documentation',
+      vendorName: 'Cloudflare',
+      trustLabel: 'verified',
+      category: 'development',
+      pipe: {
+        mode: 'helmian',
+        endpoint: 'https://docs.mcp.cloudflare.com/mcp',
+        authMode: 'none',
       },
     }),
   }),
@@ -484,7 +528,7 @@ const BROKERED_SERVERS = Object.freeze([
   //     permissions — so the connect asks for none either. PKCE is
   //     mandatory on this road (HubSpot's own integration guide).
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-slack',
       name: 'Slack',
@@ -502,7 +546,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-asana',
       name: 'Asana',
@@ -520,7 +564,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-hubspot',
       name: 'HubSpot',
@@ -552,14 +596,9 @@ const BROKERED_SERVERS = Object.freeze([
   // GOOGLE_OAUTH_CLIENT_SECRET). Until that pair is placed, a
   // connect start answers the honest consent boundary naming
   // Google, and connects nothing.
-  //   - Placement follows Source 4's geography — the seats the
-  //     existing brokered family (Vercel, Slack, Asana, HubSpot)
-  //     is stocked on: claude, chatgpt, grok. The Google mirrors
-  //     also live on gemini (Google brokers Gemini's Workspace
-  //     apps itself), but no brokered entry is stocked there; the
-  //     brokered placement follows the Source 4 family, not the
-  //     mirrors' spread. The mirrors stay as data beside these
-  //     rows on claude/chatgpt/grok (and alone on gemini) — the
+  //   - Placement: every seat (universal stocking — see the
+  //     Source 4 header note). The mirrors stay as data beside
+  //     these rows where a vendor directory carries them — the
   //     brokered row represents the name where both exist.
   //   - Each entry declares its OWN product scopes (oauthScopes
   //     below): the scopes Google's own Workspace MCP setup page
@@ -576,7 +615,7 @@ const BROKERED_SERVERS = Object.freeze([
   //     whether the server exposes write tools is UNVERIFIED in
   //     the research, so its words promise no event creation.
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-gmail',
       name: 'Gmail',
@@ -598,7 +637,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-google-calendar',
       name: 'Google Calendar',
@@ -621,7 +660,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-google-drive',
       name: 'Google Drive',
@@ -652,8 +691,8 @@ const BROKERED_SERVERS = Object.freeze([
   // pair, no fixed provider. None of the four is named in
   // FIXED_PROVIDER_BY_ENTRY_ID and none declares a CIMD client id,
   // so kind resolution rules each one 'dcr' under its own service
-  // key. Placement follows Source 4's geography — claude,
-  // chatgpt, grok. The mirrors stay as data beside these rows:
+  // key. Placement: every seat (universal stocking — see the
+  // Source 4 header note). The mirrors stay as data beside these rows:
   // Gamma, Meltwater and S&P Global on Grok, Idiolect on Claude;
   // the brokered row represents the name where both exist. Trust
   // labels follow the mirrors' own labels for each name —
@@ -696,7 +735,7 @@ const BROKERED_SERVERS = Object.freeze([
   //     and connects nothing, and no fake boundary state stands
   //     in for either gate.
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-meltwater',
       name: 'Meltwater',
@@ -715,7 +754,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-sp-global',
       name: 'S&P Global',
@@ -734,7 +773,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-idiolect',
       name: 'Idiolect',
@@ -752,7 +791,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-gamma',
       name: 'Gamma',
@@ -788,11 +827,11 @@ const BROKERED_SERVERS = Object.freeze([
   // secret). Until a pair is placed, a connect start answers
   // the honest consent boundary naming that provider, and
   // connects nothing.
-  //   - Placement follows Source 4's geography — claude,
-  //     chatgpt, grok. The mirrors stay as data beside these
-  //     rows (Canva on all three seats; Dropbox on chatgpt —
-  //     its only mirror); the brokered row represents the name
-  //     where both exist. Trust labels follow the mirrors' own
+  //   - Placement: every seat (universal stocking — see the
+  //     Source 4 header note). The mirrors stay as data beside
+  //     these rows (Canva on claude, chatgpt, and grok; Dropbox
+  //     on chatgpt — its only mirror); the brokered row
+  //     represents the name where both exist. Trust labels follow the mirrors' own
   //     labels for each name — 'community' for both; no label
   //     is upgraded here.
   //   - Each entry declares its OWN ask (oauthScopes below),
@@ -820,7 +859,7 @@ const BROKERED_SERVERS = Object.freeze([
   //     road. Dropbox's MCP server is in beta (Dropbox's own
   //     Help Center page), which the entry's words say.
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-canva',
       name: 'Canva',
@@ -848,7 +887,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-dropbox',
       name: 'Dropbox',
@@ -917,17 +956,17 @@ const BROKERED_SERVERS = Object.freeze([
   //     callback answers with the admin-approval road in plain
   //     words (the write route's consent page), never a bare
   //     failure.
-  //   - Placement follows the fixed-tail geography — claude,
-  //     chatgpt, grok. The mirrors stay as data beside these rows
-  //     (all four names mirror on grok); the brokered row
-  //     represents the name where both exist. Trust labels
+  //   - Placement: every seat (universal stocking — see the
+  //     Source 4 header note). The mirrors stay as data beside
+  //     these rows (all four names mirror on grok); the brokered
+  //     row represents the name where both exist. Trust labels
   //     follow the mirrors' own label — 'verified' for all four;
   //     no label is upgraded here.
   //   - Teams honesty: Work IQ's published surface reads Teams
   //     chats and channels; whether it can post is not verified,
   //     so the Teams entry's words promise reading only.
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-onedrive',
       name: 'OneDrive',
@@ -950,7 +989,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-outlook',
       name: 'Outlook',
@@ -973,7 +1012,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-microsoft-teams',
       name: 'Microsoft Teams',
@@ -996,7 +1035,7 @@ const BROKERED_SERVERS = Object.freeze([
     }),
   }),
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-sharepoint',
       name: 'SharePoint',
@@ -1041,9 +1080,10 @@ const BROKERED_SERVERS = Object.freeze([
   //     live read 2026-11-10). The factory therefore sends no
   //     scope parameter — what the authorize request actually
   //     grants on this road is UNVERIFIED until a live walk.
-  //   - Placement follows the fixed geography — claude, chatgpt,
-  //     grok. The mirror stays as data beside this row (Box
-  //     mirrors on grok); the brokered row represents the name.
+  //   - Placement: every seat (universal stocking — see the
+  //     Source 4 header note). The mirror stays as data beside
+  //     this row (Box mirrors on grok); the brokered row
+  //     represents the name.
   //     Trust label follows the mirror's own — 'community'; no
   //     label is upgraded here.
   //   - Box meters this road (one API call per tool invocation,
@@ -1051,7 +1091,7 @@ const BROKERED_SERVERS = Object.freeze([
   //     a pricing fact for the tenant, not a build input, and
   //     the entry's words do not promise otherwise.
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-box',
       name: 'Box',
@@ -1095,14 +1135,14 @@ const BROKERED_SERVERS = Object.freeze([
   //     road, so the factory carries no identity read — the
   //     callback records the provider's name as the account
   //     label, like Box.
-  //   Placement follows the fixed geography — claude, chatgpt,
-  //   grok. The mirror stays as data beside this row (Salesforce
-  //   mirrors on grok); trust label follows the mirror's own —
+  //   Placement: every seat (universal stocking — see the
+  //   Source 4 header note). The mirror stays as data beside
+  //   this row (Salesforce mirrors on grok); trust label follows the mirror's own —
   //   'verified'. Salesforce MCP requires Enterprise Edition or
   //   above — the customer's edition is their admin's fact, and
   //   the entry's words do not promise otherwise.
   Object.freeze({
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: LIVE_SEATS,
     def: Object.freeze({
       id: 'helmian-salesforce',
       name: 'Salesforce',
