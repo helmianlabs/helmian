@@ -132,7 +132,9 @@ export async function requestDecision(storage, action, { fetchImpl = (...args) =
 
   const check = await verifyDecisionEnvelope(res.body.decision, s.pinned, { actionHash: hash, nonce });
   if (!check.ok) {
-    return { verdict: 'deny', reason: `Executive Guard answered with a decision that did not verify: ${check.error}`, ruleId: 'unverified-decision', source: 'executive-guard', verified: false };
+    // verifyError carries the raw verifier error alongside the composed
+    // reason so the worker can file it in the ledger verbatim (AT-1 T2).
+    return { verdict: 'deny', reason: `Executive Guard answered with a decision that did not verify: ${check.error}`, ruleId: 'unverified-decision', source: 'executive-guard', verified: false, verifyError: check.error };
   }
   const out = {
     verdict: check.claims.verdict,
@@ -172,7 +174,11 @@ export async function pollApproval(storage, approvalId, { fetchImpl = (...args) 
   }
   const check = await verifyDecisionEnvelope(res.body.decision, s.pinned, expect);
   if (!check.ok || check.claims.approvalId !== approvalId) {
-    return { status: 'denied', verdict: 'deny', verified: false, reason: `the approval did not verify: ${check.ok ? 'wrong approval id' : check.error}` };
+    // Same unverified-decision shape as requestDecision: ruleId names it and
+    // verifyError carries the raw verifier error, so the worker's ledger
+    // entry for a forged approval matches the decide road's (AT-1 T2).
+    const verifyError = check.ok ? 'wrong approval id' : check.error;
+    return { status: 'denied', verdict: 'deny', verified: false, ruleId: 'unverified-decision', verifyError, reason: `the approval did not verify: ${verifyError}` };
   }
   pendingApprovals.delete(approvalId);
   return { status, verdict: check.claims.verdict, verified: true, decidedBy: check.claims.decidedBy || null, reason: res.body.reason || '' };

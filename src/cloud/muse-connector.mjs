@@ -65,12 +65,13 @@
 // (envoy-librarian.mjs) files dispatched asks into. That notebook
 // is Helmian's shared memory: the Neon store the agents themselves
 // use. Scoping decisions, all deliberate:
-//   - The notebook's own seat read includes the NULL-slug platform
-//     rows (project_slug IS NULL — rows every tenant has always
-//     read). This endpoint serves ONLY the key tenant's own rows
+//   - The notebook's own seat read once included the NULL-slug
+//     platform rows; fix A9 closed that namespace, and the seat
+//     read now binds the tenant slug exactly, like this endpoint.
+//     This endpoint has only ever served the key tenant's own rows
 //     (project_slug = the key's tenant): the connector's law is
-//     tenant-only, and the shared rows are a named exclusion, not
-//     an oversight. Another tenant's rows can never appear.
+//     tenant-only. Another tenant's rows can never appear, and a
+//     NULL-slug row is visible to no one.
 //   - The librarian knowledge base (helmion.librarian_incidents)
 //     and the blockers/lessons pile are memory-adjacent stores with
 //     their own surfaces; they are NOT the shared notebook and are

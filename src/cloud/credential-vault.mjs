@@ -36,7 +36,11 @@
 // database transaction open. (The replacement check therefore reads first
 // and gates second; a record created in between is a new record, not a
 // replacement, and is not gated — the gate's purpose is oversight of
-// replacements, and the audit trail shows every store either way.)
+// replacements, and the audit trail shows every store either way.) A gate
+// REFUSAL is audit-visible too: every refusal emits one
+// 'credential.gate_refused' event before it returns (see
+// emitGateRefusalAudit), so the trail shows refused attempts — in all
+// three forms, on both gated roads — and not only landed operations.
 //
 // THE TWO OAUTH-REFRESH ROADS (vault-refresh bite, follow-on to B5).
 // A record's expires_at describes its ACCESS token: the OAuth callback
@@ -294,6 +298,42 @@ export function createCredentialVault({ pool, masterKey, auditSink = null, guard
     return null;
   }
 
+  // Audit visibility for gate refusals (audit bite AT-2, test T5).
+  // A refusal returns before any write transaction exists — the gate
+  // runs outside the transaction by design — so without this, a
+  // refusal lands in no audit trail the vault or the credential
+  // service keeps: a denied resolve was visible only on the Guard's
+  // own side, and a no-gate or gate-error refusal was recorded
+  // nowhere. Every refusal therefore emits ONE event here, in a
+  // short transaction of its own, before the refusal returns. The
+  // caller passes shapes only (provider, kind, reference — never
+  // the operation's input, which carries the material being stored),
+  // and the event adds the gate action refused, the refusal's
+  // guard_* status as its reason class, and its own time; emitAudit
+  // stamps the tenant and actor from the context. With no sink wired
+  // there is no trail to write to and nothing happens — the same
+  // posture as every other event in this module. A sink or database
+  // failure never changes the refusal: it is caught here, and the
+  // refusal returns exactly as runGate shaped it.
+  async function emitGateRefusalAudit(action, shape, context, refused) {
+    if (typeof auditSink !== 'function') return;
+    try {
+      await withTenantTransaction(pool, transactionContext(context), async (client) => {
+        await emitAudit(client, context, {
+          action: 'credential.gate_refused',
+          gateAction: action,
+          providerId: shape.providerId,
+          credentialKind: shape.credentialKind ?? null,
+          credentialReference: shape.credentialReference,
+          reasonClass: refused.status,
+          at: new Date().toISOString(),
+        });
+      });
+    } catch {
+      // The refusal stands whether or not the audit write landed.
+    }
+  }
+
   // Inside a tenant transaction: load (or create) the tenant data key.
   async function tenantKey(client, tenantId, { create = false } = {}) {
     const found = await client.query('select wrapped_data_key, wrap_iv, wrap_auth_tag, shredded_at from helmion.tenant_vault_keys where tenant_id=$1', [tenantId]);
@@ -349,7 +389,10 @@ export function createCredentialVault({ pool, masterKey, auditSink = null, guard
       let gatePassed = false;
       if (isReplacement && !provenanceReplacement) {
         const refused = await runGate('credential.replace', { ...input, credentialKind: normalized.kind }, context);
-        if (refused) return refused;
+        if (refused) {
+          await emitGateRefusalAudit('credential.replace', { providerId: input.providerId, credentialKind: normalized.kind, credentialReference: input.credentialReference }, context, refused);
+          return refused;
+        }
         gatePassed = true;
       }
       // For the arming actor, the membership check is replaced only
@@ -420,7 +463,10 @@ export function createCredentialVault({ pool, masterKey, auditSink = null, guard
       if (head.expires_at && new Date(head.expires_at).getTime() <= Date.now() && !refreshRetrieval) return { status: 'credential_not_available', accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed' };
       if (head.credential_kind === 'password') {
         const refused = await runGate('credential.password_resolve', { ...input, credentialKind: 'password' }, context);
-        if (refused) return refused;
+        if (refused) {
+          await emitGateRefusalAudit('credential.password_resolve', { providerId: input.providerId, credentialKind: 'password', credentialReference: input.credentialReference }, context, refused);
+          return refused;
+        }
       }
       const resolved = await withTenantTransaction(pool, txContext, async (client) => {
         if (!(systemArming && dispatchRetrieval)) await requireActiveTenantMembership(client, txContext);

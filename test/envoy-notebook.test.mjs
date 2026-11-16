@@ -89,7 +89,7 @@ function fakeNotebookPool({ blockers = [], entries = [], lessons = [], failOn = 
   };
 }
 
-test('readNotebookBlock: every read is scoped to the tenant slug plus the shared rows', async () => {
+test('readNotebookBlock: every read is scoped to the tenant slug exactly — the NULL namespace reads for no one (fix A9)', async () => {
   const pool = fakeNotebookPool({ blockers: [BLOCKER], entries: [{ project_slug: 'tenant-a', ...ENTRY }], lessons: [{ lesson: LESSON }] });
   const block = await readNotebookBlock(pool, 'tenant-a');
   assert.ok(block.includes(BLOCKER.description));
@@ -98,24 +98,25 @@ test('readNotebookBlock: every read is scoped to the tenant slug plus the shared
   assert.equal(pool.calls.length, 3);
   for (const call of pool.calls) {
     assert.deepEqual(call.params, ['tenant-a'], 'the tenant id is the only scope parameter');
-    assert.match(call.q, /project_slug = \$1 or project_slug is null/, 'tenant rows plus shared rows, nothing else');
+    assert.match(call.q, /project_slug = \$1/, 'the tenant slug is bound');
+    assert.doesNotMatch(call.q, /project_slug is null/, 'no shared-row arm: a NULL-slug row is visible to no tenant');
   }
 });
 
-test('readNotebookBlock: a key filed under the tenant beats the shared row of the same key', async () => {
-  // The query orders tenant rows first; the reader keeps the first
-  // sighting of a key.
+test('readNotebookBlock: a repeated key keeps its first (newest) sighting', async () => {
+  // The query orders newest first; the reader keeps the first
+  // sighting of a key and drops later ones.
   const pool = fakeNotebookPool({
     entries: [
-      { project_slug: 'tenant-a', key: 'winner', value: 'the tenant version' },
-      { project_slug: null, key: 'winner', value: 'the shared version' },
-      { project_slug: null, key: 'shared-only', value: 'shared fact' },
+      { project_slug: 'tenant-a', key: 'winner', value: 'the newest version' },
+      { project_slug: 'tenant-a', key: 'winner', value: 'the older version' },
+      { project_slug: 'tenant-a', key: 'other-fact', value: 'another fact' },
     ],
   });
   const block = await readNotebookBlock(pool, 'tenant-a');
-  assert.ok(block.includes('the tenant version'));
-  assert.ok(!block.includes('the shared version'));
-  assert.ok(block.includes('shared fact'));
+  assert.ok(block.includes('the newest version'));
+  assert.ok(!block.includes('the older version'));
+  assert.ok(block.includes('another fact'));
 });
 
 test('readNotebookBlock: empty tables read as no block, and a failed read is null with a loud log', async () => {
@@ -185,7 +186,7 @@ async function cleanupTenant(pool, tenantId) {
   await pool.query('delete from helmion.projects where slug = $1', [tenantId]).catch(() => {});
 }
 
-test('agentWork: the work item carries the tenant notebook — its own entries and the shared ones, never another tenant\'s', { skip: pgSkip }, async () => {
+test('agentWork: the work item carries the tenant notebook — its own entries only, never another tenant\'s and never the shared rows', { skip: pgSkip }, async () => {
   const { default: pg } = await import('pg');
   const { createEnvoyMesh } = await import('../src/cloud/envoy-mesh.mjs');
   const { createEnvoyStore } = await import('../src/cloud/envoy-chat.mjs');
@@ -197,7 +198,8 @@ test('agentWork: the work item carries the tenant notebook — its own entries a
   const b = await seedTenant(pool, chat, mesh, 'notebook-b');
   try {
     // Notebook rows: A's slug is its tenant id (helmion.projects FK),
-    // B likewise, plus one shared (NULL slug) entry.
+    // B likewise, plus one shared (NULL slug) entry — planted to
+    // prove it now reads for no one (fix A9).
     await pool.query('insert into helmion.projects(slug, name) values ($1,$2),($3,$4)', [a.tenantId, 'A', b.tenantId, 'B']);
     await pool.query(
       `insert into helmion.context_entries(project_slug, key, value) values ($1,'winner', $2::jsonb), ($3,'winner', $4::jsonb), (null,'shared-fact', $5::jsonb)`,
@@ -208,7 +210,7 @@ test('agentWork: the work item carries the tenant notebook — its own entries a
       [a.tenantId],
     );
     await pool.query(
-      `insert into helmion.blockers(project_slug, status, severity, description, lesson, resolved_at) values ($1,'RESOLVED','low','an old blocker', 'tenant A lesson: measure the box, do not guess', now())`,
+      `insert into helmion.blockers(project_slug, status, severity, description, outcome, citation, root_cause, snippet, lesson, resolved_at) values ($1,'RESOLVED','low','an old blocker', 'done', 'proof.mjs:1', 'canary cause', 'canary snippet', 'tenant A lesson: measure the box, do not guess', now())`,
       [a.tenantId],
     );
 
@@ -217,7 +219,7 @@ test('agentWork: the work item carries the tenant notebook — its own entries a
     assert.ok(item, 'the ask is dispatched');
     assert.equal(typeof item.notebook, 'string', 'the work item carries the notebook block');
     assert.ok(item.notebook.includes('tenant A fact: the A build won'));
-    assert.ok(item.notebook.includes('the shared fact everyone may know'), 'shared (NULL slug) rows ride along');
+    assert.ok(!item.notebook.includes('the shared fact everyone may know'), 'shared (NULL slug) rows are visible to no tenant (fix A9)');
     assert.ok(item.notebook.includes('tenant A is blocked on the wash-tag photos'));
     assert.ok(item.notebook.includes('tenant A lesson: measure the box, do not guess'));
     assert.ok(!item.notebook.includes('TENANT B SECRET FACT'), "tenant B's entries never appear in tenant A's block");

@@ -18,13 +18,17 @@ import {
   ESTATE_CARGO_TREES,
   ESTATE_TREE_FILE_MAX_BYTES,
   IDENTIFYING_PATTERNS,
+  PROFILE_SYNC_STAMP_PROVIDERS,
+  TARGET_PRESENCE_PROVIDERS,
   TARGET_SPECS,
+  appendBlockBodyFor,
   defaultTargetDirectory,
   installAgentOs,
   installAgentOsTargets,
   listTemplateFiles,
   loadAgentOsTemplates,
   loadEstateCargo,
+  mergeHookSettings,
   render,
   renderAgentOsFiles,
   renderEstateFiles,
@@ -170,20 +174,28 @@ test('an existing companion file is left byte-for-byte alone', async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-test('the installer never writes a settings file', async () => {
+test('the installer wires the hooks into the settings file the tool reads', async () => {
   const dir = await scratch();
   for (const target of AGENT_OS_TARGETS) {
     const targetDir = join(dir, target);
     await mkdir(targetDir, { recursive: true });
     const result = await installAgentOs({ target, dir: targetDir, apply: true });
 
-    assert.equal(result.hooksWired, false);
-    assert.equal(
-      existsSync(result.settingsFile),
-      false,
-      `${target}: ${TARGET_SPECS[target].settingsFile} must be left for the user to merge`,
-    );
+    assert.equal(result.hooksWired, true, `${target}: a fresh settings file is created already wired`);
+    assert.ok(existsSync(result.settingsFile), `${target}: ${TARGET_SPECS[target].settingsFile} must exist`);
     assert.ok(existsSync(result.settingsSnippet), `${target}: the snippet must exist`);
+    // The settings file carries the same hook entries as the snippet —
+    // the merge target and the snippet are one content on a fresh file.
+    assert.equal(
+      await readFile(result.settingsFile, 'utf8'),
+      await readFile(result.settingsSnippet, 'utf8'),
+      `${target}: fresh settings must equal the snippet`,
+    );
+    const settings = JSON.parse(await readFile(result.settingsFile, 'utf8'));
+    const commands = Object.values(settings.hooks ?? {})
+      .flatMap((groups) => groups.flatMap((group) => (group.hooks ?? []).map((hook) => hook.command ?? '')));
+    assert.ok(commands.some((command) => command.includes('session-start-context.mjs')), `${target}: SessionStart wired`);
+    assert.ok(commands.some((command) => command.includes('stop-capture.mjs')), `${target}: turn-end wired`);
   }
   await rm(dir, { recursive: true, force: true });
 });
@@ -451,7 +463,7 @@ test('the CLI emits machine-readable JSON for the desktop UI', async () => {
   assert.equal(report.applied, true);
   assert.equal(report.targets.length, 1);
   assert.equal(report.targets[0].target, 'claude');
-  assert.equal(report.targets[0].hooksWired, false);
+  assert.equal(report.targets[0].hooksWired, true);
   assert.ok(report.targets[0].files.every((file) => typeof file.action === 'string'));
   assert.ok(existsSync(join(dir, 'CLAUDE.md')));
 
@@ -506,7 +518,7 @@ test('a grok install writes the rules file and the companion set', async () => {
 
   assert.equal(report.target, 'grok');
   assert.equal(report.applied, true);
-  assert.equal(report.hooksWired, false, 'this installer never edits a settings file');
+  assert.equal(report.hooksWired, true, 'the hooks land in the file grok reads (hooks/agent-os.json)');
 
   // The rules actually reached the file a Grok session reads.
   const context = await readFile(join(dir, 'AGENTS.md'), 'utf8');
@@ -565,11 +577,22 @@ async function estateHome() {
   return home;
 }
 
-const withBlock = (own) => [
+// The block body a current sync keeps in a context file, per target. A
+// fixture carrying it is a seat whose rules are already current, so the
+// sync must leave the file byte-for-byte; the refresh of a STALE block
+// is pinned by its own tests below.
+async function currentBlockBody(target) {
+  const templates = await loadAgentOsTemplates();
+  const files = renderAgentOsFiles({ target, templates, installDir: '/tmp/x' });
+  const context = files.find((file) => file.path === TARGET_SPECS[target].contextFile);
+  return appendBlockBodyFor({ target, renderedContext: context.content });
+}
+
+const withBlock = (own, body) => [
   own,
   '',
   AGENT_OS_MARKER_BEGIN,
-  '@agent-os/AGENT_OS.md',
+  body,
   AGENT_OS_MARKER_END,
   '',
 ].join('\n');
@@ -654,8 +677,8 @@ test('the estate lands in every seat, refreshes on change, and touches no seat f
   // own context files, and codex has its own LESSONS.md: all of those are
   // the seats' own files and must come through byte-for-byte.
   const ownContext = {
-    codex: withBlock('# Codex own rules'),
-    grok: withBlock('# Grok own rules'),
+    codex: withBlock('# Codex own rules', await currentBlockBody('codex')),
+    grok: withBlock('# Grok own rules', await currentBlockBody('grok')),
   };
   await mkdir(join(home, '.codex'), { recursive: true });
   await writeFile(join(home, '.codex', 'AGENTS.md'), ownContext.codex, 'utf8');
@@ -667,7 +690,7 @@ test('the estate lands in every seat, refreshes on change, and touches no seat f
 
   // The source CLAUDE.md doubles as the claude seat's context file; give it
   // the block too, so the run leaves the source itself exactly as found.
-  const sourceClaude = withBlock(ESTATE_SOURCES['CLAUDE.md']);
+  const sourceClaude = withBlock(ESTATE_SOURCES['CLAUDE.md'], await currentBlockBody('claude'));
   await writeFile(join(home, '.claude', 'CLAUDE.md'), sourceClaude, 'utf8');
 
   const first = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
@@ -1206,4 +1229,230 @@ test('installing all four targets into one directory keeps grok separate from co
   assert.notEqual(grokRules, codexRules, 'each target must get its own rendered file');
 
   await rm(dir, { recursive: true, force: true });
+});
+
+// ── FIX-S1: the block refreshes, the hooks wire, the estate is pointed at ──
+//
+// Audit A1 proved three freezes: an existing marker block was reported
+// "unchanged" whatever rules it held (D2), the hooks were never merged
+// into any settings file (D1), and nothing the sync wrote pointed a seat
+// at the estate it carried (D3). These tests pin the fixed behaviour on
+// fixtures, including the canary leg of A1's live-test design: plant a
+// rules change, sync twice, and the second sync must show the change
+// landed in the cargo the tool actually loads.
+
+test('D2: a rules change refreshes the block in an existing codex file in place', async () => {
+  const dir = await scratch();
+  const own = '# My own AGENTS notes\n\nLocal rule: keep it short.\n';
+  await writeFile(join(dir, 'AGENTS.md'), own, 'utf8');
+  const base = await loadAgentOsTemplates();
+  const v1 = { ...base, 'core/CORE_RULES.md': 'Rule set one. No canary yet.' };
+  const v2 = { ...base, 'core/CORE_RULES.md': 'Rule set two. CANARY-RULE-7749: always check the canary.' };
+
+  const first = await installAgentOs({ target: 'codex', dir, templates: v1, apply: true });
+  assert.equal(first.files.find((file) => file.path === 'AGENTS.md').action, 'append');
+  let text = await readFile(join(dir, 'AGENTS.md'), 'utf8');
+  assert.ok(text.includes('Rule set one'), 'the first sync lands the first rules');
+  assert.equal(text.split(AGENT_OS_MARKER_BEGIN).length - 1, 1, 'an append writes exactly one marker pair');
+  assert.equal(text.split(AGENT_OS_MARKER_END).length - 1, 1);
+
+  const second = await installAgentOs({ target: 'codex', dir, templates: v2, apply: true });
+  assert.equal(
+    second.files.find((file) => file.path === 'AGENTS.md').action,
+    'update',
+    'the stale block must refresh, not report unchanged',
+  );
+  text = await readFile(join(dir, 'AGENTS.md'), 'utf8');
+  assert.ok(text.includes('CANARY-RULE-7749'), 'the canary is in the cargo codex loads');
+  assert.ok(!text.includes('Rule set one'), 'the old rules are gone from the block');
+  assert.ok(text.includes('Local rule: keep it short.'), 'content outside the block survives byte-for-byte');
+  assert.ok(text.startsWith('# My own AGENTS notes'));
+  assert.equal(text.split(AGENT_OS_MARKER_BEGIN).length - 1, 1, 'the refresh keeps exactly one marker pair');
+
+  const third = await installAgentOs({ target: 'codex', dir, templates: v2, apply: true });
+  assert.equal(
+    third.files.find((file) => file.path === 'AGENTS.md').action,
+    'unchanged',
+    'a refreshed block is current, not re-refreshed forever',
+  );
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('D2: a legacy nested-marker block is refreshed to a single current pair', async () => {
+  const dir = await scratch();
+  // The shape an older installer wrote: the rendered context file embedded
+  // whole inside the appended block, markers and all.
+  const legacy = [
+    '# Mine', '',
+    AGENT_OS_MARKER_BEGIN,
+    AGENT_OS_MARKER_BEGIN,
+    'OLD RULES BODY',
+    AGENT_OS_MARKER_END,
+    AGENT_OS_MARKER_END,
+    '',
+  ].join('\n');
+  await writeFile(join(dir, 'AGENTS.md'), legacy, 'utf8');
+
+  const result = await installAgentOs({ target: 'codex', dir, apply: true });
+  assert.equal(result.files.find((file) => file.path === 'AGENTS.md').action, 'update');
+  const text = await readFile(join(dir, 'AGENTS.md'), 'utf8');
+  assert.ok(text.startsWith('# Mine'));
+  assert.ok(!text.includes('OLD RULES BODY'), 'the frozen rules are replaced');
+  assert.match(text, /Cite or say nothing/, 'the current rules are in place');
+  assert.equal(text.split(AGENT_OS_MARKER_BEGIN).length - 1, 1, 'the nested pair collapses to one');
+  assert.equal(text.split(AGENT_OS_MARKER_END).length - 1, 1);
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('D2: a fresh-created context file refreshes when the rules change', async () => {
+  const dir = await scratch();
+  const base = await loadAgentOsTemplates();
+  const v1 = { ...base, 'core/CORE_RULES.md': 'Rule set one. No canary yet.' };
+  const v2 = { ...base, 'core/CORE_RULES.md': 'Rule set two. CANARY-RULE-7749: always check the canary.' };
+
+  const first = await installAgentOs({ target: 'claude', dir, templates: v1, apply: true });
+  assert.equal(first.files.find((file) => file.path === 'CLAUDE.md').action, 'create');
+
+  const second = await installAgentOs({ target: 'claude', dir, templates: v2, apply: true });
+  assert.equal(
+    second.files.find((file) => file.path === 'CLAUDE.md').action,
+    'update',
+    'a created file is not frozen at its first rules either',
+  );
+  const text = await readFile(join(dir, 'CLAUDE.md'), 'utf8');
+  assert.ok(text.includes('CANARY-RULE-7749'));
+
+  const third = await installAgentOs({ target: 'claude', dir, templates: v2, apply: true });
+  assert.equal(third.files.find((file) => file.path === 'CLAUDE.md').action, 'unchanged');
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('D2: markers in a shape the installer cannot prove it owns are left untouched', async () => {
+  const dir = await scratch();
+  const prose = `# Notes\n\nI quote the markers ${AGENT_OS_MARKER_BEGIN} and ${AGENT_OS_MARKER_BEGIN} in prose.\n`;
+  await writeFile(join(dir, 'AGENTS.md'), prose, 'utf8');
+
+  const result = await installAgentOs({ target: 'codex', dir, apply: true });
+  assert.equal(result.files.find((file) => file.path === 'AGENTS.md').action, 'skip');
+  assert.equal(await readFile(join(dir, 'AGENTS.md'), 'utf8'), prose, 'an unprovable shape is never rewritten');
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('D1: the merge lands in an existing settings file and preserves everything else', async () => {
+  const dir = await scratch();
+  const own = {
+    model: 'mine',
+    hooks: {
+      Stop: [{ hooks: [{ type: 'command', command: 'my-own-hook' }] }],
+      PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'guard-rail' }] }],
+    },
+  };
+  await writeFile(join(dir, 'settings.json'), `${JSON.stringify(own, null, 2)}\n`, 'utf8');
+
+  const result = await installAgentOs({ target: 'claude', dir, apply: true });
+  assert.equal(result.hooksWired, true);
+  assert.equal(result.files.find((file) => file.path === 'settings.json').action, 'update');
+
+  const merged = JSON.parse(await readFile(join(dir, 'settings.json'), 'utf8'));
+  assert.equal(merged.model, 'mine', 'the user settings keys survive');
+  assert.deepEqual(merged.hooks.PreToolUse, own.hooks.PreToolUse, 'unrelated events survive untouched');
+  assert.equal(merged.hooks.Stop.length, 2, 'our Stop group is appended beside the user own one');
+  assert.equal(merged.hooks.Stop[0].hooks[0].command, 'my-own-hook', 'the user hook stays first and intact');
+  const commands = Object.values(merged.hooks).flatMap((groups) => groups.flatMap((g) => (g.hooks ?? []).map((h) => h.command ?? '')));
+  assert.ok(commands.some((command) => command.includes('session-start-context.mjs')));
+  assert.ok(commands.some((command) => command.includes('stop-capture.mjs')));
+
+  const second = await installAgentOs({ target: 'claude', dir, apply: true });
+  assert.equal(second.hooksWired, true);
+  assert.equal(
+    second.files.find((file) => file.path === 'settings.json').action,
+    'unchanged',
+    'a wired settings file is not re-merged',
+  );
+  const again = JSON.parse(await readFile(join(dir, 'settings.json'), 'utf8'));
+  assert.equal(again.hooks.Stop.length, 2, 'no duplicate groups accumulate');
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('D1: an unparseable settings file is left untouched and reported not wired', async () => {
+  const dir = await scratch();
+  const broken = '{ "model": "mine", hooks go here\n';
+  await writeFile(join(dir, 'settings.json'), broken, 'utf8');
+
+  const result = await installAgentOs({ target: 'claude', dir, apply: true });
+  assert.equal(result.hooksWired, false, 'no merge, no wiring claim');
+  const entry = result.files.find((file) => file.path === 'settings.json');
+  assert.equal(entry.action, 'skip');
+  assert.match(entry.reason, /not valid JSON/);
+  assert.equal(await readFile(join(dir, 'settings.json'), 'utf8'), broken, 'the file is byte-for-byte as found');
+  assert.ok(existsSync(result.settingsSnippet), 'the snippet is left beside it for a manual merge');
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('D1: mergeHookSettings refuses foreign shapes and never rewrites formatting for its own sake', () => {
+  const snippet = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'ours' }] }] } });
+  assert.equal(mergeHookSettings('[1,2]', snippet).ok, false, 'a non-object settings file is refused');
+  assert.equal(mergeHookSettings('{"hooks": []}', snippet).ok, false, 'a non-object hooks entry is refused');
+  assert.equal(mergeHookSettings('{"hooks": {"Stop": "x"}}', snippet).ok, false, 'a non-list event is refused');
+
+  const already = '{ "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "ours" } ] } ] } }';
+  const merged = mergeHookSettings(already, snippet);
+  assert.equal(merged.ok, true);
+  assert.equal(merged.changed, false, 'already wired means no write');
+  assert.equal(merged.content, already, 'the user formatting survives untouched');
+});
+
+test('D3: every seat loaded cargo points at the estate it carries', async () => {
+  const dir = await scratch();
+  const report = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], dir, apply: true });
+  const byTarget = new Map(report.targets.map((result) => [result.target, result]));
+
+  const claude = await readFile(join(byTarget.get('claude').directory, 'CLAUDE.md'), 'utf8');
+  for (const pointer of ['@agent-os/estate/CLAUDE-ESTATE.md', '@agent-os/estate/LESSONS.md', '@agent-os/estate/LEARNINGS.md']) {
+    assert.ok(claude.includes(pointer), `claude context imports ${pointer}`);
+  }
+  const gemini = await readFile(join(byTarget.get('gemini').directory, 'GEMINI.md'), 'utf8');
+  assert.ok(gemini.includes('@agent-os/estate/CLAUDE-ESTATE.md'), 'gemini context imports the estate');
+
+  const codex = await readFile(join(byTarget.get('codex').directory, 'AGENTS.md'), 'utf8');
+  assert.ok(codex.includes('agent-os/estate/CLAUDE-ESTATE.md'), 'codex inlined rules name the estate');
+  const grok = await readFile(join(byTarget.get('grok').directory, 'AGENTS.md'), 'utf8');
+  assert.ok(grok.includes('agent-os/estate/CLAUDE-ESTATE.md'), 'grok inlined rules name the estate');
+
+  const shared = await readFile(join(byTarget.get('claude').directory, 'agent-os', 'AGENT_OS.md'), 'utf8');
+  assert.ok(shared.includes('estate/CLAUDE-ESTATE.md'), 'the imported AGENT_OS.md names the estate beside it');
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('D3: an appended import block carries the estate imports too', async () => {
+  const dir = await scratch();
+  await writeFile(join(dir, 'CLAUDE.md'), '# My own claude rules\n', 'utf8');
+  await installAgentOs({ target: 'claude', dir, apply: true });
+  const text = await readFile(join(dir, 'CLAUDE.md'), 'utf8');
+  assert.ok(text.includes('@agent-os/AGENT_OS.md'));
+  assert.ok(text.includes('@agent-os/estate/CLAUDE-ESTATE.md'), 'the appended block imports the estate');
+  assert.ok(text.includes('@agent-os/estate/LESSONS.md'));
+  assert.ok(text.includes('@agent-os/estate/LEARNINGS.md'));
+
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('D4: the stamp set is exactly the write set', () => {
+  assert.deepEqual(
+    [...PROFILE_SYNC_STAMP_PROVIDERS].sort(),
+    ['claude', 'gemini', 'grok', 'openai'],
+    'four writes, four stamps — no mistral, runway, qwen or ollama',
+  );
+  assert.deepEqual(
+    PROFILE_SYNC_STAMP_PROVIDERS,
+    AGENT_OS_TARGETS.map((target) => TARGET_PRESENCE_PROVIDERS[target]),
+    'the stamps derive from the installer targets, so they cannot drift',
+  );
 });

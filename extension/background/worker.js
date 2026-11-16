@@ -80,6 +80,7 @@ import {
   setFlagsSettings,
 } from './flags-client.js';
 import {
+  KIND_UNVERIFIED_DECISION,
   appendEntry,
   chromeStorage,
   clearLedger,
@@ -686,19 +687,50 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // ─── EXECUTIVE GUARD VERIFICATION LOOP ─────────────────────────────────
     // See background/executive.js. Without a paired server these answer from
     // the local policy and say so (source:'local', verified:false).
+    //
+    // AT-1 T2: a decision that COMES BACK from the server and fails
+    // verification (ruleId 'unverified-decision') is a forgery attempt or a
+    // hostile server. The rejection reaches the page labelled unverified in
+    // the moment; this append gives it a durable local record too — exactly
+    // one ledger entry per unverified decision, carrying the ruleId and the
+    // verify error. Local-policy answers carry a local ruleId, not this
+    // one, so they never land here: no decision came back, nothing to file.
+    // A failed ledger write is logged and swallowed — it must never change
+    // the decision answer the page receives.
+    const fileUnverifiedDecision = async (result, site) => {
+      const entry = makeEntry({
+        kind: KIND_UNVERIFIED_DECISION,
+        site: site || '',
+        matched: result.ruleId,
+        text: result.verifyError || result.reason || '',
+        outcome: 'denied-unverified',
+      });
+      try { await appendEntry(ledger, entry); }
+      catch (error) { console.warn('[Helmion Guard] could not file an unverified decision in the ledger:', error?.message || error); }
+    };
     if (type === 'helmion:decide') {
       let action;
       try { action = cleanAction(message.action); }
       catch (error) { sendResponse({ ok: false, error: error.message }); return false; }
       requestDecision(ledger, action, { pendingApprovals })
-        .then((decision) => sendResponse({ ok: true, decision }))
+        .then(async (decision) => {
+          if (decision && decision.verified === false && decision.ruleId === 'unverified-decision') {
+            await fileUnverifiedDecision(decision, action.site);
+          }
+          sendResponse({ ok: true, decision });
+        })
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
     }
 
     if (type === 'helmion:approval-status') {
       pollApproval(ledger, String(message.approvalId || ''), { pendingApprovals })
-        .then((status) => sendResponse({ ok: true, status }))
+        .then(async (status) => {
+          if (status && status.verified === false && status.ruleId === 'unverified-decision') {
+            await fileUnverifiedDecision(status, '');
+          }
+          sendResponse({ ok: true, status });
+        })
         .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
       return true;
     }

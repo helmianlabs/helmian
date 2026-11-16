@@ -4,21 +4,25 @@
 //
 // Env (in /opt/helmian-discord-bridge/app.env, chmod 600, never in git or Vercel):
 //   DISCORD_BOT_TOKEN           the Helmian Discord bot's token
-//   HELMIAN_ENVOY_BRIDGE_TOKEN  shared secret, same value as the Vercel env var
+//   HELMIAN_ENVOY_BRIDGE_TOKEN_DISCORD  this bridge's own cloud secret, same value
+//                               as the cloud env var of that name; presented first
+//                               when set (see envoyBridgeToken in bridge-core.mjs)
+//   HELMIAN_ENVOY_BRIDGE_TOKEN  shared secret, same value as the Vercel env var;
+//                               the fallback while the per-provider rotation runs
 //   HELMIAN_CLOUD               default https://helmian.cloud
 //   STATE_DIR                   default /data
 //   HEALTH_PORT / HEALTH_HOST   default 8095 on 0.0.0.0 inside the container; publish it as 127.0.0.1:8095 only
 import http from 'node:http';
-import { createBridge } from './bridge-core.mjs';
+import { createBridge, envoyBridgeToken } from './bridge-core.mjs';
 
 const cloud = process.env.HELMIAN_CLOUD || 'https://helmian.cloud';
-const bridgeToken = String(process.env.HELMIAN_ENVOY_BRIDGE_TOKEN ?? '').trim();
+const bridgeToken = envoyBridgeToken();
 const discordToken = String(process.env.DISCORD_BOT_TOKEN ?? '').trim();
 const stateDir = process.env.STATE_DIR || '/data';
 const log = (...a) => console.log(new Date().toISOString(), '[discord-bridge]', ...a);
 
 const health = { discord: discordToken ? 'connecting' : 'not_configured', cloud: bridgeToken ? 'unknown' : 'not_configured', botUser: null, guilds: 0, inviteUrl: null };
-const bridge = bridgeToken ? createBridge({ cloud, token: bridgeToken, stateDir, log }) : null;
+const bridge = bridgeToken ? createBridge({ cloud, token: bridgeToken, provider: 'discord', stateDir, log }) : null;
 
 http.createServer((req, res) => {
   if (req.url !== '/healthz') { res.writeHead(404); res.end(); return; }
@@ -27,7 +31,7 @@ http.createServer((req, res) => {
 }).listen(Number(process.env.HEALTH_PORT || 8095), process.env.HEALTH_HOST || '0.0.0.0');
 
 async function main() {
-  if (!bridge) { log('HELMIAN_ENVOY_BRIDGE_TOKEN is not set; idle.'); return; }
+  if (!bridge) { log('HELMIAN_ENVOY_BRIDGE_TOKEN_DISCORD / HELMIAN_ENVOY_BRIDGE_TOKEN are not set; idle.'); return; }
   await bridge.load();
   try { await bridge.refreshLinks(); health.cloud = 'ok'; log(`cloud ok, ${bridge.links.length} linked channel(s)`); }
   catch (e) { health.cloud = `error: ${e.message}`; log('cloud check failed:', e.message); }

@@ -99,7 +99,17 @@ test('mesh end to end on Postgres: agents join, work is routed once, Discord lin
     const inbound = await mesh.bridgeInbound({ tenantId, envoyChannelId: channel.id, discordChannelId: '222222', discordMessageId: '999999', authorId: '333333', authorName: 'Paul', body: '@gemini what about pricing?' });
     assert.equal(inbound.receipt.message.authorName, 'Paul');
     assert.equal(inbound.receipt.message.source, 'discord');
-    assert.equal((await mesh.bridgeInbound({ tenantId, envoyChannelId: channel.id, discordChannelId: '222222', discordMessageId: '999999', authorId: '333333', authorName: 'Paul', body: 'x' })).receipt.replayed, true);
+    // The origin rides in metadata too, stamped exactly as the Slack
+    // branch stamps it (AT-3 T8 weakness 2): provider, the workspace id
+    // (guildId, Discord's teamId), channel id and channel name, all from
+    // the link config — never from the bridge's say-so in the body.
+    assert.equal(inbound.receipt.message.metadata.source.provider, 'discord');
+    assert.equal(inbound.receipt.message.metadata.source.guildId, '111111');
+    assert.equal(inbound.receipt.message.metadata.source.channelId, '222222');
+    assert.equal(inbound.receipt.message.metadata.source.channelName, 'general');
+    const discordReplay = await mesh.bridgeInbound({ tenantId, envoyChannelId: channel.id, discordChannelId: '222222', discordMessageId: '999999', authorId: '333333', authorName: 'Paul', body: 'x' });
+    assert.equal(discordReplay.receipt.replayed, true, 'Discord redelivery replays, never dupes');
+    assert.equal(discordReplay.receipt.message.metadata.source.provider, 'discord', 'the stored row a redelivery replays carries the origin stamp');
     await assert.rejects(mesh.bridgeInbound({ tenantId, envoyChannelId: channel.id, discordChannelId: '444444', discordMessageId: '999998', authorId: '333333', authorName: 'Paul', body: 'x' }), /NOT_LINKED/);
     // Discord humans trigger agents too.
     work = (await mesh.agentWork(device, 'gemini')).work;

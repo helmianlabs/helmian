@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { createCredentialVault } from '../src/cloud/credential-vault.mjs';
 import { createDatabaseEncryptedVaultAdapter } from '../src/cloud/database-encrypted-vault-adapter.mjs';
-import { createCredentialService, createCredentialServiceAuditLog, createGuardApprovalGate, createMemoryAuditLog } from '../src/cloud/credential-service.mjs';
+import { createCredentialService, createCredentialServiceAuditLog, createCredentialServiceFromParts, createGuardApprovalGate, createMemoryAuditLog } from '../src/cloud/credential-service.mjs';
 import { createCredentialServiceClient, createCredentialServiceVaultAdapter } from '../src/cloud/credential-service-client.mjs';
 import { buildConnectorTokenRef, createConnectorLibraryStore } from '../src/cloud/connector-library.mjs';
 import { catalogEntryById } from '../src/cloud/connector-catalog.mjs';
@@ -265,6 +265,126 @@ test('gate: a denying gate refuses; an approving gate lets the same operations t
   assert.equal(replaced.status, 'credential_replaced_in_vault');
   const resolved = await approving.resolveCredential({ ...pw, reasonClass: 'browser_sign_in' });
   assert.equal(resolved.credential, 'new-password');
+});
+
+test('gate: a throwing gate refuses with guard_gate_unavailable on both gated roads, and the originals stand', async () => {
+  const { pool } = fakePool();
+  const throwing = makeVault(pool, { guardGate: async () => { throw new Error('guard unreachable'); } });
+  const pw = { ...actorA, providerId: 'claude', credentialReference: ref('tenant-a', 'pw-throw'), credentialKind: 'password', password: PASSWORD };
+  const key = { ...actorA, providerId: 'gemini', credentialReference: ref('tenant-a', 'k-throw'), credentialKind: 'api_key', apiKey: SECRET };
+  await throwing.storeCredential(pw);
+  await throwing.storeCredential(key);
+  const unavailable = { accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed', status: 'guard_gate_unavailable' };
+  assert.deepEqual(await throwing.resolveCredential({ ...pw, reasonClass: 'browser_sign_in' }), unavailable);
+  assert.deepEqual(await throwing.storeCredential({ ...pw, password: 'REPLACEMENT-PASSWORD-do-not-leak' }), unavailable);
+  assert.deepEqual(await throwing.storeCredential({ ...key, apiKey: 'REPLACEMENT-KEY-do-not-leak' }), unavailable);
+  const approving = makeVault(pool, { guardGate: async () => ({ approved: true }) });
+  const stillPw = await approving.resolveCredential({ ...pw, reasonClass: 'browser_sign_in' });
+  assert.equal(stillPw.credential, PASSWORD, 'the refused password replacement never landed');
+  const stillKey = await approving.resolveCredential({ ...key, reasonClass: 'provider_call' });
+  assert.equal(stillKey.credential, SECRET, 'the refused key replacement never landed');
+});
+
+test('gate audit: every refusal emits exactly one credential.gate_refused event, distinguished by form and road, with no secret material', async () => {
+  const scenarios = [
+    { name: 'no gate configured', guardGate: null, status: 'guard_gate_not_configured' },
+    { name: 'gate throws', guardGate: async () => { throw new Error('guard unreachable'); }, status: 'guard_gate_unavailable' },
+    { name: 'gate denies', guardGate: async () => ({ approved: false }), status: 'guard_approval_required' },
+  ];
+  const allEvents = [];
+  for (const scenario of scenarios) {
+    const { pool } = fakePool();
+    const log = createMemoryAuditLog();
+    const vault = makeVault(pool, { auditSink: log.sink, guardGate: scenario.guardGate });
+    const pw = { ...actorA, providerId: 'claude', credentialReference: ref('tenant-a', 'pw-audit'), credentialKind: 'password', password: PASSWORD };
+    const key = { ...actorA, providerId: 'gemini', credentialReference: ref('tenant-a', 'k-audit'), credentialKind: 'api_key', apiKey: SECRET };
+    await vault.storeCredential(pw);
+    await vault.storeCredential(key);
+    assert.equal(log.events.length, 2, `${scenario.name}: the two planting stores are the only events so far`);
+    const refusalShape = { accepted: false, secretMaterial: 'not_returned', providerInvocation: 'not_performed', status: scenario.status };
+    const attempts = [
+      { run: () => vault.resolveCredential({ ...pw, reasonClass: 'browser_sign_in' }), gateAction: 'credential.password_resolve', credentialKind: 'password', providerId: 'claude', credentialReference: pw.credentialReference },
+      { run: () => vault.storeCredential({ ...pw, password: 'REPLACEMENT-PASSWORD-do-not-leak' }), gateAction: 'credential.replace', credentialKind: 'password', providerId: 'claude', credentialReference: pw.credentialReference },
+      { run: () => vault.storeCredential({ ...key, apiKey: 'REPLACEMENT-KEY-do-not-leak' }), gateAction: 'credential.replace', credentialKind: 'api_key', providerId: 'gemini', credentialReference: key.credentialReference },
+    ];
+    for (const [index, attempt] of attempts.entries()) {
+      const before = log.events.length;
+      const refused = await attempt.run();
+      assert.deepEqual(refused, refusalShape, `${scenario.name}: refusal ${index + 1} keeps the exact four-field refusal shape`);
+      assert.equal(log.events.length, before + 1, `${scenario.name}: refusal ${index + 1} moves the audit count by exactly one`);
+      const event = log.events[log.events.length - 1];
+      assert.equal(event.action, 'credential.gate_refused');
+      assert.equal(event.gateAction, attempt.gateAction, `${scenario.name}: the event names the refused road`);
+      assert.equal(event.reasonClass, scenario.status, `${scenario.name}: the event names the refusal form`);
+      assert.equal(event.providerId, attempt.providerId);
+      assert.equal(event.credentialKind, attempt.credentialKind);
+      assert.equal(event.credentialReference, attempt.credentialReference);
+      assert.equal(event.tenantId, 'tenant-a');
+      assert.equal(event.actorSubject, 'user-a');
+      assert.equal(event.secretMaterial, 'not_received');
+      assert.equal(Number.isNaN(Date.parse(event.at)), false, 'the event carries its time');
+      assert.equal('credential' in event, false);
+      assert.equal('password' in event, false);
+      assert.equal('apiKey' in event, false);
+    }
+    assert.equal(log.events.filter((event) => event.action === 'credential.gate_refused').length, 3, `${scenario.name}: three refusals, three events, no more`);
+    allEvents.push(...log.events);
+  }
+  const serialized = JSON.stringify(allEvents);
+  for (const marker of [PASSWORD, SECRET, 'REPLACEMENT-PASSWORD-do-not-leak', 'REPLACEMENT-KEY-do-not-leak']) {
+    assert.equal(serialized.includes(marker), false, `no planted marker reaches an audit event (${marker})`);
+  }
+});
+
+test('gate audit: non-refusals stay silent — approved operations and not-available answers emit no gate_refused event', async () => {
+  const { pool } = fakePool();
+  const log = createMemoryAuditLog();
+  const vault = makeVault(pool, { auditSink: log.sink, guardGate: async () => ({ approved: true }) });
+  const pw = { ...actorA, providerId: 'claude', credentialReference: ref('tenant-a', 'pw-quiet'), credentialKind: 'password', password: PASSWORD };
+  const key = { ...actorA, providerId: 'gemini', credentialReference: ref('tenant-a', 'k-quiet'), credentialKind: 'api_key', apiKey: SECRET };
+  await vault.storeCredential(pw);
+  await vault.storeCredential(key);
+  await vault.resolveCredential({ ...pw, reasonClass: 'browser_sign_in' });
+  await vault.storeCredential({ ...pw, password: 'rotated-password' });
+  await vault.resolveCredential({ ...key, reasonClass: 'provider_call' });
+  const missing = await vault.resolveCredential({ ...pw, credentialReference: ref('tenant-a', 'absent-pw'), reasonClass: 'browser_sign_in' });
+  assert.equal(missing.status, 'credential_not_available', 'a missing password record answers before the gate is ever consulted');
+  assert.deepEqual(log.events.map((event) => event.action), ['credential.stored', 'credential.stored', 'credential.resolved', 'credential.replaced', 'credential.resolved']);
+  assert.equal(log.events.filter((event) => event.action === 'credential.gate_refused').length, 0);
+});
+
+test('service: a gate refusal lands in the hash-chained audit log as exactly one gate_refused line per refusal', async () => {
+  const dir = mkdtempSync(join(process.cwd(), 'test', '.tmp-cred-refusal-'));
+  try {
+    const { pool } = fakePool();
+    const auditLog = createCredentialServiceAuditLog({ path: join(dir, 'audit.jsonl') });
+    const service = createCredentialServiceFromParts({ pool, masterKey: MASTER_1, serviceToken: 'svc-token', auditLog, guardGate: null });
+    const auth = { authorization: 'Bearer svc-token' };
+    const pw = { ...actorA, providerId: 'claude', credentialReference: ref('tenant-a', 'svc-refused-pw'), credentialKind: 'password', password: PASSWORD };
+    const stored = await service.handle({ method: 'POST', path: '/v1/credentials/store', headers: auth, body: JSON.stringify(pw) });
+    assert.equal(stored.status, 200);
+    const refusedResolve = await service.handle({ method: 'POST', path: '/v1/credentials/resolve', headers: auth, body: JSON.stringify({ ...pw, reasonClass: 'browser_sign_in' }) });
+    assert.equal(refusedResolve.status, 403);
+    assert.equal(refusedResolve.body.status, 'guard_gate_not_configured');
+    const refusedReplace = await service.handle({ method: 'POST', path: '/v1/credentials/store', headers: auth, body: JSON.stringify({ ...pw, password: 'REPLACEMENT-PASSWORD-do-not-leak' }) });
+    assert.equal(refusedReplace.status, 403);
+    assert.equal(refusedReplace.body.status, 'guard_gate_not_configured');
+    const raw = readFileSync(join(dir, 'audit.jsonl'), 'utf8');
+    const lines = raw.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    assert.equal(lines.length, 3, 'the store and the two refusals, one line each — the refusals are no longer invisible');
+    assert.equal(lines[0].event.action, 'credential.stored');
+    assert.equal(lines[1].event.action, 'credential.gate_refused');
+    assert.equal(lines[1].event.gateAction, 'credential.password_resolve');
+    assert.equal(lines[1].event.reasonClass, 'guard_gate_not_configured');
+    assert.equal(lines[2].event.action, 'credential.gate_refused');
+    assert.equal(lines[2].event.gateAction, 'credential.replace');
+    assert.equal(lines[1].prevHash, lines[0].hash, 'the chain still links across a refusal line');
+    assert.equal(lines[2].prevHash, lines[1].hash);
+    assert.equal(raw.includes(PASSWORD), false);
+    assert.equal(raw.includes('REPLACEMENT-PASSWORD-do-not-leak'), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('service: refusal paths — no identity, no actor context, no reason class', async () => {

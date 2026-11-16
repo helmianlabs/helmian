@@ -17,10 +17,33 @@
 // only a device-token caller may claim work or post a report — the
 // same line the connected claim and the activity feed draw.
 //
+// Report honesty (FIX-A5, 2026-11-16): a device report used to be
+// believed whole — a report whose hashes matched nothing that was
+// installed still closed the job "done" and the page checkmarked every
+// line (audit AT-4, T10 leg 2). Now every job carries, from enqueue
+// time, the expected sha256 of the one subset of files whose intended
+// content the cloud can know: the kit rendered from the shipped
+// templates/agent-os/ set by the installer's own render (see
+// buildExpectedKitHashes below). jobOut checks each reported file
+// against that set and exposes the verdicts as fileChecks, parallel to
+// files: 'verified' (a kit file, hash matches what Helmian shipped),
+// 'mismatch' (a kit file, hash differs — renders as FAILED, never a
+// checkmark), 'reported' (anything else — the estate, the context
+// files, the install-path-dependent kit files — which no cloud
+// expectation can cover; renders as reported by the PC, not verified).
+// The expected hashes themselves never leave the server.
+//
 // Wiring note: live-admin.mjs is frozen at the push size limit, so this
 // route hangs off the envoy-ably hook next to the runner-presence
 // delegate, with its own lazy pool (same env var, same ssl rule).
+import { createHash } from 'node:crypto';
 import { Pool } from 'pg';
+import {
+  AGENT_OS_TARGETS,
+  TARGET_SPECS,
+  loadAgentOsTemplates,
+  renderAgentOsFiles,
+} from '../core/agent-os.mjs';
 
 export const PROFILE_SYNC_PATH = '/api/admin/envoy/profile-sync';
 export const PROFILE_SYNC_KIND = 'profile-sync';
@@ -53,8 +76,12 @@ export const PROFILE_SYNC_NO_DESKTOP_MESSAGE = 'No computer is connected yet, so
 export const PROFILE_SYNC_EXPIRED_MESSAGE = 'No computer picked up the sync within 15 minutes, so it was cancelled. Open Helmian on your PC and press Sync again.';
 
 // The report is small scalars only — a path, a target name, a
-// created/updated verb, a hash. Anything else is dropped here so the
+// created/updated/current verb, a hash. "current" is a seat the sync
+// examined and found already up to date, hash read back from disk like
+// the writes — reported, never dropped, so the screen can prove what
+// an unchanged seat is running. Anything else is dropped here so the
 // result column can never become a file-content or secret channel.
+const REPORT_ACTIONS = new Set(['created', 'updated', 'current']);
 export function sanitizeProfileSyncFiles(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
@@ -63,7 +90,7 @@ export function sanitizeProfileSyncFiles(raw) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
     const path = String(entry.path ?? '').trim();
     const target = String(entry.target ?? '').trim().slice(0, 40);
-    const action = entry.action === 'created' ? 'created' : entry.action === 'updated' ? 'updated' : null;
+    const action = REPORT_ACTIONS.has(entry.action) ? entry.action : null;
     const sha256 = String(entry.sha256 ?? '').trim().toLowerCase();
     if (!path || path.length > 1024 || !action || !SHA256_HEX.test(sha256)) continue;
     out.push({ path, target, action, sha256 });
@@ -71,14 +98,102 @@ export function sanitizeProfileSyncFiles(raw) {
   return out;
 }
 
+// ── The expected kit ────────────────────────────────────────────────
+//
+// The kit subset a job can be checked against: per target, the files
+// the installer renders from the shipped templates whose installed
+// bytes the cloud can predict exactly. Built by the installer's own
+// render (renderAgentOsFiles), so the expectation can never drift
+// from what the installer writes. Two renders under two different
+// install directories separate the predictable files from the ones
+// whose content embeds the PC's own paths (the hooks snippet and the
+// merge instructions — install-path-dependent, honestly unverifiable
+// from here). The context file is excluded by name: when it already
+// exists on the PC the installer appends a block to the user's own
+// content, so its final bytes are the user's, not the kit's. What
+// remains — the companion logs, agent-os/AGENT_OS.md, and the two hook
+// scripts — is byte-for-byte the shipped templates (rendered or
+// verbatim), identical on every PC that runs the current kit.
+export function buildExpectedKitHashes(templates) {
+  const expected = {};
+  for (const target of AGENT_OS_TARGETS) {
+    const spec = TARGET_SPECS[target];
+    const renders = ['/helmian-kit-check-a', '/helmian-kit-check-b']
+      .map((installDir) => renderAgentOsFiles({ target, templates, installDir }));
+    const second = new Map(renders[1].map((file) => [file.path, file.content]));
+    const table = {};
+    for (const file of renders[0]) {
+      if (file.path === spec.contextFile) continue;
+      if (second.get(file.path) !== file.content) continue;
+      table[file.path] = createHash('sha256').update(file.content, 'utf8').digest('hex');
+    }
+    expected[target] = table;
+  }
+  return expected;
+}
+
+let expectedKitPromise = null;
+// The enqueue-time expectation, loaded once from the shipped templates
+// and cached. A cloud that cannot read its own templates gets null —
+// the job then carries no expectation and every reported file renders
+// as reported-not-verified. The button never breaks over this; the
+// checkmarks do.
+export function expectedKitHashes() {
+  if (!expectedKitPromise) {
+    expectedKitPromise = (async () => {
+      try {
+        return buildExpectedKitHashes(await loadAgentOsTemplates());
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return expectedKitPromise;
+}
+
+// A report entry's path is the absolute path on the PC
+// (<home>/<target directory>/<installed relative path>). The installed
+// relative path is what keys the expected table; anything whose
+// relative path cannot be derived is unverifiable by construction.
+export function reportedKitRelativePath(file) {
+  const spec = TARGET_SPECS[file?.target];
+  if (!spec) return null;
+  const normalized = String(file?.path ?? '').replace(/\\/g, '/');
+  const needle = `/${spec.directoryName}/`;
+  const idx = normalized.lastIndexOf(needle);
+  if (idx < 0) return null;
+  const rel = normalized.slice(idx + needle.length);
+  return rel || null;
+}
+
+// One verdict per reported file, parallel to the input: 'verified'
+// (a kit file whose hash matches the expected hash), 'mismatch' (a
+// kit file whose hash differs), 'reported' (no expectation covers
+// this entry — it is the PC's word only).
+export function verifyProfileSyncFiles(files, expected) {
+  if (!Array.isArray(files)) return [];
+  return files.map((file) => {
+    const rel = reportedKitRelativePath(file);
+    const want = rel ? expected?.[file?.target]?.[rel] : undefined;
+    if (typeof want !== 'string') return 'reported';
+    return want === file?.sha256 ? 'verified' : 'mismatch';
+  });
+}
+
 function jobOut(row) {
   if (!row) return null;
+  const files = sanitizeProfileSyncFiles(row.result?.files);
   return {
     id: String(row.id),
     kind: String(row.kind ?? PROFILE_SYNC_KIND),
     status: String(row.status),
     requestedBy: row.requested_by ?? null,
-    files: sanitizeProfileSyncFiles(row.result?.files),
+    files,
+    // Per-file verdicts against the job's enqueue-time expectation,
+    // parallel to files. A job enqueued before sql/090 (or on a cloud
+    // that could not read its templates) carries no expectation and
+    // every file reads 'reported' — never a checkmark it did not earn.
+    fileChecks: verifyProfileSyncFiles(files, row.expected_files ?? null),
     // True only for a job the pending-expiry sweep below closed; the
     // surfaces render an expired job's reason whole instead of as a
     // failure on the PC.
@@ -152,16 +267,21 @@ export function createProfileSyncJobStore(pool) {
       }
     },
 
-    // A member's button press. One row, pending, carrying nothing but
-    // who asked. Returns the job the page will poll.
+    // A member's button press. One row, pending, carrying who asked
+    // and the expected kit hashes this job's report will be checked
+    // against (sql/090) — stamped at enqueue time, so the check binds
+    // the kit as it stood when the sync was requested, not whatever
+    // kit a later deploy happens to ship. Returns the job the page
+    // will poll.
     async enqueue(tenantId, { requestedBy = null } = {}) {
+      const expected = await expectedKitHashes();
       try {
         return await withTenant(tenantId, async (client) => {
           const r = await client.query(
-            `insert into helmion.profile_sync_jobs(tenant_id, kind, status, requested_by)
-             values (current_setting('helmion.tenant_id', true), $1, 'pending', $2)
-             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at`,
-            [PROFILE_SYNC_KIND, requestedBy != null ? String(requestedBy).slice(0, 200) : null]);
+            `insert into helmion.profile_sync_jobs(tenant_id, kind, status, requested_by, expected_files)
+             values (current_setting('helmion.tenant_id', true), $1, 'pending', $2, $3::jsonb)
+             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files`,
+            [PROFILE_SYNC_KIND, requestedBy != null ? String(requestedBy).slice(0, 200) : null, expected ? JSON.stringify(expected) : null]);
           return jobOut(r.rows[0]);
         });
       } catch (error) {
@@ -177,7 +297,7 @@ export function createProfileSyncJobStore(pool) {
         return await withTenant(tenantId, async (client) => {
           await expireStalePending(client);
           const r = await client.query(
-            `select id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at
+            `select id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files
              from helmion.profile_sync_jobs
              where tenant_id = current_setting('helmion.tenant_id', true) and id = $1`,
             [jobId]);
@@ -198,7 +318,7 @@ export function createProfileSyncJobStore(pool) {
         return await withTenant(tenantId, async (client) => {
           await expireStalePending(client);
           const r = await client.query(
-            `select id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at
+            `select id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files
              from helmion.profile_sync_jobs
              where tenant_id = current_setting('helmion.tenant_id', true)
              order by created_at desc, id desc
@@ -227,7 +347,7 @@ export function createProfileSyncJobStore(pool) {
                order by created_at asc, id asc
                limit 1
              )
-             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at`);
+             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files`);
           return jobOut(r.rows[0] ?? null);
         });
       } catch (error) {
@@ -251,7 +371,7 @@ export function createProfileSyncJobStore(pool) {
             `update helmion.profile_sync_jobs
              set status = $2, result = $3::jsonb, error = $4, completed_at = clock_timestamp()
              where tenant_id = current_setting('helmion.tenant_id', true) and id = $1 and status = 'claimed'
-             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at`,
+             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files`,
             [jobId, status, result ? JSON.stringify(result) : null, errorText]);
           if (!r.rows[0]) throw Object.assign(new Error('job not claimed'), { status: 409 });
           return jobOut(r.rows[0]);
