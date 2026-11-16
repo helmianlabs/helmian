@@ -421,6 +421,19 @@ async function postApprovalRequest(deps, token, channelId, req) {
   }
 }
 
+// The in-flight key for one agent-work job (fix programme bite M3b).
+// A marked message hands the mesh one work item PER PART (bite M3), so
+// one provider can hold two parts of the same message at once; keyed by
+// provider and message alone, the second part collided with the first
+// and never ran. When the item carries a slice, its part number joins
+// the key and the two parts are two jobs. An item with no slice keeps
+// the exact key it has always had, so unmarked traffic is untouched.
+export function agentJobKey(provider, item) {
+  const base = `${provider}|${item?.message?.id}`;
+  const n = item?.slice?.n;
+  return n === undefined || n === null ? base : `${base}|part:${n}`;
+}
+
 export async function runBridge(overrides = {}) {
   const deps = { ...defaultDeps(), ...overrides };
   const { log, logError } = deps;
@@ -554,7 +567,7 @@ export async function runBridge(overrides = {}) {
   };
 
   const runAgentJob = async ({ item, provider }) => {
-    const key = `${provider}|${item.message.id}`;
+    const key = agentJobKey(provider, item);
     // Stale-work guard: the cloud no longer routes 'maestro' turns, but
     // a queued or replayed item naming it must never be run or posted —
     // no provider answers as Maestro (Bite 2).
@@ -570,7 +583,7 @@ export async function runBridge(overrides = {}) {
       await sendAndWait(child, { cmd: 'reset' }, 'ready');
       const prepared = await expandAgentWorkBody(String(item.message?.body ?? ''));
       const message = prepared.body === String(item.message?.body ?? '') ? item.message : { ...item.message, body: prepared.body };
-      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source, notebook: item.notebook ?? null });
+      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source, notebook: item.notebook ?? null, slice: item.slice ?? null });
       // The person's connector connections ride the work item when the
       // cloud supplies them ([{seatId, entryId, refreshTokenRef, state}]
       // — vault references only, never values) so the child's arming
@@ -610,7 +623,7 @@ export async function runBridge(overrides = {}) {
       for (const item of res?.work ?? []) {
         configuredChannels.add(item.channel.id);
         for (const provider of item.agents ?? []) {
-          const key = `${provider}|${item.message.id}`;
+          const key = agentJobKey(provider, item);
           if (agentJobs.has(key)) continue;
           agentJobs.add(key);
           enqueue({ kind: 'agent', item, provider });
