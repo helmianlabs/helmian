@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentsToAnswer, mentionsIn, normalizeProvider, parseConfig, serializeConfig, publicConfig, describeAuthor, discordSubject, slackSubject, agentPrompt, emptyConfig, normalizeMessageMetadata, normalizeSkillToggles, MAX_MESSAGE_SKILLS, classifyFileAttachment, FILE_ATTACHMENT_MAX_BYTES, FILE_ATTACHMENTS_MAX_TOTAL_BYTES, sanitizeChannelAvatar, CHANNEL_AVATAR_CHARACTERS, CHANNEL_AVATAR_COLORS } from '../src/cloud/envoy-agents.mjs';
+import { agentsToAnswer, mentionsIn, normalizeProvider, normalizeEngine, normalizeCustomHandle, sanitizeCustomAgent, parseConfig, serializeConfig, publicConfig, describeAuthor, discordSubject, slackSubject, agentPrompt, agentSubject, emptyConfig, normalizeMessageMetadata, normalizeSkillToggles, MAX_MESSAGE_SKILLS, classifyFileAttachment, FILE_ATTACHMENT_MAX_BYTES, FILE_ATTACHMENTS_MAX_TOTAL_BYTES, sanitizeChannelAvatar, CHANNEL_AVATAR_CHARACTERS, CHANNEL_AVATAR_COLORS, AGENT_PROVIDERS, ANSWERING_PROVIDERS, AGENT_NAMES } from '../src/cloud/envoy-agents.mjs';
 import { CHARACTERS, COLORS } from '../web/marketing/app/avatars.mjs';
 
 const human = (body) => ({ authorKind: 'human', authorSubject: 'user_x', body });
@@ -586,4 +586,53 @@ test('message metadata: skills round-trip, omit when empty, and ride beside othe
   assert.deepEqual(mixed.connectors, [{ seatId: 'claude', entryId: 'helmian-github' }], 'the two roads stay separate in one metadata object');
   assert.equal(mixed.webSearch, true);
   assert.throws(() => normalizeMessageMetadata({ skills: [{ skillId: 'x', seatId: 'all' }, { skillId: 'x', seatId: 'all' }] }), /duplicated/);
+});
+
+test('helm identity: a reserved role handle, never a vendor provider (bite H1)', () => {
+  // The handle resolves, so @helm parses to the helm addressee and
+  // the 'agent:helm' subject can be built and described...
+  assert.equal(normalizeProvider('helm'), 'helm');
+  assert.equal(normalizeProvider('@Helm'), 'helm');
+  assert.equal(AGENT_NAMES.helm, 'Helm');
+  assert.equal(agentSubject('helm'), 'agent:helm');
+  assert.deepEqual(describeAuthor('agent:helm', 'agent'), { name: 'Helm', source: 'helmian', provider: 'helm' });
+  assert.deepEqual(mentionsIn('hey @helm, state?').providers, ['helm']);
+  assert.deepEqual(mentionsIn('@Helm ping').providers, ['helm']);
+  assert.deepEqual(mentionsIn('Helm: state of this workspace').providers, [], 'a bare vocative is not an @mention in this bite');
+  // ...but Helm is not a provider: not in the provider list, not
+  // among the answering providers, not an engine a custom agent
+  // may run on, and no prompt is ever composed for it.
+  assert.ok(!AGENT_PROVIDERS.includes('helm'));
+  assert.ok(!ANSWERING_PROVIDERS.includes('helm'));
+  assert.equal(normalizeEngine('helm'), null);
+  assert.throws(
+    () => agentPrompt({ provider: 'helm', channelTitle: 'x', members: ['helm'], message: { body: 'q' } }),
+    /helm is not an agent provider/);
+  // The handle is reserved: no custom agent may take it.
+  assert.equal(normalizeCustomHandle('helm'), null);
+  assert.equal(normalizeCustomHandle('@Helm'), null);
+  assert.equal(sanitizeCustomAgent({ handle: 'helm', name: 'Helm', provider: 'claude' }), null);
+});
+
+test('helm identity: configs drop it, teams never carry it, due sets never contain it', () => {
+  const c = emptyConfig();
+  c.agents = ['claude', 'helm'];
+  const back = parseConfig(serializeConfig(c));
+  assert.deepEqual(back.agents, ['claude'], 'a config naming helm reads back without it');
+  assert.deepEqual(publicConfig(back).agents.map((a) => a.provider), ['claude']);
+  const roster = ['claude', 'helm', 'gemini'];
+  // Ordinary channel: naming Helm alone earns nobody a vendor turn
+  // in this bite (the presence law's answering is H3); naming a
+  // seat beside Helm routes only the seat.
+  assert.deepEqual(agentsToAnswer(human('@helm state?'), roster), []);
+  assert.deepEqual(agentsToAnswer(human('@claude and @helm: go'), roster), ['claude']);
+  // Desk: an unnamed dispatch reaches the team, and the team never
+  // contains Helm; a Helm-only dispatch reaches no vendor seat.
+  assert.deepEqual(agentsToAnswer(human('build the page'), roster, { desk: true }), ['claude', 'gemini']);
+  assert.deepEqual(agentsToAnswer(human('@helm state?'), roster, { desk: true }), []);
+  assert.deepEqual(agentsToAnswer(human('@all status'), roster, { desk: true }), ['claude', 'gemini']);
+  // A room seats nobody when its only member would be Helm.
+  assert.deepEqual(agentsToAnswer(human('hello'), ['helm'], { room: true }), []);
+  // Free-Willy: a Helm-authored message routes no peers.
+  assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:helm', body: '@all go' }, roster, { debateMode: 'free-willy' }), []);
 });
