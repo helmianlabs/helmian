@@ -149,7 +149,7 @@ test('sync S2b wording: the strings that were already true stay — provenance a
   // Provenance is not a false claim: a mirror connection lives in
   // the seat's own vendor product, and its row still says so.
   assert.ok(js.includes('is managed in ${row.mirror.managedIn}, not in Helmian'), 'the mirror row still names where its connection is managed');
-  assert.ok(js.includes("open Helmian's Agents page for ${seatName(row.seatId)}'s account"), 'the mirror row still names the seat\u2019s own vendor account');
+  assert.ok(js.includes("the road to ${seatName(row.seatId)}'s account page"), 'the mirror row still names the seat\u2019s own vendor account (its Manage block carries the road to it)');
   // Entry stocking is per seat (S1): a custom entry is created in,
   // and removed from, the seat's library it stands in — those
   // words stay, in the workspace and in the faces' models.
