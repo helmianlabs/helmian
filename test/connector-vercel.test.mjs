@@ -121,8 +121,8 @@ const VERCEL_TOOLS = [
 
 // ------------------------------------------------------------ catalog
 
-test('catalog: the Vercel entry is a first-class Helmian-brokered entry on the OAuth (CIMD) road', () => {
-  for (const seatId of ['claude', 'chatgpt', 'grok']) {
+test('catalog: the Vercel entry is a first-class Helmian-brokered entry on the OAuth (CIMD) road, on every seat (universal stocking, 2026-11-15)', () => {
+  for (const seatId of LIVE_SEATS) {
     const def = catalogEntryById(seatId, ENTRY_ID);
     assert.ok(def, `${seatId}: stocked`);
     assert.equal(def.kind, 'catalog');
@@ -162,15 +162,12 @@ test('catalog: the Vercel entry is a first-class Helmian-brokered entry on the O
     assert.equal(kind.resourceUrl, ENDPOINT);
     assert.equal(kind.clientId, METADATA_URL);
   }
-  assert.equal(CONNECTOR_CATALOG.length, 134, '75 (Sources 1–3) + the Vercel entry on three seats + Bite R2: Slack/Asana/HubSpot on three seats and the Figma mirror on two + the Google family bite: Gmail/Google Calendar/Google Drive on three seats + the DCR long-tail bite: Meltwater/S&P Global/Idiolect/Gamma on three seats + the fixed-tail bite: Canva/Dropbox on three seats + the Microsoft bite: OneDrive/Outlook/Microsoft Teams/SharePoint on three seats + the Box bite: Box on three seats + the Salesforce bite: Salesforce on three seats');
+  assert.equal(CONNECTOR_CATALOG.length, 405, '405 — universal stocking (2026-11-15): 134 (the pre-universal census) + registry picks on every seat (+49) + brokered servers on every seat (+209) + Cloudflare Docs from Source 1 to Source 4 on every seat (+13 net)');
 });
 
-test('catalog: no seat outside the named three carries the brokered Vercel entry', () => {
+test('catalog: every seat carries exactly one brokered Vercel entry (universal stocking, 2026-11-15)', () => {
   for (const seatId of LIVE_SEATS) {
-    if (['claude', 'chatgpt', 'grok'].includes(seatId)) continue;
-    assert.equal(catalogEntryById(seatId, ENTRY_ID), null, `${seatId}: not stocked`);
-  }
-  for (const seatId of ['claude', 'chatgpt', 'grok']) {
+    assert.ok(catalogEntryById(seatId, ENTRY_ID), `${seatId}: stocked`);
     const ids = catalogEntriesForSeat(seatId).map((d) => d.id);
     assert.equal(new Set(ids).size, ids.length, `${seatId}: no id collision from the addition`);
     assert.equal(ids.filter((id) => id === ENTRY_ID).length, 1, `${seatId}: exactly one brokered Vercel entry`);
@@ -200,7 +197,7 @@ test('refresh road: the seed carries the Vercel definition to its seats like any
   assert.equal(def.mcpEndpointUrl, ENDPOINT);
   assert.equal(def.authMode, 'oauth', 'the seed carries the OAuth road — a refreshed row stops offering the key form');
   const gemini = await refresh.refreshSeat(TENANT, 'gemini');
-  assert.ok(!gemini.applied.includes(ENTRY_ID), 'an unstocked seat seeds no Vercel entry');
+  assert.ok(gemini.applied.includes(ENTRY_ID), 'universal stocking (2026-11-15): every seat seeds the Vercel entry');
 });
 
 // ------------------------------------------------- the document itself
