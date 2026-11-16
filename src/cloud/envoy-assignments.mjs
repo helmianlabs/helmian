@@ -15,6 +15,13 @@
 // through to ordinary dispatch exactly as before (DESIGN 2.3:
 // "the coordinator never swallows an ask it cannot structure").
 //
+// Bite M4 adds the settle watcher at the bottom of this file:
+// on each poll the mesh asks it to check the channel's open
+// assignments, post the one close line when every owned part
+// has its owner's reply in the channel record, and name a part
+// whose owner posted nothing within the work window — once per
+// part, never as silence (DESIGN 2.3, 2.5, 5.6).
+//
 // The parser accepts explicit enumeration only, in the shapes
 // DESIGN 2.3 names: "Part one / Part two / Part three" lines (or
 // the same markers inline in one paragraph), numbered lists,
@@ -399,6 +406,215 @@ export async function postMaestroAssignmentIfNeeded({ pool, tenantId, channelId,
     );
     await client.query('commit');
     return { assigned: true, messageId: String(inserted.rows[0].id), assignment };
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally { client.release(); }
+}
+
+// ---------- settle watching and close-out (bite M4) ----------
+
+export const MAESTRO_CLOSEOUT_KEY_PREFIX = 'maestro-closeout:';
+export const MAESTRO_UNSETTLED_KEY_PREFIX = 'maestro-unsettled:';
+export const MAESTRO_CLOSEOUT_BODY = 'All parts are in';
+// The window a part's owner has to post before the part is
+// named unanswered: the mesh's work window (WORK_WINDOW_MS in
+// envoy-mesh.mjs), the same span in which the part is handed
+// out. The mesh passes its own constant in; this default keeps
+// the two in step when the watcher is called without one.
+export const MAESTRO_SETTLE_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * The unsettled line for one part: it names the part and its
+ * owner, and says the observable truth — no answer was posted
+ * (DESIGN 2.5). A seat that answered but whose send failed to
+ * verify is indistinguishable in the channel record from a
+ * seat that never answered, and the line claims nothing the
+ * record cannot show. Pure.
+ */
+export function maestroUnsettledBody(part) {
+  return `Part ${part.n}: no answer posted from ${part.ownerName || part.owner}.`;
+}
+
+/**
+ * Decide what one marked message's settle state calls for.
+ * Pure. `settledOwners` is the set of owners with a reply in
+ * the channel record (the reply record is per seat per
+ * message, so one reply settles every part that seat owns —
+ * the M3 rule); `closed` says the close line already stands;
+ * `namedUnsettled` is the set of part numbers already named
+ * unanswered; `ageMs` is the marked message's age. A part the
+ * coordinator left unassigned is not this function's concern:
+ * it has no owner to settle or to name, and the assignment
+ * post already named it in the open. The close line is due
+ * when every part WITH an owner has that owner's reply. An
+ * unsettled line is due for an owned, unanswered part only
+ * once the message is as old as the work window — the owner
+ * had the whole window the part was handed out in, and posted
+ * nothing (DESIGN 2.3: "has not posted within the window").
+ */
+export function maestroSettlePlan(assignment, { settledOwners = new Set(), closed = false, namedUnsettled = new Set(), ageMs = 0, workWindowMs = MAESTRO_SETTLE_WINDOW_MS } = {}) {
+  const parts = Array.isArray(assignment?.parts) ? assignment.parts : [];
+  const owned = parts.filter((p) => p && typeof p.owner === 'string' && p.owner);
+  if (!owned.length) return { allSettled: false, closeOut: false, unsettled: [] };
+  if (owned.every((p) => settledOwners.has(p.owner))) {
+    return { allSettled: true, closeOut: !closed, unsettled: [] };
+  }
+  const unsettled = ageMs >= workWindowMs
+    ? owned.filter((p) => !settledOwners.has(p.owner) && !namedUnsettled.has(p.n))
+    : [];
+  return { allSettled: false, closeOut: false, unsettled };
+}
+
+const SETTLE_ROW_COLS = 'id, channel_id, author_subject, author_kind, body, idempotency_key, created_at, metadata';
+
+async function insertSettleLine(client, { tenantId, channelId, body, key, metadata }) {
+  const r = await client.query(
+    `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key, metadata)
+     values ($1,$2,$3,'agent',$4,$5,$6)
+     on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing
+     returning ${SETTLE_ROW_COLS}`,
+    [String(tenantId), String(channelId), MAESTRO_ASSIGNMENT_SUBJECT, body, key, JSON.stringify(metadata)],
+  );
+  return r.rowCount === 1 ? r.rows[0] : null;
+}
+
+/**
+ * Check the open assignments in the channels one poll served
+ * and post what is due (bite M4, DESIGN 2.3): the one close
+ * line for an assignment whose owned parts all have replies,
+ * and one unsettled line per owned part whose owner posted
+ * nothing within the work window. Runs in ONE tenant
+ * transaction for the whole poll — the coordinator's
+ * transaction pattern, at the poll's scale: a poll on a
+ * four-second loop cannot afford a transaction per channel
+ * (the pool-bounds discipline the 504 fixes bought), so the
+ * watcher reads every served channel's marked messages in a
+ * single query and writes only the lines that are due. The
+ * mesh calls it from the poll's deferred tail, so a failure
+ * is the caller's to log and never fails the poll.
+ *
+ * Exactly-once is durable, not remembered: the close line and
+ * each unsettled line insert under their own idempotency keys
+ * (maestro-closeout:<messageId>,
+ * maestro-unsettled:<messageId>:<part>) on the same unique
+ * constraint the assignment post uses, so a re-run, a duplicate
+ * trigger, or two racing polls can never post a second line.
+ * The watcher reads marked messages up to two work windows
+ * old: one window for the owners to answer in, and one more in
+ * which a poll can still see the assignment to name its
+ * unsettled parts and catch a late-landing reply for the
+ * close line. Beyond that the record stands as posted.
+ *
+ * Returns { posted, completions }: the rows this call actually
+ * inserted (the caller publishes them), and one completion job
+ * per fully settled assignment — settled state, not insert
+ * state, so a completion whose Librarian filing failed on an
+ * earlier poll is offered again until it lands; the store's
+ * own key keeps the record to exactly one.
+ */
+export async function settleMaestroAssignmentsIfNeeded({ pool, tenantId, channelIds, now = Date.now(), workWindowMs = MAESTRO_SETTLE_WINDOW_MS } = {}) {
+  const posted = [];
+  const completions = [];
+  const channels = [...new Set((channelIds ?? []).map((id) => String(id ?? '')).filter(Boolean))];
+  if (!channels.length) return { posted, completions };
+  const since = new Date(now - 2 * workWindowMs).toISOString();
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query(`select set_config('helmion.tenant_id', $1, true)`, [String(tenantId)]);
+    const marked = await client.query(
+      `select m.id, m.channel_id, m.author_subject, m.created_at, m.metadata,
+              c.slug as channel_slug, c.title as channel_title
+         from helmion.envoy_messages m
+         join helmion.envoy_channels c on c.tenant_id = m.tenant_id and c.id = m.channel_id
+        where m.tenant_id=$1 and m.channel_id = any($2::uuid[]) and m.author_kind='human'
+          and m.created_at > $3 and m.metadata -> 'maestroAssignment' is not null
+        order by m.created_at asc, m.id asc`,
+      [String(tenantId), channels, since],
+    );
+    if (!marked.rowCount) {
+      await client.query('commit');
+      return { posted, completions };
+    }
+    const replyKeys = marked.rows.map((r) => `reply:${r.id}`);
+    const settleKeys = [];
+    for (const r of marked.rows) {
+      settleKeys.push(`${MAESTRO_CLOSEOUT_KEY_PREFIX}${r.id}`);
+      let meta = r.metadata ?? null;
+      if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = null; } }
+      const count = Array.isArray(meta?.maestroAssignment?.parts) ? meta.maestroAssignment.parts.length : 0;
+      for (let n = 1; n <= count; n++) settleKeys.push(`${MAESTRO_UNSETTLED_KEY_PREFIX}${r.id}:${n}`);
+    }
+    const replies = await client.query(
+      `select author_subject, idempotency_key from helmion.envoy_messages
+        where tenant_id=$1 and channel_id = any($2::uuid[]) and idempotency_key = any($3)`,
+      [String(tenantId), channels, replyKeys],
+    );
+    const settledBy = new Map();
+    for (const r of replies.rows) {
+      const messageId = String(r.idempotency_key).slice('reply:'.length);
+      const subject = String(r.author_subject ?? '');
+      if (!subject.startsWith('agent:')) continue;
+      if (!settledBy.has(messageId)) settledBy.set(messageId, new Set());
+      settledBy.get(messageId).add(subject.slice('agent:'.length));
+    }
+    const existing = await client.query(
+      `select idempotency_key from helmion.envoy_messages
+        where tenant_id=$1 and channel_id = any($2::uuid[]) and author_subject=$3 and idempotency_key = any($4)`,
+      [String(tenantId), channels, MAESTRO_ASSIGNMENT_SUBJECT, settleKeys],
+    );
+    const existingKeys = new Set(existing.rows.map((r) => String(r.idempotency_key)));
+    for (const r of marked.rows) {
+      const messageId = String(r.id);
+      const channelId = String(r.channel_id);
+      let meta = r.metadata ?? null;
+      if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = null; } }
+      const assignment = meta?.maestroAssignment ?? null;
+      const namedUnsettled = new Set();
+      for (const part of assignment?.parts ?? []) {
+        if (part && existingKeys.has(`${MAESTRO_UNSETTLED_KEY_PREFIX}${messageId}:${part.n}`)) namedUnsettled.add(part.n);
+      }
+      const plan = maestroSettlePlan(assignment, {
+        settledOwners: settledBy.get(messageId) ?? new Set(),
+        closed: existingKeys.has(`${MAESTRO_CLOSEOUT_KEY_PREFIX}${messageId}`),
+        namedUnsettled,
+        ageMs: now - new Date(r.created_at).getTime(),
+        workWindowMs,
+      });
+      if (plan.allSettled) {
+        if (plan.closeOut) {
+          const row = await insertSettleLine(client, {
+            tenantId, channelId,
+            body: MAESTRO_CLOSEOUT_BODY,
+            key: `${MAESTRO_CLOSEOUT_KEY_PREFIX}${messageId}`,
+            metadata: { maestroCloseout: { messageId } },
+          });
+          if (row) posted.push(row);
+        }
+        completions.push({
+          channelId,
+          channelSlug: r.channel_slug,
+          channelTitle: r.channel_title,
+          messageId,
+          humanSubject: String(r.author_subject ?? ''),
+          assignment,
+          at: new Date(now).toISOString(),
+        });
+        continue;
+      }
+      for (const part of plan.unsettled) {
+        const row = await insertSettleLine(client, {
+          tenantId, channelId,
+          body: maestroUnsettledBody(part),
+          key: `${MAESTRO_UNSETTLED_KEY_PREFIX}${messageId}:${part.n}`,
+          metadata: { maestroUnsettled: { messageId, part: part.n } },
+        });
+        if (row) posted.push(row);
+      }
+    }
+    await client.query('commit');
+    return { posted, completions };
   } catch (error) {
     try { await client.query('rollback'); } catch {}
     throw error;
