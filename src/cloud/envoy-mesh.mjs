@@ -194,15 +194,32 @@ export function resolveDispatchSkills(toggles, records, dueSeats) {
  * neither is a part whose owner sits outside the roster: the due
  * set of a marked message is the distinct owners of its surviving
  * parts, and nothing else. The claim gate is applied by the
- * caller, on the owners, exactly as it binds any due set. Pure.
+ * caller, on the owners, exactly as it binds any due set.
+ *
+ * Sequential release (bite M5, DESIGN 2.3 and 5.3): when the
+ * record carries sequential: true, the plan is a conducted
+ * round — part N+1 is released only when part N's reply exists
+ * in the channel record, the same reply-existence fact the
+ * settle watcher (bite M4) reads. The gate is that fact alone:
+ * the first owned part whose owner has not answered is the
+ * frontier — it is planned (subject to the filters above) and
+ * every later owned part waits, whatever the reason it has not
+ * answered. A part with no owner never gates the round: it was
+ * never handed out and is never waited on, the settle rule. A
+ * record without the flag plans exactly as bite M3 left it.
+ * Pure.
  */
 export function maestroPartPlan(assignment, { members = [], joined = null, answered = new Set(), messageId = '', at = 0, isWanted = () => true } = {}) {
   const parts = Array.isArray(assignment?.parts) ? assignment.parts : [];
   const roster = new Set((members ?? []).map((m) => String(m)));
+  const sequential = assignment?.sequential === true;
   const plan = [];
+  let gated = false;
   for (const part of parts) {
     const owner = typeof part?.owner === 'string' && part.owner ? part.owner : null;
     if (!owner) continue;
+    if (sequential && gated) continue;
+    if (!answered.has(`agent:${owner}|${messageId}`)) gated = true;
     if (!roster.has(owner)) continue;
     if (!isWanted(owner)) continue;
     if (joined?.[owner] && at < Date.parse(joined[owner])) continue;
