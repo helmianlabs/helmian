@@ -1234,9 +1234,17 @@ export function createConnectorLibraryStore(pool) {
      * must exist in this seat's library, be available, and be
      * helmian-brokered — vendor-brokered entries take mirror records,
      * never token connections. The physical triple (person, seat,
-     * entry) stays unique — a second create ON THE SAME SEAT is
-     * refused (reconnect is updateConnectionTokens, not a silent
-     * overwrite) — but under the workspace SET the new row is stamped
+     * entry) stays unique. A create over a LIVE row on the landing
+     * seat is refused — connected is an occupied slot, and
+     * needs-reconnect is renewed by its refresh road
+     * (updateConnectionTokens), never by a silent overwrite. But a
+     * create over the person's own DISCONNECTED row on the landing
+     * seat is the reconnect landing: disconnect flipped that row's
+     * state and cleared its credential pointers without deleting the
+     * record, so the completed connect revives the row in place (see
+     * the branch below) — disconnect and connect are symmetric, and
+     * no second record ever stands beside the tombstone. Under the
+     * workspace SET the landed row, fresh or revived, is stamped
      * newest, so a connect completed on any seat becomes the set's
      * row for the entry: it replaces what every seat reads and arms,
      * and this seat becomes the row's provenance.
@@ -1278,7 +1286,33 @@ export function createConnectorLibraryStore(pool) {
           }
           const refs = validateTokenRefs(input, entry, tenantId);
           const existing = await readConnection(client, landingKey);
-          if (existing) throw conflict('this person already has a connection for this connector in this seat — v1 is one account per person per connector per seat');
+          if (existing && existing.state !== 'disconnected') {
+            throw conflict('this person already has a connection for this connector in this seat — v1 is one account per person per connector per seat');
+          }
+          if (existing) {
+            // The reconnect landing (§1.7): the person's own row on
+            // this seat stands disconnected — disconnect cleared its
+            // credential pointers and flipped its state; it did not
+            // delete the record — so the completed connect revives
+            // that row in place with the fresh sign-in's pointers,
+            // identity, and scopes, and the row reads connected
+            // again. The update is the renewal update's shape
+            // (updateConnectionTokens): it names neither posture nor
+            // the tool enable map, because disconnect clears
+            // credentials, not the person's own settings, and the
+            // snapshot pointer stays cleared — a fresh freeze
+            // follows from the connect flow's own roads, against the
+            // new sign-in. Stamped newest, the revived row is the
+            // SET's row, exactly as a fresh insert here would be.
+            const r = await client.query(
+              `update helmion.connector_connections
+                 set access_token_ref = $4, refresh_token_ref = $5, account_identity = $6,
+                     granted_scopes = $7::jsonb, state = 'connected', updated_at = clock_timestamp()
+               where ${whereConnection} returning *`,
+              [landingKey.personId, landingKey.seatId, landingKey.entryId, refs.accessTokenRef, refs.refreshTokenRef, accountIdentity, JSON.stringify(grantedScopes)],
+            );
+            return connectionOf(r.rows[0]);
+          }
           const r = await client.query(
             `insert into helmion.connector_connections
                (tenant_id, person_id, seat_id, entry_id, account_identity,

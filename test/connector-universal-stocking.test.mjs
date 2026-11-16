@@ -340,6 +340,63 @@ test('state walls: a connection lands on its own entry only — never another en
   assert.deepEqual(otherTenant.rows.filter((r) => r.state === 'connected'), [], 'another tenant: nothing connected');
 });
 
+test('reconnect round trip: Weather connects, disconnects, and connects again, same seat and cross-seat', async () => {
+  const { store, read } = await makeWorld();
+  const weatherState = async (seatId) => {
+    const view = await read.readSeatLibrary(TENANT, { personId: PERSON, seatId });
+    return view.rows.find((r) => r.entryId === 'registry-weather').state;
+  };
+  const connect = (seatId) => store.createConnection(TENANT, PERSON, {
+    personId: PERSON, seatId, entryId: 'registry-weather',
+    accountIdentity: 'No sign-in', accessTokenRef: null, refreshTokenRef: null,
+    grantedScopes: [], posture: 'ask',
+  });
+
+  // Connect through NVIDIA's row (the seat the 2026-11-15 live
+  // proof used): the set's one connection, read on every seat.
+  const first = await connect('nvidia');
+  assert.equal(first.state, 'connected');
+  assert.equal(await weatherState('claude'), 'connected');
+
+  // A second connect over the live connection is still refused —
+  // the slot is occupied, on the very seat that holds the row.
+  await assert.rejects(() => connect('nvidia'), /already has a connection for this connector/);
+
+  // Disconnect from another seat: the whole set reads
+  // not-connected (the regression the live proof caught: from
+  // here, every Connect road used to refuse forever).
+  const gone = await store.disconnectConnection(TENANT, { personId: PERSON, seatId: 'claude', entryId: 'registry-weather' }, PERSON);
+  assert.equal(gone.connection.state, 'disconnected');
+  assert.equal(await weatherState('nvidia'), 'not-connected');
+  assert.equal(await weatherState('claude'), 'not-connected');
+
+  // Reconnect from the seat whose row stands disconnected: the
+  // row revives in place — the same record, never a second one.
+  const back = await connect('nvidia');
+  assert.equal(back.state, 'connected');
+  assert.equal(back.id, first.id, 'the disconnected row revives in place');
+  assert.equal(await weatherState('claude'), 'connected');
+
+  // Disconnect again, then reconnect from a seat that holds no
+  // row of its own: a fresh row lands there and becomes the set's.
+  await store.disconnectConnection(TENANT, { personId: PERSON, seatId: 'nvidia', entryId: 'registry-weather' }, PERSON);
+  assert.equal(await weatherState('claude'), 'not-connected');
+  const fresh = await connect('claude');
+  assert.equal(fresh.state, 'connected');
+  assert.notEqual(fresh.id, first.id, 'a fresh physical row for the new connection');
+  assert.equal(await weatherState('nvidia'), 'connected');
+
+  // And the cycle closes a second time from the first seat: its
+  // older disconnected row revives again, so connect and
+  // disconnect stay symmetric however often they alternate.
+  await store.disconnectConnection(TENANT, { personId: PERSON, seatId: 'claude', entryId: 'registry-weather' }, PERSON);
+  assert.equal(await weatherState('nvidia'), 'not-connected');
+  const again = await connect('nvidia');
+  assert.equal(again.state, 'connected');
+  assert.equal(again.id, first.id, 'the first seat’s own row revives again');
+  assert.equal(await weatherState('claude'), 'connected');
+});
+
 test('state walls: the channel arm toggles are per seat — arming on one seat arms it on no other', () => {
   let toggles = emptyConnectorToggles();
   toggles = toggleConnector(toggles, 'channel:c1', 'groq', 'registry-weather');
