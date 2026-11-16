@@ -99,7 +99,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .brand-copy { display: grid; line-height: 1.15; }
 .brand-copy strong { color: var(--accent); font-size: 15px; letter-spacing: 0.01em; }
 .brand-copy small { margin-top: 4px; color: var(--muted); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
-nav { display: flex; align-items: center; gap: 30px; flex-wrap: wrap; }
+nav { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
 nav a { color: var(--soft); font-size: 13px; font-weight: 650; text-decoration: none; }
 nav a:hover { color: var(--accent); }
 .nav-menu { position: relative; }
