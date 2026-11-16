@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=86f168ba470898d9';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=86f168ba470898d9';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, isConnectorOn, level1Model, level2Model, librarySeat, manageModel, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=86f168ba470898d9';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=86f168ba470898d9';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=86f168ba470898d9';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=86f168ba470898d9';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=86f168ba470898d9';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=86f168ba470898d9';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=86f168ba470898d9';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=86f168ba470898d9';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=86f168ba470898d9';
-import { createConnectFields } from './connect-fields.mjs?v=86f168ba470898d9';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=86f168ba470898d9';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=86f168ba470898d9';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=3425df270a5e58eb';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=3425df270a5e58eb';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, isConnectorOn, level1Model, level2Model, librarySeat, manageModel, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=3425df270a5e58eb';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=3425df270a5e58eb';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=3425df270a5e58eb';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=3425df270a5e58eb';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=3425df270a5e58eb';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=3425df270a5e58eb';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=3425df270a5e58eb';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=3425df270a5e58eb';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=3425df270a5e58eb';
+import { createConnectFields } from './connect-fields.mjs?v=3425df270a5e58eb';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=3425df270a5e58eb';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=3425df270a5e58eb';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -27,9 +27,9 @@ const ASSET_STAMP = new URL(import.meta.url).searchParams.get('v');
 const assetUrl = (url) => (ASSET_STAMP ? `${url}?v=${ASSET_STAMP}` : url);
 
 const AGENTS = ['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter'];
-const NAMES = { maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
+const NAMES = { maestro: 'Maestro', helm: 'Helm', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter' };
 const AVATAR = { maestro: 'maestro', claude: 'claude', openai: 'chatgpt', grok: 'grok', gemini: 'gemini' };
-const ALIAS = { maestro: 'maestro', manager: 'maestro', claude: 'claude', chatgpt: 'openai', openai: 'openai', gpt: 'openai', grok: 'grok', xai: 'grok', gemini: 'gemini', mistral: 'mistral', lechat: 'mistral', runway: 'runway', qwen: 'qwen', ollama: 'qwen', groq: 'groq', nvidia: 'nvidia', nim: 'nvidia', cloudflare: 'cloudflare', workersai: 'cloudflare', openrouter: 'openrouter' };
+const ALIAS = { maestro: 'maestro', manager: 'maestro', helm: 'helm', claude: 'claude', chatgpt: 'openai', openai: 'openai', gpt: 'openai', grok: 'grok', xai: 'grok', gemini: 'gemini', mistral: 'mistral', lechat: 'mistral', runway: 'runway', qwen: 'qwen', ollama: 'qwen', groq: 'groq', nvidia: 'nvidia', nim: 'nvidia', cloudflare: 'cloudflare', workersai: 'cloudflare', openrouter: 'openrouter' };
 export const CUSTOM_AGENT_EMOJIS = ['🤖', '🦀', '🧐', '🤠', '🔥', '🧠', '⚡', '🛡️', '🎯', '🚀', '🦊', '🦉', '🐝', '🛠️', '📊', '🎨', '😀', '😎', '🤓', '🥷', '🧙', '🦾', '🐉', '🌟'];
 export const CUSTOM_PROVIDER_OPTIONS = [
   ['claude', 'Claude (Anthropic)'],
@@ -2611,6 +2611,18 @@ function crewRowEntry(spec) {
   };
   return entry;
 }
+// Helm's crew presence (bite H1): Helm is in every channel's crew
+// by default — a display rule, not a config member. No channel
+// config seats Helm (the cloud registry drops a config 'helm'
+// entry), no roster carries it, and the row is not counted in the
+// crew total, which counts the channel's seats. The row's data is
+// this pure shape so the suite can pin it; renderCrew dresses it
+// with the face builder and the target title, the way it dresses
+// the whole-crew row.
+export function helmCrewPresence(still = false) {
+  return { cacheKey: 'helm', key: 'helm', name: NAMES.helm, status: { kind: 'live', line: 'Always here' }, faceStamp: `${still ? 'still' : 'clip'}:${crewFaceSlug('helm')}` };
+}
+
 function renderCrew(roster, customList, states, desk) {
   const list = $('ew-crew-list');
   if (!list) return;
@@ -2643,9 +2655,14 @@ function renderCrew(roster, customList, states, desk) {
     faceStamp: `${still ? 'still' : 'clip'}:owner`,
     buildFace: () => crewOwnerFaceClip(null),
     title: desk ? 'Dispatch to everyone on the desk' : 'Target the whole crew — clears a single-seat target' };
+  // Helm's row rides beside the whole-crew row: present in every
+  // channel, ahead of the seats, never counted among them.
+  const helmSpec = { ...helmCrewPresence(still), stage: null,
+    buildFace: () => crewSeatFaceClip('helm', null),
+    title: desk ? 'Dispatch to Helm — your message goes to Helm' : 'Target Helm — your message goes to Helm' };
   const desired = [];
   const seen = new Set();
-  for (const spec of [ownerSpec, ...specs]) {
+  for (const spec of [ownerSpec, helmSpec, ...specs]) {
     seen.add(spec.cacheKey);
     let entry = crewRowCache.get(spec.cacheKey);
     if (!entry) { entry = crewRowEntry(spec); crewRowCache.set(spec.cacheKey, entry); }
@@ -6192,7 +6209,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=86f168ba470898d9');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=3425df270a5e58eb');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
