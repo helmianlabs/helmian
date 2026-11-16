@@ -2,6 +2,26 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canonicalizeMigrationSql, createNeonStore } from '../src/adapters/neon.mjs';
 
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// The fake pool recognises a migration body by its exact canonical
+// content, derived from the sql/ directory with the same selection and
+// ordering rule the runner itself uses (src/adapters/neon.mjs
+// loadMigrations). The hand-kept snippet list this replaces stopped at
+// migration 044 while sql/ grew past it, which is why this suite broke
+// silently once it was wired into the gate: a new migration file must
+// be recognised here without anyone editing the test.
+const migrationsDir = fileURLToPath(new URL('../sql', import.meta.url));
+const migrationNames = (await readdir(migrationsDir))
+  .filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name))
+  .sort((a, b) => a.localeCompare(b));
+const migrationBodies = new Map();
+for (const name of migrationNames) {
+  migrationBodies.set(canonicalizeMigrationSql(await readFile(join(migrationsDir, name), 'utf8')), name);
+}
+
 test('migration SQL has one cross-platform checksum representation', () => {
   const linux = 'create table helmion.example (id integer);\n';
   const windows = 'create table helmion.example (id integer);\r\n';
@@ -30,46 +50,6 @@ class MigrationPool {
         if (normalized.startsWith('select pg_advisory_xact_lock')) {
           return { rowCount: 1, rows: [{}] };
         }
-        if (String(sql).includes('helmion.billing_events')) {
-          pool.executedSql.push('030_helmion_billing_entitlements.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('helmion.provider_connections')) {
-          pool.executedSql.push('031_helmion_provider_connections.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('helmion.workspace_projects')) {
-          pool.executedSql.push('032_workspace_projects.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('helmion.app_session_steps')) {
-          pool.executedSql.push('044_app_session_steps.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('helmion.organization_invites')) {
-          pool.executedSql.push('043_org_invites_desktop_links.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('helmion.app_sessions')) {
-          pool.executedSql.push('042_app_sessions.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('helmion.console_command_runs')) {
-          pool.executedSql.push('041_console_command_runs.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('helmion.console_command_intents')) {
-          pool.executedSql.push('033_console_command_intents.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('helmion.provider_oauth_transactions')) {
-          pool.executedSql.push('034_helmion_provider_oauth.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (normalized.includes('create schema if not exists helmion')) {
-          if (String(sql).includes('helmion.projects')) pool.executedSql.push('001_helmion.sql');
-          return { rowCount: 0, rows: [] };
-        }
         if (normalized.startsWith('create table if not exists helmion.schema_migrations')) {
           return { rowCount: 0, rows: [] };
         }
@@ -87,104 +67,12 @@ class MigrationPool {
           });
           return { rowCount: 1, rows: [] };
         }
-        if (String(sql).includes('helmion.human_identity_keys')) {
-          pool.executedSql.push('003_human_confirmations.sql');
+        const bodyName = migrationBodies.get(canonicalizeMigrationSql(String(sql)));
+        if (bodyName) {
+          pool.executedSql.push(bodyName);
           return { rowCount: 0, rows: [] };
         }
-        if (String(sql).includes('helmion.maestro_operations')) {
-          pool.executedSql.push('002_maestro_phase_one.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.tenants')) {
-          pool.executedSql.push('004_tenant_audit_outbox.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('add column if not exists claim_token')) {
-          pool.executedSql.push('005_tenant_audit_claims.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.audit_outbox_operations')) {
-          pool.executedSql.push('006_tenant_audit_claim_operations.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.platform_action_policy')) {
-          pool.executedSql.push('007_platform_action_policy.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('equipment_safety_status_enabled')) {
-          pool.executedSql.push('008_equipment_safety_action_policy.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('CREATE TABLE IF NOT EXISTS helmion.envoy_channels')) {
-          pool.executedSql.push('009_envoy_chat.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_configs')) {
-          pool.executedSql.push('010_cora_organization_config.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_usage_budgets')) {
-          pool.executedSql.push('011_cora_provider_usage.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_workspace_preview_intents')) {
-          pool.executedSql.push('012_cora_workspace_preview_intents.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_agent_task_intents')) {
-          pool.executedSql.push('013_cora_agent_task_intents.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_agent_task_claims')) {
-          pool.executedSql.push('014_cora_agent_task_claims.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('alter table helmion.cora_knowledge_sources') && !String(sql).includes('cora_knowledge_sources_effective_idx')) {
-          pool.executedSql.push('015_cora_knowledge_retrieval_metadata.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_artifact_studio_intents')) {
-          pool.executedSql.push('016_cora_artifact_studio_intents.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_artifact_sources')) {
-          pool.executedSql.push('017_cora_artifact_sources.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_artifact_script_revisions')) {
-          pool.executedSql.push('018_cora_artifact_script_revisions.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_artifact_execution_requests')) {
-          pool.executedSql.push('019_cora_artifact_execution_requests.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_personal_preferences')) {
-          pool.executedSql.push('020_cora_personal_preferences.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.organization_database_registry')) {
-          pool.executedSql.push('021_organization_database_registry.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.workspace_layout_role_defaults')) {
-          pool.executedSql.push('022_workspace_layout_preferences.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('cora_knowledge_sources_effective_idx')) {
-          pool.executedSql.push('023_cora_knowledge_management.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_usage_budget_allocations')) {
-          pool.executedSql.push('024_cora_usage_budget_allocations.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_approval_decisions')) {
-          pool.executedSql.push('025_cora_approval_decisions.sql');
-          return { rowCount: 0, rows: [] };
-        }
-        if (String(sql).includes('create table if not exists helmion.cora_connector_registrations')) {
-          pool.executedSql.push('026_cora_connector_registrations.sql');
+        if (normalized.includes('create schema if not exists helmion')) {
           return { rowCount: 0, rows: [] };
         }
         throw new Error(`Unexpected migration query: ${normalized.slice(0, 100)}`);
@@ -200,131 +88,16 @@ test('migration runner applies ordered migrations once and confirms durable comm
   const first = await store.migrate();
   assert.deepEqual(
     first.map((result) => [result.migration, result.applied, result.durability]),
-    [
-      ['001_helmion.sql', true, 'committed'],
-      ['002_maestro_phase_one.sql', true, 'committed'],
-      ['003_human_confirmations.sql', true, 'committed'],
-      ['004_tenant_audit_outbox.sql', true, 'committed'],
-      ['005_tenant_audit_claims.sql', true, 'committed'],
-      ['006_tenant_audit_claim_operations.sql', true, 'committed'],
-      ['007_platform_action_policy.sql', true, 'committed'],
-      ['008_equipment_safety_action_policy.sql', true, 'committed'],
-      ['009_envoy_chat.sql', true, 'committed'],
-      ['010_cora_organization_config.sql', true, 'committed'],
-      ['011_cora_provider_usage.sql', true, 'committed'],
-      ['012_cora_workspace_preview_intents.sql', true, 'committed'],
-      ['013_cora_agent_task_intents.sql', true, 'committed'],
-      ['014_cora_agent_task_claims.sql', true, 'committed'],
-      ['015_cora_knowledge_retrieval_metadata.sql', true, 'committed'],
-      ['016_cora_artifact_studio_intents.sql', true, 'committed'],
-      ['017_cora_artifact_sources.sql', true, 'committed'],
-      ['018_cora_artifact_script_revisions.sql', true, 'committed'],
-      ['019_cora_artifact_execution_requests.sql', true, 'committed'],
-      ['020_cora_personal_preferences.sql', true, 'committed'],
-      ['021_organization_database_registry.sql', true, 'committed'],
-      ['022_workspace_layout_preferences.sql', true, 'committed'],
-      ['023_cora_knowledge_management.sql', true, 'committed'],
-      ['024_cora_usage_budget_allocations.sql', true, 'committed'],
-      ['025_cora_approval_decisions.sql', true, 'committed'],
-      ['026_cora_connector_registrations.sql', true, 'committed'],
-      ['030_helmion_billing_entitlements.sql', true, 'committed'],
-      ['031_helmion_provider_connections.sql', true, 'committed'],
-      ['032_workspace_projects.sql', true, 'committed'],
-      ['033_console_command_intents.sql', true, 'committed'],
-      ['034_helmion_provider_oauth.sql', true, 'committed'],
-      ['041_console_command_runs.sql', true, 'committed'],
-      ['042_app_sessions.sql', true, 'committed'],
-      ['043_org_invites_desktop_links.sql', true, 'committed'],
-      ['044_app_session_steps.sql', true, 'committed'],
-    ],
+    migrationNames.map((name) => [name, true, 'committed']),
   );
-  assert.deepEqual(
-    pool.executedSql,
-    [
-      '001_helmion.sql',
-      '002_maestro_phase_one.sql',
-      '003_human_confirmations.sql',
-      '004_tenant_audit_outbox.sql',
-      '005_tenant_audit_claims.sql',
-      '006_tenant_audit_claim_operations.sql',
-      '007_platform_action_policy.sql',
-      '008_equipment_safety_action_policy.sql',
-      '009_envoy_chat.sql',
-      '010_cora_organization_config.sql',
-      '011_cora_provider_usage.sql',
-      '012_cora_workspace_preview_intents.sql',
-      '013_cora_agent_task_intents.sql',
-      '014_cora_agent_task_claims.sql',
-      '015_cora_knowledge_retrieval_metadata.sql',
-      '016_cora_artifact_studio_intents.sql',
-      '017_cora_artifact_sources.sql',
-      '018_cora_artifact_script_revisions.sql',
-      '019_cora_artifact_execution_requests.sql',
-      '020_cora_personal_preferences.sql',
-      '021_organization_database_registry.sql',
-      '022_workspace_layout_preferences.sql',
-      '023_cora_knowledge_management.sql',
-      '024_cora_usage_budget_allocations.sql',
-      '025_cora_approval_decisions.sql',
-      '026_cora_connector_registrations.sql',
-      '030_helmion_billing_entitlements.sql',
-      '031_helmion_provider_connections.sql',
-      '032_workspace_projects.sql',
-      '033_console_command_intents.sql',
-      '034_helmion_provider_oauth.sql',
-      '041_console_command_runs.sql',
-      '042_app_sessions.sql',
-      '043_org_invites_desktop_links.sql',
-      '044_app_session_steps.sql',
-    ],
-  );
-
+  assert.deepEqual(pool.executedSql, migrationNames);
   const second = await store.migrate();
   assert.deepEqual(
     second.map((result) => result.applied),
-    Array(35).fill(false),
+    Array(migrationNames.length).fill(false),
   );
-  assert.deepEqual(
-    pool.executedSql,
-    [
-      '001_helmion.sql',
-      '002_maestro_phase_one.sql',
-      '003_human_confirmations.sql',
-      '004_tenant_audit_outbox.sql',
-      '005_tenant_audit_claims.sql',
-      '006_tenant_audit_claim_operations.sql',
-      '007_platform_action_policy.sql',
-      '008_equipment_safety_action_policy.sql',
-      '009_envoy_chat.sql',
-      '010_cora_organization_config.sql',
-      '011_cora_provider_usage.sql',
-      '012_cora_workspace_preview_intents.sql',
-      '013_cora_agent_task_intents.sql',
-      '014_cora_agent_task_claims.sql',
-      '015_cora_knowledge_retrieval_metadata.sql',
-      '016_cora_artifact_studio_intents.sql',
-      '017_cora_artifact_sources.sql',
-      '018_cora_artifact_script_revisions.sql',
-      '019_cora_artifact_execution_requests.sql',
-      '020_cora_personal_preferences.sql',
-      '021_organization_database_registry.sql',
-      '022_workspace_layout_preferences.sql',
-      '023_cora_knowledge_management.sql',
-      '024_cora_usage_budget_allocations.sql',
-      '025_cora_approval_decisions.sql',
-      '026_cora_connector_registrations.sql',
-      '030_helmion_billing_entitlements.sql',
-      '031_helmion_provider_connections.sql',
-      '032_workspace_projects.sql',
-      '033_console_command_intents.sql',
-      '034_helmion_provider_oauth.sql',
-      '041_console_command_runs.sql',
-      '042_app_sessions.sql',
-      '043_org_invites_desktop_links.sql',
-      '044_app_session_steps.sql',
-    ],
-  );
-  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 70);
+  assert.deepEqual(pool.executedSql, migrationNames);
+  assert.equal(pool.transactions.filter((entry) => entry === 'commit').length, 2 * migrationNames.length);
   assert.equal(pool.transactions.includes('rollback'), false);
 });
 
