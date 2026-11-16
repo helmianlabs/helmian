@@ -897,3 +897,241 @@ test('mesh on fakes: a Librarian-filed fact is never handed to a seat (bite L1)'
   assert.equal(plainResult.work.length, 1, 'the unmarked send is handed to the seat');
   assert.equal(plainAsks.length, 1, 'and its ask record files as today');
 });
+
+// ---------------------------------------------------------------------------
+// Bite H3 (DESIGN 3.3): presence law in dispatch. A stateful fake
+// pool serves one channel's rows (inserts land in the row set, so
+// a second poll sees the first poll's writes — the exactly-once
+// assertions are real), captures the helmOnly mark updates, and
+// captures the miss-queue filings Helm's answers produce in the
+// drained tail.
+import { HELM_AVAILABILITY_LINE, HELM_SUBJECT } from '../src/cloud/envoy-helm.mjs';
+
+const H3_TENANT = 'tenant-h3';
+const H3_CHANNEL_ID = '22222222-3333-4444-8555-666666666666';
+const H3_DEVICE = { tenantId: H3_TENANT, subject: 'user_author', role: 'owner', viaDeviceToken: true };
+const h3Row = (over) => ({
+  id: randomUUID(), channel_id: H3_CHANNEL_ID, author_subject: 'user_author', author_kind: 'human',
+  body: '', idempotency_key: `h3-${randomUUID()}`, created_at: new Date(), metadata: null, ...over,
+});
+
+function fakeHelmPool({ configBody, rows = [] }) {
+  const state = { rows: [...rows], inserts: [], updates: [], misses: [] };
+  let insertSeq = 0;
+  const client = {
+    async query(text, vals = []) {
+      const sql = String(text);
+      if (sql === 'begin' || sql === 'commit' || sql === 'rollback') return { rows: [], rowCount: 0 };
+      if (sql.includes("set_config('helmion.tenant_id'")) return { rows: [{}], rowCount: 1 };
+      if (sql.includes('tenant_memberships')) return { rows: [{ role: 'owner' }], rowCount: 1 };
+      if (sql.includes('from helmion.desktop_links')) return { rows: [{ n: 0 }], rowCount: 1 };
+      if (sql.includes('runner_provider_presence')) return { rows: [], rowCount: 0 };
+      if (sql.includes('provider_connections')) return { rows: [], rowCount: 0 };
+      if (sql.includes('distinct on (channel_id)')) return { rows: [{ channel_id: H3_CHANNEL_ID, body: configBody }], rowCount: 1 };
+      // The M4 settle watcher's marked-assignment read: none of
+      // these fixtures carries an assignment.
+      if (sql.includes("metadata -> 'maestroAssignment'")) return { rows: [], rowCount: 0 };
+      if (sql.includes('lateral')) {
+        const newestFirst = [...state.rows].reverse();
+        if (!newestFirst.length) {
+          return { rows: [{ ch_id: H3_CHANNEL_ID, ch_slug: 'build', ch_title: 'Build', ch_kind: 'team', id: null, channel_id: null, author_subject: null, author_kind: null, body: null, idempotency_key: null, created_at: null, metadata: null }], rowCount: 1 };
+        }
+        return { rows: newestFirst.map((r) => ({ ch_id: H3_CHANNEL_ID, ch_slug: 'build', ch_title: 'Build', ch_kind: 'team', ...r })), rowCount: newestFirst.length };
+      }
+      if (sql.includes('from helmion.envoy_channels')) return { rows: [{ id: H3_CHANNEL_ID, slug: 'build', title: 'Build', kind: 'team' }], rowCount: 1 };
+      if (sql.startsWith('insert into helmion.helm_kb_misses')) {
+        state.misses.push({ tenantId: vals[0], channelId: vals[1], senderSubject: vals[2], question: vals[3] });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.startsWith('insert into helmion.envoy_messages')) {
+        const dupe = state.rows.find((r) => r.channel_id === vals[1] && r.author_subject === vals[2] && r.idempotency_key === vals[5]);
+        if (dupe) return { rows: [], rowCount: 0 };
+        const row = {
+          id: `99999999-0000-4000-8000-${String(++insertSeq).padStart(12, '0')}`, channel_id: vals[1],
+          author_subject: vals[2], author_kind: vals[3], body: vals[4], idempotency_key: vals[5],
+          created_at: new Date(), metadata: vals[6] ? JSON.parse(vals[6]) : null,
+        };
+        state.rows.push(row);
+        state.inserts.push(row);
+        return { rows: [row], rowCount: 1 };
+      }
+      if (sql.includes('idempotency_key=$4')) {
+        const row = state.rows.find((r) => r.channel_id === vals[1] && r.author_subject === vals[2] && r.idempotency_key === vals[3]);
+        return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+      }
+      if (sql.startsWith('update helmion.envoy_messages')) {
+        const row = state.rows.find((r) => String(r.id) === String(vals[2]));
+        if (row) {
+          row.metadata = { ...(row.metadata ?? {}), ...JSON.parse(vals[4]) };
+          state.updates.push({ messageId: vals[2], mark: JSON.parse(vals[4]) });
+        }
+        return { rows: [], rowCount: row ? 1 : 0 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  return { pool: { async connect() { return client; } }, state };
+}
+
+function h3Mesh(pool, extra = {}) {
+  const filedAsks = [];
+  const mesh = createEnvoyMesh({
+    pool,
+    publishImpl: async () => {},
+    agentStateImpl: async () => ({ state: 'ready', gated: false }),
+    notebookImpl: async () => null,
+    kbImpl: async () => null,
+    librarianImpl: {
+      async fileAsk(actor, job) { filedAsks.push(job); return { filed: true }; },
+      async renameChannelIfGeneric() { return true; },
+      async fileIncident() { return { filed: true }; },
+    },
+    helmLogImpl: () => {},
+    ...extra,
+  });
+  return { mesh, filedAsks };
+}
+const helmInserts = (state) => state.inserts.filter((r) => r.author_subject === HELM_SUBJECT);
+
+test('mesh on fakes: a helmOnly-marked message produces no vendor work items (bite H3)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const ask = h3Row({ body: '@Claude what is the capital of Norway?', metadata: { helmOnly: { answeredBy: 'helm' } } });
+  // The mark and Helm's answer land together, so the answer
+  // stands beside the mark in the window.
+  const answer = h3Row({ author_subject: HELM_SUBJECT, author_kind: 'agent', body: HELM_AVAILABILITY_LINE, idempotency_key: `helm:${ask.id}` });
+  const { pool, state } = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask, answer] });
+  const { mesh, filedAsks } = h3Mesh(pool);
+  const result = await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(result.work.length, 0, 'a marked message earns no seat a work item, though it names one');
+  assert.equal(helmInserts(state).length, 0, 'Helm does not answer twice: its answer already stands');
+  assert.equal(state.misses.length, 0, 'and the question is not filed twice');
+  assert.equal(filedAsks.length, 0, 'no ask record is filed for a message Helm owns');
+});
+
+test('mesh on fakes: a helmOnly mark whose answer is missing from the window is answered, not left as silence (bite H3)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const ask = h3Row({ body: '@Helm what is running here?', metadata: { helmOnly: { answeredBy: 'helm' } } });
+  const { pool, state } = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const { mesh } = h3Mesh(pool);
+  const result = await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(result.work.length, 0, 'still no vendor work item');
+  assert.equal(helmInserts(state).length, 1, 'Helm answers the marked message itself');
+  assert.equal(helmInserts(state)[0].idempotency_key, `helm:${ask.id}`);
+  assert.equal(helmInserts(state)[0].body, HELM_AVAILABILITY_LINE);
+  assert.equal(state.misses.length, 1, 'and the question files to the miss queue');
+  assert.equal(state.misses[0].question, ask.body);
+});
+
+test('mesh on fakes: an unnamed message with an empty vendor due set gets exactly one Helm answer and one miss filing (bite H3)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  // The message names only a role: dispatch computes an empty
+  // due set for it (the coordinator on the send path could not
+  // structure it, so it carries no mark), and Helm catches it.
+  const ask = h3Row({ body: '@Maestro what is running here, what is blocked, what is next?' });
+  const { pool, state } = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const { mesh, filedAsks } = h3Mesh(pool);
+  const first = await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(first.work.length, 0, 'no vendor work item: nobody was due');
+  assert.equal(helmInserts(state).length, 1, 'exactly one Helm answer post');
+  assert.equal(helmInserts(state)[0].body, 'No seat is connected to answer that here');
+  assert.equal(helmInserts(state)[0].idempotency_key, `helm:${ask.id}`);
+  assert.deepEqual(helmInserts(state)[0].metadata, { helm: { due: 'last-resort', forSubject: 'user_author' } });
+  assert.equal(state.updates.length, 0, 'a last-resort answer carries no helmOnly mark');
+  assert.equal(state.misses.length, 1, 'exactly one miss-queue filing');
+  assert.equal(state.misses[0].question, ask.body);
+  assert.equal(state.misses[0].senderSubject, 'user_author');
+  assert.equal(filedAsks.length, 0, 'an undispatched ask files no ask record — the miss is its record');
+
+  // The next poll sees Helm's answer in the window: nothing is
+  // posted or filed again.
+  const second = await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(second.work.length, 0);
+  assert.equal(helmInserts(state).length, 1, 'still exactly one Helm answer after a second poll');
+  assert.equal(state.misses.length, 1, 'still exactly one filing');
+});
+
+test('mesh on fakes: a message whose due seats are all withheld by the claim gate is answered by Helm (bite H3)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const ask = h3Row({ body: 'What is the capital of Norway?' });
+  const { pool, state } = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const { mesh } = h3Mesh(pool, {
+    agentStateImpl: async () => ({ state: 'ready', gated: true, connectedProviders: [], reason: 'no-provider' }),
+  });
+  const result = await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(result.work.length, 0, 'the gate withheld the only seat: no work item');
+  assert.deepEqual(result.withheld, [{ provider: 'claude', reason: 'no-provider' }], 'the withholding is still named');
+  assert.equal(helmInserts(state).length, 1, 'Helm answers in the withheld seat\u2019s silence');
+  assert.equal(helmInserts(state)[0].metadata.helm.due, 'last-resort');
+  assert.equal(state.misses.length, 1);
+});
+
+test('mesh on fakes: @Helm named answers alone — a due vendor seat is not handed the message, and the message is marked (bite H3)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  // The ask names Helm AND a seated vendor: dispatch would hand
+  // it to the vendor, but the address is the routing — Helm
+  // answers alone.
+  const ask = h3Row({ body: '@Helm @Claude what is running here?' });
+  const { pool, state } = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const { mesh, filedAsks } = h3Mesh(pool);
+  const result = await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(result.work.length, 0, 'no vendor work item, though a due seat was named');
+  assert.equal(helmInserts(state).length, 1, 'one Helm answer');
+  assert.equal(helmInserts(state)[0].metadata.helm.due, 'alone');
+  assert.equal(state.updates.length, 1, 'the human message is marked helmOnly in the same write');
+  assert.equal(state.updates[0].messageId, ask.id);
+  assert.deepEqual(state.updates[0].mark, { helmOnly: { answeredBy: 'helm' } });
+  assert.equal(state.misses.length, 1, 'the question files to the miss queue');
+  assert.equal(filedAsks.length, 0, 'no ask record: the message was never dispatched');
+
+  // And once marked and answered, later polls leave it alone.
+  const second = await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(second.work.length, 0);
+  assert.equal(helmInserts(state).length, 1, 'no second Helm answer');
+  assert.equal(state.misses.length, 1, 'no second filing');
+});
+
+test('mesh on fakes: @all gets Helm as one of the team, beside the seats\u2019 work items (bite H3)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude', 'gemini'];
+  const ask = h3Row({ body: '@all what is running here?' });
+  const { pool, state } = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const { mesh, filedAsks } = h3Mesh(pool);
+  const result = await mesh.agentWork(H3_DEVICE, 'claude,gemini');
+  await mesh.drainFilingTail();
+  assert.equal(result.work.length, 1, 'the seats\u2019 work item stands');
+  assert.deepEqual(result.work[0].agents, ['claude', 'gemini']);
+  assert.equal(helmInserts(state).length, 1, 'and Helm answers as one of the team');
+  assert.equal(helmInserts(state)[0].metadata.helm.due, 'team');
+  assert.equal(state.updates.length, 0, 'a team answer carries no helmOnly mark');
+  assert.equal(state.misses.length, 1, 'the question files to the miss queue');
+  assert.equal(filedAsks.length, 1, 'the dispatched ask files its ask record as today');
+});
+
+test('mesh on fakes: a vendor-due message gets no Helm post and no miss filing (bite H3)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const ask = h3Row({ body: 'What is the capital of Norway?' });
+  const { pool, state } = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const { mesh, filedAsks } = h3Mesh(pool);
+  const result = await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(result.work.length, 1, 'the seat is handed the ask as always');
+  assert.deepEqual(result.work[0].agents, ['claude']);
+  assert.equal(helmInserts(state).length, 0, 'Helm stays silent while a seat is due');
+  assert.equal(state.inserts.length, 0, 'nothing at all is posted');
+  assert.equal(state.misses.length, 0, 'nothing is filed to the miss queue');
+  assert.equal(filedAsks.length, 1, 'the ask record files as today');
+});

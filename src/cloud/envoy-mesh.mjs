@@ -25,7 +25,7 @@ import { withTenantTransaction, requireActiveTenantMembership } from '../core/te
 import { publishEnvoyMessage } from './envoy-ably.mjs';
 import {
   AGENT_NAMES, AGENT_PROVIDERS, CONFIG_SUBJECT, DESK_ROSTER_FALLBACK, MAESTRO_DESK_SLUG, MAX_CHANNEL_AGENTS, MAX_DEBATE_TURNS, DEFAULT_DEBATE_TURNS, NOTICE_SUBJECT,
-  agentSubject, agentsToAnswer, describeAuthor, discordSubject, isSlackId, slackSubject,
+  agentSubject, agentsToAnswer, describeAuthor, discordSubject, helmDue, isSlackId, slackSubject,
   emptyConfig, normalizeCustomHandle, normalizeProvider, parseConfig, publicConfig, sanitizeArmedConnectors, sanitizeChannelAvatar, sanitizeCustomAgent, sanitizeGithubLink, serializeConfig,
 } from './envoy-agents.mjs';
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
@@ -37,6 +37,7 @@ import { screenIntakeContent, siteGuardRefusalText, siteGuardStopRecord, ingestS
 import { readNotebookBlock } from './envoy-notebook.mjs';
 import { createLibrarianStore, deriveChannelName, fileAssignmentCompletion, fileDispatchAsk, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
 import { settleMaestroAssignmentsIfNeeded } from './envoy-assignments.mjs';
+import { fileHelmUnansweredQuestion, helmAnswerSpec, markHelmOnlyMessage } from './envoy-helm.mjs';
 import { createSkillLibraryStore } from './skill-library.mjs';
 import { armingPairsForDispatch, resolveDispatchArming, resolveKeepLoadedPairs } from './connector-arming-dispatch.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
@@ -303,7 +304,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, keepLoadedReadImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, keepLoadedReadImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null, helmLogImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -738,6 +739,17 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       const insertSpecs = [];
       const withheld = new Map();
       const work = [];
+      // Helm presence (fix programme bite H3, DESIGN 3.3): the
+      // marks and miss filings this poll's Helm answers produce.
+      // A helmOnly mark rides the refusal-writes transaction
+      // below, in the same write as its answer post, so the two
+      // land together or not at all; a miss filing rides the
+      // deferred tail, through the fail-soft filer, beside the
+      // librarian's groups. Collection is in-computation only —
+      // neither adds a round trip to a poll that answers nothing
+      // through Helm.
+      const helmMarkSpecs = [];
+      const helmMissJobs = [];
       // Maestro settle watching (fix programme bite M4, DESIGN
       // 2.3): the channels this poll serves, collected as the
       // computation walks them. After the result is computed,
@@ -834,6 +846,27 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           }
         }
         const answered = new Set(rows.filter((r) => String(r.idempotency_key).startsWith('reply:')).map((r) => `${r.author_subject}|${String(r.idempotency_key).slice(6)}`));
+        // Helm presence (fix programme bite H3): the messages in
+        // this window that already carry a response of any
+        // answering kind — a seat's reply (reply:), a Helm answer
+        // (helm:, envoy-helm.mjs), a guide answer (helm-kb:,
+        // helm-kb.mjs), the empty-desk line (maestro-empty-desk:,
+        // envoy-chat.mjs). The prefixes are those modules' own
+        // key shapes, named here the way helm-kb.mjs names the
+        // empty-desk prefix. Helm is the answerer of last resort:
+        // a message somebody already answered is never answered
+        // again, whatever its due set computes to on a later
+        // poll. A response is newer than its message, so a
+        // response in this window is always visible beside the
+        // message it answers.
+        const respondedTo = new Set();
+        for (const r of rows) {
+          const key = String(r.idempotency_key ?? '');
+          if (key.startsWith('reply:')) respondedTo.add(key.slice('reply:'.length));
+          else if (key.startsWith('helm-kb:')) respondedTo.add(key.slice('helm-kb:'.length));
+          else if (key.startsWith('helm:')) respondedTo.add(key.slice('helm:'.length));
+          else if (key.startsWith('maestro-empty-desk:')) respondedTo.add(key.slice('maestro-empty-desk:'.length));
+        }
         // Count consecutive agent turns since the last human message for Free-Willy debate mode.
         let roundTurns = 0;
         for (const r of rows) {
@@ -877,6 +910,22 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
     // metadata.librarianFact, set by the filing hook when it
     // posted the confirmation.
     if (message.authorKind === 'human' && message.metadata?.librarianFact) continue;
+    // A message Helm owns (fix programme bite H3, DESIGN 3.3):
+    // a send addressed to Helm is marked metadata.helmOnly when
+    // Helm answers it (envoy-helm.mjs), in the same transaction
+    // as the answer, and it is never work for a vendor seat —
+    // @Helm means Helm alone. The answer normally already
+    // stands beside the mark; should it ever be missing from
+    // this window (an answer older than the window's edge),
+    // Helm answers here rather than leaving the mark as
+    // silence, and the question files to the miss queue with it.
+    if (message.authorKind === 'human' && message.metadata?.helmOnly) {
+      if (!respondedTo.has(String(message.id))) {
+        insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: 'alone' }));
+        helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
+      }
+      continue;
+    }
     // Maestro assignment rows (fix programme bite M3, DESIGN
     // 2.5): the assignment post and the part replies are work,
     // not debate fodder. The post is Maestro-authored and is
@@ -941,6 +990,36 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             for (const p of due) if (!gateAllows(p)) withheld.set(p, state.reason ?? 'no-provider');
             due = due.filter(gateAllows);
             if (partPlan) partPlan = partPlan.filter(({ owner }) => due.includes(owner));
+          }
+          // Helm presence (fix programme bite H3, DESIGN 1.2 /
+          // 3.3): the presence law, decided by the pure helmDue
+          // over the due set as it now stands — after the roster,
+          // wanted, joined, settled and claim-gate filters have
+          // all run, which is what makes the gate-withheld case
+          // (every due seat withheld) land in Helm's hands and
+          // not in silence. 'alone' (@Helm named) ends the
+          // vendor road here, whatever the due set computed to:
+          // no work item, no Guard evaluation, no screening —
+          // the deterministic line is the message's only answer,
+          // and the human message is marked helmOnly in the same
+          // write. 'last-resort' (no vendor seat due) is Helm
+          // catching a message every other road left unanswered.
+          // Both post Helm's answer as an insert spec (it rides
+          // the refusal-writes transaction below and publishes
+          // with it) and file the question to the miss queue in
+          // the tail. 'team' (@all) is remembered in `helm` and
+          // posts beside the work items further down, once the
+          // ask has passed the same screens a seat's turn
+          // passes — a refused or stopped ask gets the refusal
+          // in the seats' names and nothing from Helm.
+          const helm = message.authorKind === 'human'
+            ? helmDue(message, { vendorDue: due, answered: respondedTo.has(String(message.id)) })
+            : null;
+          if (helm === 'alone' || helm === 'last-resort') {
+            insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: helm }));
+            if (helm === 'alone') helmMarkSpecs.push({ channelId: String(channel.id), messageId: message.id, senderSubject: message.authorSubject });
+            helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
+            continue;
           }
           if (!due.length) continue;
           // Guard spine, bites 1 + 2: the ask is classified as a typed
@@ -1178,6 +1257,21 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
               context,
             });
           }
+          // Helm as one of the team (bite H3): an @all ask Helm
+          // answers alongside the seats. The spec is pushed only
+          // here — after the Guard evaluation and the Site Guard
+          // screens above have had their say and the work items
+          // stand — so a refused or stopped ask carries no Helm
+          // line. Helm's answer posts from this same computation
+          // (the channel record will show it ahead of the seats'
+          // replies, which arrive later through their runners;
+          // DESIGN 3.5 accepts that ordering), and the question
+          // files to the miss queue beside it, like every Helm
+          // answer until the composer (bite H4) lands.
+          if (helm === 'team') {
+            insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: 'team' }));
+            helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
+          }
           if (evaluation) {
             for (const p of due) {
               findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
@@ -1204,11 +1298,19 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // row this transaction actually wrote joins the publish
       // below — a replayed row was already published by the poll
       // that wrote it first, exactly as the in-loop writes behaved.
-      if (insertSpecs.length) {
+      // Helm's answers (bite H3) are insert specs in the same list
+      // and publish by the same rule; a helmOnly mark decided with
+      // an 'alone' answer applies in this same transaction, after
+      // its answer's insert, so a marked message always has its
+      // answer. A poll that decided no writes opens no transaction.
+      if (insertSpecs.length || helmMarkSpecs.length) {
         await tx(actor, async (client) => {
           for (const spec of insertSpecs) {
             const { row, replayed } = await insertMessage(client, spec);
             if (row && !replayed) refusalRows.push(row);
+          }
+          for (const mark of helmMarkSpecs) {
+            await markHelmOnlyMessage(client, { tenantId: actor.tenantId, channelId: mark.channelId, messageId: mark.messageId, senderSubject: mark.senderSubject });
           }
         });
       }
@@ -1229,7 +1331,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // rejection — so a surprise throw is logged loudly here and
       // can neither crash the process nor skip the other group. The
       // wrappers' own contract says neither group can throw at all.
-      if (findingJobs.length || siteGuardJobs.length || siteGuardRateJobs.length || librarianJobs.length || namingJobs.size || incidentJobs.length || settleChannelIds.size) {
+      if (findingJobs.length || siteGuardJobs.length || siteGuardRateJobs.length || librarianJobs.length || namingJobs.size || incidentJobs.length || settleChannelIds.size || helmMissJobs.length) {
         trackFilingTail((async () => {
           // Guard spine bite 3: witness every evaluation this poll produced
           // into the Guard findings feed, allows and refusals alike. This
@@ -1307,6 +1409,23 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             }
           } catch (error) {
             console.error(`[envoy-mesh] maestro settle tail FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — the dispatch stands unchanged; settle lines and completion records wait for the next poll.`);
+          }
+          // Helm miss filing (fix programme bite H3, DESIGN
+          // 3.3): every question Helm answered with the
+          // availability line this poll files to the guide's
+          // miss queue, through envoy-helm.mjs's never-throw
+          // wrapper over the queue's own fail-soft filer. Same
+          // tail discipline as the groups above: a failure is
+          // logged loudly, changes nothing about the answer
+          // that was posted, and the question simply goes
+          // unfiled — the queue is how the guide grows, not a
+          // record the dispatch stands on.
+          try {
+            for (const job of helmMissJobs) {
+              await fileHelmUnansweredQuestion({ pool, tenantId: actor.tenantId, channelId: job.channelId, senderSubject: job.humanSubject, question: job.question, ...(helmLogImpl ? { log: helmLogImpl } : {}) });
+            }
+          } catch (error) {
+            console.error(`[envoy-mesh] helm miss filing tail FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — the dispatch stands unchanged; the questions Helm answered wait unfiled.`);
           }
         })());
       }

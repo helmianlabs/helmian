@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { agentsToAnswer, mentionsIn, normalizeProvider, normalizeEngine, normalizeCustomHandle, sanitizeCustomAgent, parseConfig, serializeConfig, publicConfig, describeAuthor, discordSubject, slackSubject, agentPrompt, agentSubject, emptyConfig, normalizeMessageMetadata, normalizeSkillToggles, MAX_MESSAGE_SKILLS, classifyFileAttachment, FILE_ATTACHMENT_MAX_BYTES, FILE_ATTACHMENTS_MAX_TOTAL_BYTES, sanitizeChannelAvatar, CHANNEL_AVATAR_CHARACTERS, CHANNEL_AVATAR_COLORS, AGENT_PROVIDERS, ANSWERING_PROVIDERS, AGENT_NAMES } from '../src/cloud/envoy-agents.mjs';
+import { agentsToAnswer, mentionsIn, normalizeProvider, normalizeEngine, normalizeCustomHandle, sanitizeCustomAgent, parseConfig, serializeConfig, publicConfig, describeAuthor, discordSubject, slackSubject, agentPrompt, agentSubject, emptyConfig, normalizeMessageMetadata, normalizeSkillToggles, MAX_MESSAGE_SKILLS, classifyFileAttachment, FILE_ATTACHMENT_MAX_BYTES, FILE_ATTACHMENTS_MAX_TOTAL_BYTES, sanitizeChannelAvatar, CHANNEL_AVATAR_CHARACTERS, CHANNEL_AVATAR_COLORS, AGENT_PROVIDERS, ANSWERING_PROVIDERS, AGENT_NAMES, helmDue, HELM_DUE_CASES } from '../src/cloud/envoy-agents.mjs';
 import { CHARACTERS, COLORS } from '../web/marketing/app/avatars.mjs';
 
 const human = (body) => ({ authorKind: 'human', authorSubject: 'user_x', body });
@@ -687,4 +687,63 @@ test('librarian identity: configs drop it, teams never carry it, due sets never 
   // Free-Willy: a Librarian-authored message (a filing
   // confirmation) routes no peers — the desk never debates it.
   assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:librarian', body: '@all go' }, roster, { debateMode: 'free-willy' }), []);
+});
+
+test('helm presence matrix: the four law cases over helmDue (bite H3)', () => {
+  assert.deepEqual(HELM_DUE_CASES, ['alone', 'team', 'last-resort']);
+  const due = (body, facts = {}) => helmDue(human(body), facts);
+
+  // Case 1 — @Helm named: Helm answers ALONE, whatever the
+  // vendor due set holds. Both address shapes (vocative and
+  // @mention) are the address; a seat named beside Helm does
+  // not dilute it, and the role address precedes @all.
+  assert.equal(due('Helm: what is running here?', { vendorDue: ['claude'] }), 'alone');
+  assert.equal(due('@helm what is running here?', { vendorDue: ['claude', 'gemini'] }), 'alone');
+  assert.equal(due('hey @Helm, and @Claude too: what is running?', { vendorDue: ['claude'] }), 'alone',
+    'a seat named beside Helm does not dilute the address');
+  assert.equal(due('@all @helm status', { vendorDue: ['claude'] }), 'alone',
+    'the role address precedes @all (precedence, DESIGN 1.5)');
+  assert.equal(due('Helm: what is running here?', { vendorDue: [] }), 'alone');
+
+  // Case 2 — unnamed, empty vendor due set: Helm answers as
+  // last resort. The due set is the caller's fact; the shapes
+  // that produce it include a message naming only a role (the
+  // role hooks left it to dispatch, and dispatch found nobody).
+  assert.equal(due('what is running here?', { vendorDue: [] }), 'last-resort');
+  assert.equal(due('@Maestro what is running here?', { vendorDue: [] }), 'last-resort',
+    'a message naming only a role lands with Helm when nobody is due');
+  assert.equal(due('Maestro: what is running here?', { vendorDue: [] }), 'last-resort');
+  assert.equal(due('@librarian what do you have filed?', { vendorDue: [] }), 'last-resort');
+
+  // Case 3 — @all: Helm answers as one of the team, alongside
+  // the due seats — and still answers when none are due, as
+  // the one team member who is always present.
+  assert.equal(due('@all what is running here?', { vendorDue: ['claude'] }), 'team');
+  assert.equal(due('@everyone status please', { vendorDue: ['claude', 'gemini'] }), 'team');
+  assert.equal(due('@all what is running here?', { vendorDue: [] }), 'team');
+
+  // Case 4 — vendor seats due: Helm stays silent unless named.
+  assert.equal(due('@Claude what is running here?', { vendorDue: ['claude'] }), null);
+  assert.equal(due('build the page', { vendorDue: ['claude', 'gemini'] }), null,
+    'the unnamed fan-out is untouched: seats due means silence');
+  assert.equal(due('what is running here?', { vendorDue: ['claude'] }), null);
+
+  // A message somebody already answered is never answered
+  // again, in any case: Helm is the last resort, not an echo.
+  assert.equal(due('Helm: what is running here?', { vendorDue: [], answered: true }), null);
+  assert.equal(due('@all what is running here?', { vendorDue: ['claude'], answered: true }), null);
+  assert.equal(due('what is running here?', { vendorDue: [], answered: true }), null);
+
+  // Only a human send can be Helm's: agent and system rows are
+  // never fresh asks for Helm, even when they name it.
+  assert.equal(helmDue({ authorKind: 'agent', authorSubject: 'agent:claude', body: '@helm hi' }, { vendorDue: [] }), null);
+  assert.equal(helmDue({ authorKind: 'system', authorSubject: 'system:envoy', body: 'Helm: hi' }, { vendorDue: [] }), null);
+
+  // A message a role hook already owns is never Helm's: an
+  // assignment's parts are Maestro's road, a guide answer and
+  // a filed fact are already answered — the marks win even
+  // over a Helm address in the same body.
+  assert.equal(helmDue({ ...human('@Maestro: two parts. Part one: a. Part two: b.'), metadata: { maestroAssignment: { v: 1, parts: [] } } }, { vendorDue: [] }), null);
+  assert.equal(helmDue({ ...human('how do I connect an agent?'), metadata: { helmKb: { entry: 'x' } } }, { vendorDue: [] }), null);
+  assert.equal(helmDue({ ...human('@helm file this'), metadata: { librarianFact: { key: 'fact:x' } } }, { vendorDue: [] }), null);
 });
