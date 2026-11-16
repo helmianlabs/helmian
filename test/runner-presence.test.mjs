@@ -654,21 +654,21 @@ test('sync route stamps exactly the providers the sync writes', async () => {
   });
   assert.equal(handled, true);
   assert.equal(captured.status, 202);
-  // The write set: the four installer targets under their presence
-  // names. Four writes, four stamps — a provider the sync writes
+  // The write set: the six installer targets under their presence
+  // names. Six writes, six stamps — a provider the sync writes
   // nothing for is never stamped synced.
   assert.deepEqual(
     [...captured.body.syncedProviders].sort(),
-    ['claude', 'gemini', 'grok', 'openai'],
+    ['claude', 'gemini', 'grok', 'mistral', 'openai', 'qwen'],
     'the stamp set equals the write set',
   );
-  for (const notWritten of ['mistral', 'runway', 'qwen', 'ollama']) {
+  for (const notWritten of ['runway', 'ollama', 'openrouter', 'cloudflare', 'nvidia', 'groq']) {
     assert.ok(!captured.body.syncedProviders.includes(notWritten), `${notWritten} is not stamped`);
   }
   const rows = await store.list('t1');
   assert.deepEqual(
     rows.map((r) => r.provider).sort(),
-    ['claude', 'gemini', 'grok', 'openai'],
+    ['claude', 'gemini', 'grok', 'mistral', 'openai', 'qwen'],
     'the presence rows stamped are exactly the write set',
   );
 });

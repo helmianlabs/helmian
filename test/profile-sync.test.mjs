@@ -708,8 +708,8 @@ test('presence sync press with a desktop linked still enqueues and stamps, as be
   assert.ok(stamped.includes('claude'), 'the happy path still stamps');
   assert.deepEqual(
     [...stamped].sort(),
-    ['claude', 'gemini', 'grok', 'openai'],
-    'the stamp set is exactly the write set — four stamps for four writes',
+    ['claude', 'gemini', 'grok', 'mistral', 'openai', 'qwen'],
+    'the stamp set is exactly the write set — six stamps for six writes',
   );
   const latest = await store.latest('t1');
   assert.equal(latest.id, sent[0].body.syncJob.id);

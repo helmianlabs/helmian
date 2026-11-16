@@ -21,7 +21,13 @@
 //      files carry keys this installer knows nothing about. A settings
 //      file that cannot be parsed as JSON is left untouched, the snippet
 //      is written beside it with manual merge instructions, and the
-//      result reports the hooks as not wired.
+//      result reports the hooks as not wired. Where the tool's hook
+//      settings are TOML rather than JSON (Mistral Vibe's hooks.toml),
+//      the merge takes the delimited-section form the context files
+//      already use: the entries live between a pair of comment markers,
+//      that section — and only that section — is refreshed, and a file
+//      whose markers are in a shape this installer cannot prove it owns
+//      is left untouched, exactly as an unparseable JSON file is.
 //
 // The estate cargo (see ESTATE_CARGO below) is the one exception to the
 // "created once" rule, and it stays inside boundary 1: the user's own grown
@@ -47,7 +53,7 @@ export const AGENT_OS_MARKER_END = '<!-- END AGENT OS -->';
 /** Directory the installer owns outright and may rewrite on reinstall. */
 export const MANAGED_DIR = 'agent-os';
 
-export const AGENT_OS_TARGETS = Object.freeze(['claude', 'codex', 'gemini', 'grok']);
+export const AGENT_OS_TARGETS = Object.freeze(['claude', 'codex', 'gemini', 'grok', 'qwen', 'mistral']);
 
 /**
  * The presence-row name each target's seat answers to. A profile sync
@@ -61,6 +67,8 @@ export const TARGET_PRESENCE_PROVIDERS = Object.freeze({
   codex: 'openai',
   gemini: 'gemini',
   grok: 'grok',
+  qwen: 'qwen',
+  mistral: 'mistral',
 });
 
 export const PROFILE_SYNC_STAMP_PROVIDERS = Object.freeze(
@@ -97,6 +105,28 @@ export const PROFILE_SYNC_STAMP_PROVIDERS = Object.freeze(
 //           in the same nested shape Claude Code uses; turn end is "Stop".
 //           https://docs.x.ai/build/features/project-rules
 //           https://github.com/xai-org/grok-build
+//
+//   qwen    ~/.qwen/QWEN.md is the user context file, with @path imports;
+//           Qwen Code also reads AGENTS.md. Hooks live in ~/.qwen/settings.json
+//           under "hooks" in the Claude shape — Qwen ships a migrator for
+//           Claude hook config (`qwen hooks migrate --from-claude`) — with
+//           events including SessionStart and Stop; turn end is "Stop".
+//           https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/
+//           https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/
+//
+//   mistral Mistral Vibe's config home is ~/.vibe (VIBE_HOME). Its rules
+//           file is AGENTS.md — Vibe loads AGENTS.md from trusted folders —
+//           written here into the config home in that form; no @import
+//           syntax is documented for it, so the rules ride inline, like
+//           codex and grok. Its hooks are NOT JSON: they live in
+//           ~/.vibe/hooks.toml as [[hooks]] tables, one `type` per hook
+//           (session_start, post_agent, pre_tool, ...), so there is no
+//           JSON object to merge into — the installer writes a delimited
+//           section of hooks.toml and refreshes only that section
+//           (settingsFormat 'toml-section'). Turn end is "post_agent":
+//           the per-turn hook, the analogue of Gemini's AfterAgent.
+//           https://docs.mistral.ai/vibe/code/cli/hooks
+//           https://docs.mistral.ai/vibe/code/cli/configuration
 export const TARGET_SPECS = Object.freeze({
   claude: Object.freeze({
     id: 'claude',
@@ -151,6 +181,38 @@ export const TARGET_SPECS = Object.freeze({
     // syntax is documented for it. Pointing at a file it may not follow would
     // append four lines that silently carry nothing.
     appendMode: 'inline',
+  }),
+  qwen: Object.freeze({
+    id: 'qwen',
+    label: 'Qwen Code',
+    directoryName: '.qwen',
+    contextFile: 'QWEN.md',
+    settingsFile: 'settings.json',
+    snippetFile: 'settings.hooks.json',
+    contextTemplate: 'targets/qwen/QWEN.md',
+    snippetTemplate: 'targets/qwen/settings.hooks.json',
+    turnEndEvent: 'Stop',
+    appendMode: 'import',
+  }),
+  mistral: Object.freeze({
+    id: 'mistral',
+    label: 'Mistral Vibe',
+    directoryName: '.vibe',
+    contextFile: 'AGENTS.md',
+    // Hooks live in ~/.vibe/hooks.toml as [[hooks]] tables — a TOML file,
+    // not a JSON settings object — so the merge is the delimited-section
+    // form (see mergeTomlHookSection), and the snippet is the section
+    // itself, markers included.
+    settingsFile: 'hooks.toml',
+    snippetFile: 'hooks.toml',
+    contextTemplate: 'targets/mistral/AGENTS.md',
+    snippetTemplate: 'targets/mistral/hooks.toml',
+    turnEndEvent: 'post_agent',
+    // Inline, like codex: no @import syntax is documented for Vibe's
+    // AGENTS.md, so the appended block carries the rules themselves.
+    appendMode: 'inline',
+    settingsFormat: 'toml-section',
+    mergeDocTemplate: 'shared/MERGE_HOOKS_TOML.md',
   }),
 });
 
@@ -471,7 +533,7 @@ export function renderAgentOsFiles({ target, templates, installDir }) {
 
   add(
     `${MANAGED_DIR}/MERGE_HOOKS.md`,
-    render(requireTemplate(templates, 'shared/MERGE_HOOKS.md'), {
+    render(requireTemplate(templates, spec.mergeDocTemplate ?? 'shared/MERGE_HOOKS.md'), {
       SETTINGS_PATH: posix.join(installDir.split(sep).join('/'), spec.settingsFile),
       SNIPPET_PATH: posix.join(installDir.split(sep).join('/'), MANAGED_DIR, spec.snippetFile),
       TURN_END_EVENT: spec.turnEndEvent,
@@ -658,6 +720,69 @@ export function mergeHookSettings(settingsText, snippetText) {
   return { ok: true, content: `${JSON.stringify(merged, null, 2)}\n`, changed: true };
 }
 
+export const TOML_HOOK_SECTION_BEGIN = '# BEGIN AGENT OS HOOKS';
+export const TOML_HOOK_SECTION_END = '# END AGENT OS HOOKS';
+
+/** The delimited section inside a TOML snippet: BEGIN line through END line. */
+function tomlHookSectionSpan(text) {
+  const beginCount = text.split(TOML_HOOK_SECTION_BEGIN).length - 1;
+  const endCount = text.split(TOML_HOOK_SECTION_END).length - 1;
+  if (beginCount !== 1 || endCount !== 1) return null;
+  const beginIdx = text.indexOf(TOML_HOOK_SECTION_BEGIN);
+  const endIdx = text.indexOf(TOML_HOOK_SECTION_END);
+  if (endIdx <= beginIdx) return null;
+  return { beginIdx, endIdx: endIdx + TOML_HOOK_SECTION_END.length };
+}
+
+/**
+ * Merge the hook section into a TOML hooks file's text — the form the
+ * merge takes where the tool's hook settings are TOML [[hooks]] tables
+ * (Mistral Vibe's hooks.toml) rather than a JSON object with a `hooks`
+ * key, so mergeHookSettings has nothing to merge into.
+ *
+ * Pure: returns { ok: true, content, changed } or { ok: false, reason },
+ * the same contract as mergeHookSettings. The installer's entries live
+ * between the TOML_HOOK_SECTION_BEGIN / END comment markers:
+ *
+ *   - No markers in the file: the section is appended after the user's
+ *     own content, which survives byte-for-byte as a prefix.
+ *   - Exactly one marker pair: that section — and only that section —
+ *     is refreshed in place; everything outside it is preserved
+ *     byte-for-byte, and an already-current section reports
+ *     changed: false with the original text.
+ *   - Any other marker shape (a BEGIN with no END after it, more than
+ *     one pair): refused, never guessed at — the caller leaves the file
+ *     untouched and reports the skip, exactly as an unparseable JSON
+ *     settings file is refused.
+ */
+export function mergeTomlHookSection(settingsText, snippetText) {
+  const refuse = (reason) => ({ ok: false, reason });
+  const byHand = 'the snippet beside it (MERGE_HOOKS.md) says how to merge by hand';
+  const snippetSpan = tomlHookSectionSpan(snippetText);
+  if (!snippetSpan) {
+    return refuse('the hook snippet carries no delimited section — settings left untouched');
+  }
+  const desired = trimBody(snippetText.slice(snippetSpan.beginIdx, snippetSpan.endIdx));
+
+  const beginCount = settingsText.split(TOML_HOOK_SECTION_BEGIN).length - 1;
+  const endCount = settingsText.split(TOML_HOOK_SECTION_END).length - 1;
+  if (beginCount === 0 && endCount === 0) {
+    const separator = settingsText === '' ? '' : (settingsText.endsWith('\n') ? '\n' : '\n\n');
+    return { ok: true, content: `${settingsText}${separator}${desired}\n`, changed: true };
+  }
+  const span = tomlHookSectionSpan(settingsText);
+  if (!span) {
+    return refuse(`the agent OS hook markers in your hooks file are in a shape this installer cannot refresh safely — left untouched; ${byHand}`);
+  }
+  const current = settingsText.slice(span.beginIdx, span.endIdx);
+  if (current === desired) return { ok: true, content: settingsText, changed: false };
+  return {
+    ok: true,
+    content: `${settingsText.slice(0, span.beginIdx)}${desired}${settingsText.slice(span.endIdx)}`,
+    changed: true,
+  };
+}
+
 /**
  * Decide what to do with each file, without touching disk.
  *
@@ -752,7 +877,9 @@ export function planAgentOsInstall({ target, files, existing = {} }) {
         actions.push({ ...file, action: 'unchanged', reason: 'hook entries already in place' });
         continue;
       }
-      const merged = mergeHookSettings(current, file.content);
+      const merged = spec.settingsFormat === 'toml-section'
+        ? mergeTomlHookSection(current, file.content)
+        : mergeHookSettings(current, file.content);
       if (!merged.ok) {
         actions.push({ ...file, action: 'skip', reason: merged.reason });
       } else if (!merged.changed) {
@@ -926,7 +1053,7 @@ export async function loadEstateCargo({
  * an explicit `dir` names a self-contained scratch install, and the estate
  * is a home-level cargo, so a scratch install carries none unless the caller
  * hands it over. installAgentOsTargets loads the snapshot once and hands
- * the same one to every target, so all four seats receive the estate as it
+ * the same one to every target, so every seat receives the estate as it
  * stood when the sync began, even if an earlier target's install in the same
  * run touches the source seat's files.
  */

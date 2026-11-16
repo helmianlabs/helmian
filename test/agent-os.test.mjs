@@ -191,7 +191,18 @@ test('the installer wires the hooks into the settings file the tool reads', asyn
       await readFile(result.settingsSnippet, 'utf8'),
       `${target}: fresh settings must equal the snippet`,
     );
-    const settings = JSON.parse(await readFile(result.settingsFile, 'utf8'));
+    const settingsText = await readFile(result.settingsFile, 'utf8');
+    if (TARGET_SPECS[target].settingsFormat === 'toml-section') {
+      // Mistral's hooks file is TOML: the wiring is the delimited section,
+      // and the governance entries are its two [[hooks]] tables.
+      assert.ok(settingsText.includes('# BEGIN AGENT OS HOOKS'), `${target}: the section landed`);
+      assert.ok(settingsText.includes('type = "session_start"'), `${target}: session_start wired`);
+      assert.ok(settingsText.includes('session-start-context.mjs'), `${target}: context hook wired`);
+      assert.ok(settingsText.includes('type = "post_agent"'), `${target}: turn-end wired`);
+      assert.ok(settingsText.includes('stop-capture.mjs'), `${target}: capture hook wired`);
+      continue;
+    }
+    const settings = JSON.parse(settingsText);
     const commands = Object.values(settings.hooks ?? {})
       .flatMap((groups) => groups.flatMap((group) => (group.hooks ?? []).map((hook) => hook.command ?? '')));
     assert.ok(commands.some((command) => command.includes('session-start-context.mjs')), `${target}: SessionStart wired`);
@@ -215,13 +226,15 @@ test('installing all targets into one directory keeps them separated', async () 
 
 // ── Hook wiring snippets ─────────────────────────────────────────────────────
 
-test('each hook snippet is valid JSON using that tool own event names', async () => {
+test('each hook snippet is valid in its native form using that tool own event names', async () => {
   const dir = await scratch();
   const expectations = {
     claude: { turnEnd: 'Stop', settings: 'settings.json' },
     codex: { turnEnd: 'Stop', settings: 'hooks.json' },
     gemini: { turnEnd: 'AfterAgent', settings: 'settings.json' },
     grok: { turnEnd: 'Stop', settings: 'hooks/agent-os.json' },
+    qwen: { turnEnd: 'Stop', settings: 'settings.json' },
+    mistral: { turnEnd: 'post_agent', settings: 'hooks.toml' },
   };
 
   // A target with no expectation row would otherwise throw a confusing
@@ -237,13 +250,30 @@ test('each hook snippet is valid JSON using that tool own event names', async ()
     await mkdir(targetDir, { recursive: true });
     const result = await installAgentOs({ target, dir: targetDir, apply: true });
 
+    assert.equal(TARGET_SPECS[target].settingsFile, expectations[target].settings);
+
+    if (TARGET_SPECS[target].settingsFormat === 'toml-section') {
+      // Mistral's snippet is a TOML section, not JSON: its "event names"
+      // are the [[hooks]] type values, and its commands name the scripts
+      // the installer actually wrote.
+      const snippet = await readFile(result.settingsSnippet, 'utf8');
+      assert.ok(snippet.includes('type = "session_start"'), `${target} must configure session_start`);
+      assert.ok(
+        snippet.includes(`type = "${expectations[target].turnEnd}"`),
+        `${target} must configure ${expectations[target].turnEnd}`,
+      );
+      const scriptPath = join(targetDir, 'agent-os', 'hooks', 'session-start-context.mjs');
+      assert.ok(snippet.includes(scriptPath), `${target}: the command must point at the installed hook`);
+      assert.ok(existsSync(scriptPath), `${target}: ${scriptPath} does not exist`);
+      continue;
+    }
+
     const snippet = JSON.parse(await readFile(result.settingsSnippet, 'utf8'));
     assert.ok(snippet.hooks.SessionStart, `${target} must configure SessionStart`);
     assert.ok(
       snippet.hooks[expectations[target].turnEnd],
       `${target} must configure ${expectations[target].turnEnd}`,
     );
-    assert.equal(TARGET_SPECS[target].settingsFile, expectations[target].settings);
 
     // The command must point at a hook file that actually got installed.
     const command = snippet.hooks.SessionStart[0].hooks[0].command;
@@ -349,7 +379,7 @@ test('the template tree is non-trivial and all markdown or scripts', async () =>
   const files = await listTemplateFiles(DEFAULT_TEMPLATES_ROOT);
   assert.ok(files.length >= 12, `expected a real template tree, found ${files.length}`);
   for (const file of files) {
-    assert.match(file, /\.(md|json|mjs)$/, `unexpected template file type: ${file}`);
+    assert.match(file, /\.(md|json|mjs|toml)$/, `unexpected template file type: ${file}`);
   }
 });
 
@@ -686,6 +716,8 @@ test('the estate lands in every seat, refreshes on change, and touches no seat f
   await writeFile(join(home, '.codex', 'LESSONS.md'), codexOwnLessons, 'utf8');
   await mkdir(join(home, '.gemini'), { recursive: true });
   await mkdir(join(home, '.grok'), { recursive: true });
+  await mkdir(join(home, '.qwen'), { recursive: true });
+  await mkdir(join(home, '.vibe'), { recursive: true });
   await writeFile(join(home, '.grok', 'AGENTS.md'), ownContext.grok, 'utf8');
 
   // The source CLAUDE.md doubles as the claude seat's context file; give it
@@ -927,7 +959,7 @@ test('the estate folders land in every seat, refresh on change only, and skip wi
   const home = await estateFolderHome();
   const expectedCarried = ESTATE_CARGO.length + folderDestinations().length;
 
-  // Three seats present; grok is not on this machine.
+  // Three seats present; grok, qwen and mistral are not on this machine.
   await mkdir(join(home, '.codex'), { recursive: true });
   await mkdir(join(home, '.gemini'), { recursive: true });
 
@@ -965,7 +997,7 @@ test('the estate folders land in every seat, refresh on change only, and skip wi
   // Unchanged sources: every folder entry is a no-op in every present seat.
   const second = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
   for (const result of second.targets) {
-    if (result.target === 'grok') continue;
+    if (!['claude', 'codex', 'gemini'].includes(result.target)) continue; // present seats only
     const folderActions = result.files.filter(
       (file) => file.cargo === 'estate' && folderDestinations().includes(file.path),
     );
@@ -981,7 +1013,7 @@ test('the estate folders land in every seat, refresh on change only, and skip wi
   await writeFile(join(home, '.claude', 'scripts', 'rules_drift_check.mjs'), grown, 'utf8');
   const third = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
   for (const result of third.targets) {
-    if (result.target === 'grok') continue;
+    if (!['claude', 'codex', 'gemini'].includes(result.target)) continue; // present seats only
     const byPath = new Map(result.files.map((file) => [file.path, file.action]));
     assert.equal(byPath.get('agent-os/estate/scripts/rules_drift_check.mjs'), 'update', `${result.target}: the grown script must refresh`);
     assert.equal(byPath.get('agent-os/estate/scripts/hook_block_destructive.ps1'), 'unchanged');
@@ -1131,7 +1163,7 @@ test('the skills tree lands in every seat, refreshes on change only, and skips w
   const home = await estateTreeHome();
   const expectedCarried = ESTATE_CARGO.length + treeDestinations().length;
 
-  // Three seats present; grok is not on this machine.
+  // Three seats present; grok, qwen and mistral are not on this machine.
   await mkdir(join(home, '.codex'), { recursive: true });
   await mkdir(join(home, '.gemini'), { recursive: true });
 
@@ -1178,7 +1210,7 @@ test('the skills tree lands in every seat, refreshes on change only, and skips w
   // Unchanged sources: every tree entry is a no-op in every present seat.
   const second = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
   for (const result of second.targets) {
-    if (result.target === 'grok') continue;
+    if (!['claude', 'codex', 'gemini'].includes(result.target)) continue; // present seats only
     const treeActions = result.files.filter(
       (file) => file.cargo === 'estate' && treeDestinations().includes(file.path),
     );
@@ -1194,7 +1226,7 @@ test('the skills tree lands in every seat, refreshes on change only, and skips w
   await writeFile(join(home, '.claude', 'skills', 'cite-or-shut-up', 'references', 'sources.md'), grown, 'utf8');
   const third = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], home, apply: true });
   for (const result of third.targets) {
-    if (result.target === 'grok') continue;
+    if (!['claude', 'codex', 'gemini'].includes(result.target)) continue; // present seats only
     const byPath = new Map(result.files.map((file) => [file.path, file.action]));
     assert.equal(byPath.get('agent-os/estate/skills/cite-or-shut-up/references/sources.md'), 'update', `${result.target}: the grown file must refresh`);
     assert.equal(byPath.get('agent-os/estate/skills/cite-or-shut-up/SKILL.md'), 'unchanged');
@@ -1214,19 +1246,24 @@ test('the skills tree lands in every seat, refreshes on change only, and skips w
   await rm(home, { recursive: true, force: true });
 });
 
-test('installing all four targets into one directory keeps grok separate from codex', async () => {
-  // grok and codex BOTH use AGENTS.md. Without per-target subdirectories the
-  // second install would overwrite the first one's rules file.
+test('installing all targets into one directory keeps the AGENTS.md seats separate', async () => {
+  // grok, codex and mistral ALL use AGENTS.md. Without per-target
+  // subdirectories the second install would overwrite the first one's
+  // rules file.
   const dir = await scratch();
   const report = await installAgentOsTargets({ targets: [...AGENT_OS_TARGETS], dir, apply: true });
 
-  assert.equal(report.targets.length, 4);
+  assert.equal(report.targets.length, AGENT_OS_TARGETS.length);
   assert.ok(existsSync(join(dir, '.grok', 'AGENTS.md')), 'grok rules file');
   assert.ok(existsSync(join(dir, '.codex', 'AGENTS.md')), 'codex rules file');
+  assert.ok(existsSync(join(dir, '.vibe', 'AGENTS.md')), 'mistral rules file');
 
   const grokRules = await readFile(join(dir, '.grok', 'AGENTS.md'), 'utf8');
   const codexRules = await readFile(join(dir, '.codex', 'AGENTS.md'), 'utf8');
+  const mistralRules = await readFile(join(dir, '.vibe', 'AGENTS.md'), 'utf8');
   assert.notEqual(grokRules, codexRules, 'each target must get its own rendered file');
+  assert.notEqual(mistralRules, codexRules, 'each target must get its own rendered file');
+  assert.notEqual(mistralRules, grokRules, 'each target must get its own rendered file');
 
   await rm(dir, { recursive: true, force: true });
 });
@@ -1447,8 +1484,8 @@ test('D3: an appended import block carries the estate imports too', async () => 
 test('D4: the stamp set is exactly the write set', () => {
   assert.deepEqual(
     [...PROFILE_SYNC_STAMP_PROVIDERS].sort(),
-    ['claude', 'gemini', 'grok', 'openai'],
-    'four writes, four stamps — no mistral, runway, qwen or ollama',
+    ['claude', 'gemini', 'grok', 'mistral', 'openai', 'qwen'],
+    'six writes, six stamps — no runway, ollama, openrouter, cloudflare, nvidia or groq',
   );
   assert.deepEqual(
     PROFILE_SYNC_STAMP_PROVIDERS,
