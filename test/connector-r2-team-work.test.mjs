@@ -91,9 +91,9 @@ const noFetch = async () => { throw new Error('no network in tests'); };
 
 // ------------------------------------------------------------ catalog
 
-test('catalog: the team-work family is stocked brokered on claude, chatgpt, grok — and nowhere else', () => {
+test('catalog: the team-work family is stocked brokered on every seat (universal stocking, 2026-11-15)', () => {
   for (const fam of FAMILY) {
-    for (const seatId of SEATS) {
+    for (const seatId of LIVE_SEATS) {
       const def = catalogEntryById(seatId, fam.entryId);
       assert.ok(def, `${seatId}/${fam.entryId}: stocked`);
       assert.equal(def.name, fam.name);
@@ -106,10 +106,6 @@ test('catalog: the team-work family is stocked brokered on claude, chatgpt, grok
       assert.ok(def.scopesSummary.length > 20, `${seatId}/${fam.entryId}: plain-words connect summary present`);
     }
     for (const seatId of LIVE_SEATS) {
-      if (SEATS.includes(seatId)) continue;
-      assert.equal(catalogEntryById(seatId, fam.entryId), null, `${seatId}: not stocked in this bite`);
-    }
-    for (const seatId of SEATS) {
       const ids = catalogEntriesForSeat(seatId).map((d) => d.id);
       assert.equal(ids.filter((id) => id === fam.entryId).length, 1, `${seatId}: exactly one ${fam.entryId}`);
     }
