@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=d3ad99781863e8ad';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=d3ad99781863e8ad';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=d3ad99781863e8ad';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=d3ad99781863e8ad';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=d3ad99781863e8ad';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=d3ad99781863e8ad';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=d3ad99781863e8ad';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=d3ad99781863e8ad';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=d3ad99781863e8ad';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=d3ad99781863e8ad';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=d3ad99781863e8ad';
-import { createConnectFields } from './connect-fields.mjs?v=d3ad99781863e8ad';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=d3ad99781863e8ad';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=d3ad99781863e8ad';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=eecf35f828d565e6';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=eecf35f828d565e6';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, isConnectorOn, level1Model, level2Model, librarySeat, manageModel, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=eecf35f828d565e6';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=eecf35f828d565e6';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=eecf35f828d565e6';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=eecf35f828d565e6';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=eecf35f828d565e6';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=eecf35f828d565e6';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=eecf35f828d565e6';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=eecf35f828d565e6';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=eecf35f828d565e6';
+import { createConnectFields } from './connect-fields.mjs?v=eecf35f828d565e6';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=eecf35f828d565e6';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=eecf35f828d565e6';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -1179,7 +1179,7 @@ function inline(text, into, onLink, linkTitle) {
 // The stored network mode restores only as a mode the switch knows;
 // anything else falls back to Envoy. Pure; unit tested.
 export const netModeFor = (stored) => (stored === 'discord' || stored === 'slack' ? stored : 'envoy');
-const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: netModeFor(ls.get('netMode', 'envoy')), config: null, configChannelId: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], reportAgeMs: null, loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, refreshing: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
+const ws = { avatars: ls.get('avatars', {}), pendingAvatar: null, wired: false, ctx: null, channels: [], channelId: null, mode: netModeFor(ls.get('netMode', 'envoy')), config: null, configChannelId: null, configured: false, discordBot: null, slackBot: null, messages: [], sig: null, online: new Set(), presenceRows: [], activity: [], agentState: null, faces: null, profile: null, timer: null, slowTimer: null, linkPoll: null, attach: { channel: [] }, webSearch: { channel: false }, pickerFor: null, libraryFacts: null, libraryLoading: null, librarySeatLoading: {}, libraryFetchedAt: {}, libraryFactsFetchedAt: 0, libraryWriteAt: 0, libraryPreloadStarted: false, libraryPanel: { level: 1, seatId: null, sub: null }, connectorManage: { seatId: null, entryId: null, busy: false, error: '', confirmEntryId: null }, connectorToggles: {}, skillAttach: { channel: [] }, skills: { list: null, loaded: false, loading: null }, plugins: { list: null, unavailable: [], reportAgeMs: null, loaded: false, loading: null }, projects: { list: null, activeKey: null, loaded: false, loading: null }, armedSaved: null, toolAccess: { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, refreshing: false, error: '' }, connectErrors: {}, keyForm: { openFor: null, model: null, saving: false, error: '', known: {} }, tenantPairForm: { openFor: null, model: null, row: null, saving: false, error: '', note: '' }, customForm: { open: false, seatId: null, model: null, saving: false, error: '', created: null }, customRemove: { confirmFor: null, model: null, removing: false, error: '' }, githubFile: { open: false, path: '', entries: null, note: '', loading: false }, fileInput: null, reactions: { channelId: null, byId: {}, mine: {} }, reactionsStamp: 0, reactionPopFor: null, slash: { commands: null, loaded: false, loading: null, openFor: null, index: 0, dismissedFor: null, scopeFor: null } };
 
 // ---------- avatars (saved on this device) ----------
 const isPlain = () => ws.ctx?.state?.emojiMode === 'plain';
@@ -2977,6 +2977,7 @@ async function togglePicker(which) {
   ws.pickerFor = which;
   // The menu always opens on Level 1 (pick the seat).
   ws.libraryPanel = { level: 1, seatId: null, sub: null };
+  ws.connectorManage = { seatId: null, entryId: null, busy: false, error: '', confirmEntryId: null };
   await renderPicker(which);
 }
 
@@ -3149,6 +3150,7 @@ export function resetLibrarySession(ctx) {
   ws.libraryWriteAt = 0;
   ws.libraryPreloadStarted = false;
   ws.toolAccess = { open: false, seatId: null, entryId: null, model: null, loading: false, saving: false, refreshing: false, error: '' };
+  ws.connectorManage = { seatId: null, entryId: null, busy: false, error: '', confirmEntryId: null };
   ws.keyForm = { openFor: null, model: null, saving: false, error: '', known: {} };
   ws.tenantPairForm = { openFor: null, model: null, row: null, saving: false, error: '', note: '' };
   ws.customForm = { open: false, seatId: null, model: null, saving: false, error: '', created: null };
@@ -3170,6 +3172,17 @@ function librarySeatFace(seatId) {
 // same consistent tile every row wears — never a borrowed logo.
 function libraryIconTile(row) {
   return h('span', { class: 'ew-lib-icon', 'aria-hidden': 'true' }, (row.name ?? '?').slice(0, 1).toUpperCase());
+}
+// A row's road into the in-panel Manage view (Troy's order,
+// 2026-11-15): the row action that stands under a connected row's
+// switch, in the same shape as the key form's Replace row — the
+// manage view it opens is rendered by renderConnectorManage below.
+function manageRowAction(which, row) {
+  return h('div', { class: 'ew-picker-row ew-lib-row' },
+    h('span', { class: 'ew-lib-text' },
+      h('span', { class: 'ew-lib-name' }, 'Manage'),
+      h('span', { class: 'ew-lib-line' }, row.stateLabel)),
+    h('button', { type: 'button', class: 'ew-lib-connect', title: `Manage ${row.name} for ${seatName(row.seatId)} — its state, arm switch, tool access and disconnect, here in the panel`, onclick: () => openConnectorManage(which, row.seatId, row.entryId) }, 'Manage'));
 }
 function libraryRowNode(which, row, { shape = null } = {}) {
   const vendorLine = row.mirror
@@ -3221,13 +3234,15 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     // neither source carries nothing extra: the panel invents no
     // key-kind it was not told.
     const key = keyEntryKey(row.seatId, row.entryId);
-    // Rows that stand under the switch: the key form's Replace
-    // row when the panel knows the entry takes a key, and the
-    // Client pair row when the entry runs on the tenant's pair
-    // (Box, Salesforce — the pair is the workspace's, so the row
-    // stands on every agent's copy of the entry). Each open form
-    // expands under its own action row.
-    const extras = [];
+    // Rows that stand under the switch: the Manage row (every
+    // connected row carries one — the in-panel manage view is a
+    // row's own road), the key form's Replace row when the panel
+    // knows the entry takes a key, and the Client pair row when
+    // the entry runs on the tenant's pair (Box, Salesforce — the
+    // pair is the workspace's, so the row stands on every agent's
+    // copy of the entry). Each open form expands under its own
+    // action row.
+    const extras = [manageRowAction(which, row)];
     if (key && ws.keyForm.known[key]) {
       extras.push(h('div', { class: 'ew-picker-row ew-lib-row' },
         h('span', { class: 'ew-lib-text' },
@@ -3249,7 +3264,8 @@ function libraryRowNode(which, row, { shape = null } = {}) {
     // connect-start — see startPanelConnect.
     const connectRow = h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
       h('span', { class: 'ew-picker-state off' }, row.stateLabel),
-      h('button', { type: 'button', class: 'ew-lib-connect', title: `Connect ${row.name} for your workspace — every agent shares it`, onclick: () => { void startPanelConnect(which, row); } }, row.reconnect ? 'Reconnect' : 'Connect'));
+      h('button', { type: 'button', class: 'ew-lib-connect', title: `Connect ${row.name} for your workspace — every agent shares it`, onclick: () => { void startPanelConnect(which, row); } }, row.reconnect ? 'Reconnect' : 'Connect'),
+      h('button', { type: 'button', class: 'ew-lib-connect', title: `Manage ${row.name} for ${seatName(row.seatId)} — its state and controls, here in the panel`, onclick: () => openConnectorManage(which, row.seatId, row.entryId) }, 'Manage'));
     // The key form, when this entry's connect start opened it,
     // expands under its own row in the panel (keyFormNode below).
     if (ws.keyForm.openFor === keyEntryKey(row.seatId, row.entryId) && ws.keyForm.model) {
@@ -3278,20 +3294,22 @@ function libraryRowNode(which, row, { shape = null } = {}) {
   }
   if (row.mirror) {
     // A mirror row is never a button Helmian can't honour (§1.5):
-    // the connection lives in the seat's own product, so the button
-    // this row CAN honour opens the seat's account page in Helmian —
-    // the Agents tab, where the seat's own sign-in is managed — and
+    // the connection lives in the seat's own product. The button
+    // this row CAN honour opens the connector's management inside
+    // this panel (Troy's order, 2026-11-15): the block shows the
+    // state the vendor side last reported and carries the road to
+    // the seat's account page in Helmian — the Agents tab, where
+    // the seat's own sign-in is managed — as its one control, and
     // never a link out to the vendor (Troy's ruling, 2026-11-08).
     // The same-name Helmian-brokered entry, when the library holds
-    // one, stands in this panel with the real Connect. The row
-    // states that plainly in its title and its trailing word; the
-    // state it shows is the state the vendor side last reported.
-    return h('button', { type: 'button', class: `ew-picker-row ew-lib-row mirror${shape === 'state' ? ' state' : ''}`, title: `${row.name} is managed in ${row.mirror.managedIn}, not in Helmian — open Helmian's Agents page for ${seatName(row.seatId)}'s account`, onclick: () => openManageForSeat(which) }, libraryIconTile(row), text,
+    // one, stands in this panel with the real Connect.
+    return h('button', { type: 'button', class: `ew-picker-row ew-lib-row mirror${shape === 'state' ? ' state' : ''}`, title: `${row.name} is managed in ${row.mirror.managedIn}, not in Helmian — open its management here to see its state and the road to ${seatName(row.seatId)}'s account page`, onclick: () => openConnectorManage(which, row.seatId, row.entryId) }, libraryIconTile(row), text,
       h('span', { class: `ew-picker-state ${row.state === 'connected' ? 'on' : 'off'}` }, row.stateLabel),
-      h('span', { class: 'ew-picker-state off' }, 'Open'));
+      h('span', { class: 'ew-picker-state off' }, 'Manage'));
   }
   return withRemove(h('div', { class: 'ew-picker-row ew-lib-row' }, libraryIconTile(row), text,
-    h('span', { class: 'ew-picker-state off' }, row.stateLabel)));
+    h('span', { class: 'ew-picker-state off' }, row.stateLabel),
+    h('button', { type: 'button', class: 'ew-lib-connect', title: `Manage ${row.name} for ${seatName(row.seatId)} — its state and controls, here in the panel`, onclick: () => openConnectorManage(which, row.seatId, row.entryId) }, 'Manage')));
 }
 
 // The words a refused connect start paints: the server's own
@@ -3915,6 +3933,9 @@ function renderPlusMenuLevel2(which) {
     activeProjectKey: ws.projects.activeKey ?? ws.ctx?.state?.activeProjectKey ?? null,
     toolAccess: ws.toolAccess,
   });
+  // The in-panel Manage view (Troy's order, 2026-11-15) stands in
+  // for the seat's menu while it is open for this seat.
+  if (ws.connectorManage.seatId === seatId) return renderConnectorManage(which, library);
   const back = h('button', { type: 'button', class: 'ew-btn sm ghost ew-lib-back', onclick: () => { ws.libraryPanel = { level: 1, seatId: null, sub: null }; renderPicker(which); } }, '‹ All agents');
   const head = h('div', { class: 'ew-plus-head' }, back, h('strong', {}, seatName(seatId)));
   if (!model) return [head, h('p', { class: 'ew-note' }, 'This menu could not be loaded.')];
@@ -4009,6 +4030,144 @@ function screenshotRowNode(which, row) {
   return h('div', { class: 'ew-picker-group' }, btn, note);
 }
 
+// The in-panel Manage view (Troy's order, 2026-11-15): "Manage
+// connectors" — and every connector row's own Manage — opens the
+// seat's management HERE, in the panel: one block per connector
+// with its state, its arm switch for this channel, its Connect,
+// its tool access, and its disconnect (connector-panel.mjs's
+// manageModel rules which acts each row honestly carries). A
+// mirror's block carries its state and the one road it can
+// honour — the seat's account page, openManageForSeat below.
+// Nothing in this view navigates away from the panel except that
+// one account-page road, picked deliberately inside a mirror's
+// block.
+function openConnectorManage(which, seatId, entryId = null) {
+  ws.connectorManage = { seatId, entryId, busy: false, error: '', confirmEntryId: null };
+  renderPicker(which);
+}
+function closeConnectorManage() {
+  ws.connectorManage = { seatId: null, entryId: null, busy: false, error: '', confirmEntryId: null };
+}
+function renderConnectorManage(which, library) {
+  const seatId = ws.libraryPanel.seatId;
+  const cm = ws.connectorManage;
+  const back = h('button', { type: 'button', class: 'ew-btn sm ghost ew-lib-back', onclick: () => { closeConnectorManage(); renderPicker(which); } }, '‹ Back');
+  const head = h('div', { class: 'ew-plus-head' }, back, h('strong', {}, `${seatName(seatId)} — Manage connectors`));
+  if (!library) return [head, h('p', { class: 'ew-note' }, 'Loading connectors...')];
+  if (library.error) return [head, h('p', { class: 'ew-note' }, 'This library could not be loaded.')];
+  const model = manageModel(library, ws.connectorToggles, conversationIdFor(which));
+  const level2 = level2Model(library, ws.connectorToggles, conversationIdFor(which));
+  const nodes = [head];
+  for (const row of model.rows) {
+    const open = cm.entryId === row.entryId;
+    nodes.push(h('button', { type: 'button', class: 'ew-picker-row ew-lib-row', 'aria-expanded': String(open), title: open ? `Close ${row.name}'s management` : `Manage ${row.name} for ${seatName(seatId)}`, onclick: () => {
+      cm.entryId = open ? null : row.entryId;
+      cm.error = '';
+      cm.confirmEntryId = null;
+      renderPicker(which);
+    } }, libraryIconTile(row),
+      h('span', { class: 'ew-lib-text' },
+        h('span', { class: 'ew-lib-name' }, row.name),
+        h('span', { class: 'ew-lib-line ew-lib-state' }, row.stateLabel)),
+      h('span', { class: 'ew-picker-state off' }, open ? '▾' : '›')));
+    if (open) nodes.push(...manageBlockNodes(which, row, level2));
+  }
+  if (!model.rows.length) nodes.push(h('p', { class: 'ew-note' }, 'No connectors in this library yet.'));
+  return nodes;
+}
+function manageBlockNodes(which, row, level2) {
+  const cm = ws.connectorManage;
+  const out = [];
+  out.push(h('p', { class: 'ew-note' }, `${row.vendorLabel} · ${row.trustText}${row.oneLiner ? ` — ${row.oneLiner}` : ''}`));
+  if (row.isMirror) {
+    out.push(h('p', { class: 'ew-note' }, `${row.name} is managed in ${row.mirror?.managedIn ?? seatName(row.seatId)}. Helmian shows the state that product last reported; the connection itself is made and managed in ${seatName(row.seatId)}'s own account.`));
+    out.push(h('button', { type: 'button', class: 'ew-picker-row', title: `Open ${seatName(row.seatId)}'s account page in Helmian`, onclick: () => openManageForSeat(which) },
+      h('span', {}, `Open ${seatName(row.seatId)}'s account page`), h('span', { class: 'ew-picker-state off' }, 'Open')));
+    return out;
+  }
+  if (row.canArm) {
+    out.push(h('button', { type: 'button', class: `ew-picker-row${row.on ? ' on' : ''}`, title: row.on ? `${row.name} is on in this channel — tap to turn it off` : `Turn ${row.name} on in this channel`, onclick: () => {
+      ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), row.seatId, row.entryId);
+      void persistArmedConnectors();
+      renderAttachChips(which); renderPicker(which);
+    } }, h('span', { class: 'ew-lib-text' },
+        h('span', { class: 'ew-lib-name' }, 'On in this channel'),
+        h('span', { class: 'ew-lib-line' }, row.on ? 'This connector\u2019s tools join this seat\u2019s turns in this channel' : 'Turn it on to arm this connector for this channel')),
+      h('span', { class: 'ew-lib-switch', 'aria-hidden': 'true' }),
+      h('span', { class: `ew-picker-state ${row.on ? 'on' : 'off'}` }, row.on ? 'On' : 'Off')));
+  }
+  if (row.canConnect) {
+    out.push(h('button', { type: 'button', class: 'ew-picker-row', title: `Connect ${row.name} for your workspace — every agent shares it`, onclick: () => { void startPanelConnect(which, row); } },
+      h('span', {}, row.reconnect ? `Reconnect ${row.name}` : `Connect ${row.name}`), h('span', { class: 'ew-picker-state off' }, 'Connect')));
+    const connectError = ws.connectErrors[keyEntryKey(row.seatId, row.entryId)];
+    if (connectError) out.push(h('p', { class: 'ew-note' }, connectError));
+    if (row.tenantPair) {
+      out.push(pairActionRow(which, row));
+      if (ws.tenantPairForm.openFor === keyEntryKey(row.seatId, row.entryId) && ws.tenantPairForm.model) out.push(pairFormNode(which, row));
+    }
+  }
+  if (row.canToolAccess) {
+    const ta = ws.toolAccess;
+    const openHere = ta.open === true && ta.seatId === row.seatId && ta.entryId === row.entryId;
+    if (openHere) {
+      out.push(toolAccessNode(which, { kind: 'action', label: 'Tool access', action: 'tool-access', seatId: row.seatId, entries: toolAccessEntries(level2), selectedEntryId: row.entryId, open: true, libraryState: 'ready' }));
+    } else {
+      out.push(h('button', { type: 'button', class: 'ew-picker-row', title: 'Set when this connection\u2019s tools ask before they run, and turn single tools on or off', onclick: () => {
+        void openToolAccess(which, { seatId: row.seatId, selectedEntryId: row.entryId }).then(() => { if (ws.pickerFor === which) renderPicker(which); });
+        renderPicker(which);
+      } }, h('span', {}, 'Tool access'), h('span', { class: 'ew-picker-state off' }, '›')));
+    }
+  }
+  if (row.canDisconnect) {
+    if (cm.confirmEntryId === row.entryId) {
+      out.push(h('p', { class: 'ew-note' }, `Disconnect ${row.name} for ${seatName(row.seatId)}? The connection and its stored sign-in are removed; connecting again starts over.`));
+      out.push(h('div', { class: 'ew-picker-row ew-lib-row' },
+        h('button', { type: 'button', class: 'ew-lib-connect', disabled: cm.busy, onclick: () => { void disconnectPanelConnector(which, row); } }, cm.busy ? 'Disconnecting…' : 'Disconnect'),
+        h('button', { type: 'button', class: 'ew-lib-connect', disabled: cm.busy, onclick: () => { cm.confirmEntryId = null; renderPicker(which); } }, 'Keep it')));
+    } else {
+      out.push(h('button', { type: 'button', class: 'ew-picker-row', title: `Disconnect ${row.name} for ${seatName(row.seatId)}`, onclick: () => { cm.confirmEntryId = row.entryId; cm.error = ''; renderPicker(which); } },
+        h('span', {}, 'Disconnect'), h('span', { class: 'ew-picker-state off' }, 'Remove')));
+    }
+    if (cm.error && cm.entryId === row.entryId) out.push(h('p', { class: 'ew-note' }, cm.error));
+  }
+  if (!row.canArm && !row.canConnect && !row.canToolAccess && !row.canDisconnect) {
+    out.push(h('p', { class: 'ew-note' }, 'There is nothing to change for this connector here — its state above is the whole story.'));
+  }
+  return out;
+}
+// The manage view's Disconnect: the library write route's
+// disconnect for this seat's row. On success the seat's library is
+// re-read (the connection was a workspace-set record, so every
+// seat's cached library is stale — the tool-access writes'
+// standing rule), and a connector that was armed in this channel
+// is disarmed with it: the standing set must not keep naming a
+// connection that no longer exists. A refusal paints the route's
+// own words in the block and changes nothing.
+async function disconnectPanelConnector(which, row) {
+  const cm = ws.connectorManage;
+  if (cm.busy) return;
+  cm.busy = true;
+  cm.error = '';
+  renderPicker(which);
+  try {
+    await ws.ctx.post('/api/admin/connector-library/disconnect', { seatId: row.seatId, entryId: row.entryId });
+    ws.ctx.toast(`${row.name} is disconnected.`, 'ok');
+    cm.confirmEntryId = null;
+    if (isConnectorOn(ws.connectorToggles, conversationIdFor(which), row.seatId, row.entryId)) {
+      ws.connectorToggles = toggleConnector(ws.connectorToggles, conversationIdFor(which), row.seatId, row.entryId);
+      void persistArmedConnectors();
+      renderAttachChips(which);
+    }
+    invalidateAllSeatLibraries();
+    await loadSeatLibrary(row.seatId).catch(() => {});
+  } catch (e) {
+    cm.error = connectFailureMessage(e, row.name);
+    ws.ctx.toast(cm.error);
+  }
+  cm.busy = false;
+  if (ws.pickerFor === which) renderPicker(which);
+}
+
 // Land on the Integrations view's Agents tab (owner order,
 // 2026-11-10): the per-seat Manage surface that used to live on the
 // Integrations Connectors tab is removed — connectors live in this
@@ -4016,8 +4175,10 @@ function screenshotRowNode(which, row) {
 // The tab marker names 'agents'; app.js's loadIntegrations consumes
 // it and selects that tab, so the landing is never left hidden
 // behind the remembered tab. No seat marker is written any more:
-// nothing consumes one. Shared by the manage footer row and the
-// mirror rows. (The Tool access action row no longer rides this
+// nothing consumes one. Its one remaining caller is the Manage
+// view's mirror block: a mirror's connection lives in the seat's
+// own product, and this is the road to that seat's account page
+// inside Helmian. (The Tool access action row no longer rides this
 // funnel — it expands its own face in the panel, toolAccessNode
 // below; the panel Connect's key-needed answer no longer rides it
 // either — it opens the key form in the panel, keyFormNode above.)
@@ -4417,12 +4578,15 @@ function plusMenuRowNode(which, row, index) {
         h('div', { class: 'ew-plus-sub' }, ...row.rows.map((r, i) => plusMenuRowNode(which, r, i))));
     }
     case 'manage': {
-      // The footer's one road: Helmian's own Integrations view, for
-      // every seat (Troy's ruling, 2026-11-08 — a seat's connections
-      // are managed inside Helmian, never in a vendor window, so no
-      // vendor manage row and no dead placeholder row exists).
-      if (row.target === 'integrations') {
-        return h('button', { type: 'button', class: 'ew-picker-row ew-plus-manage', onclick: () => openManageForSeat(which) }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
+      // The footer's one road: the seat's connector management
+      // inside this panel (Troy's order, 2026-11-15 — Manage
+      // manages the connector for that seat, in place; it no
+      // longer navigates away to the Integrations page). A seat's
+      // connections are managed inside Helmian, never in a vendor
+      // window (Troy's ruling, 2026-11-08), so no vendor manage
+      // row and no dead placeholder row exists.
+      if (row.target === 'panel') {
+        return h('button', { type: 'button', class: 'ew-picker-row ew-plus-manage', onclick: () => openConnectorManage(which, ws.libraryPanel.seatId) }, h('span', {}, row.label), h('span', { class: 'ew-picker-state off' }, 'Open'));
       }
       return h('p', { class: 'ew-note' }, '');
     }
@@ -6028,7 +6192,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=d3ad99781863e8ad');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=eecf35f828d565e6');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
