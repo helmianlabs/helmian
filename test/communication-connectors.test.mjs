@@ -57,3 +57,52 @@ test('outbound delivery refuses non-allowlisted webhook hosts', async () => {
     provider: 'slack', text: 'hello', env: { HELMION_SLACK_WEBHOOK_URL: 'https://example.com/hook' },
   }));
 });
+
+test('outbound delivery posts to an explicit webhook URL instead of the env one', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => { calls.push({ url: String(url), body: JSON.parse(options.body) }); return { ok: true, status: 204 }; };
+  const env = { HELMION_DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/env' };
+  const result = await postConnectorMessage({
+    provider: 'discord', text: 'tenant hello', env, fetchImpl,
+    webhookUrl: 'https://discord.com/api/webhooks/tenant',
+  });
+  assert.equal(result.delivered, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://discord.com/api/webhooks/tenant');
+  assert.deepEqual(calls[0].body, { content: 'tenant hello' });
+
+  const slack = await postConnectorMessage({
+    provider: 'slack', text: 'tenant hello', env: {}, fetchImpl,
+    webhookUrl: 'https://hooks.slack.com/services/tenant',
+  });
+  assert.equal(slack.delivered, true);
+  assert.equal(calls[1].url, 'https://hooks.slack.com/services/tenant');
+  assert.deepEqual(calls[1].body, { text: 'tenant hello' });
+});
+
+test('outbound delivery validates an explicit webhook URL against the same allowlist', async () => {
+  await assert.rejects(() => postConnectorMessage({
+    provider: 'discord', text: 'hello', env: {}, fetchImpl: async () => ({ ok: true, status: 200 }),
+    webhookUrl: 'https://example.com/api/webhooks/x',
+  }), /not allowlisted/);
+  await assert.rejects(() => postConnectorMessage({
+    provider: 'slack', text: 'hello', env: {}, fetchImpl: async () => ({ ok: true, status: 200 }),
+    webhookUrl: 'https://discord.com/api/webhooks/x',
+  }), /not allowlisted/, 'a Discord host is not a Slack webhook');
+  await assert.rejects(() => postConnectorMessage({
+    provider: 'sms', text: 'hello', env: {}, fetchImpl: async () => ({ ok: true, status: 200 }),
+    webhookUrl: 'https://discord.com/api/webhooks/x',
+  }), /unsupported/);
+});
+
+test('outbound delivery without an explicit URL keeps the env behaviour', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => { calls.push(String(url)); return { ok: true, status: 200 }; };
+  await postConnectorMessage({ provider: 'discord', text: 'env hello', env: { HELMION_DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/env' }, fetchImpl });
+  assert.deepEqual(calls, ['https://discord.com/api/webhooks/env']);
+  await assert.rejects(
+    () => postConnectorMessage({ provider: 'discord', text: 'env hello', env: {}, fetchImpl }),
+    /invalid/,
+    'no env URL and no explicit URL is the historical invalid-URL refusal',
+  );
+});
