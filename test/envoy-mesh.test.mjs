@@ -1022,12 +1022,15 @@ test('mesh on fakes: a helmOnly mark whose answer is missing from the window is 
   assert.equal(result.work.length, 0, 'still no vendor work item');
   assert.equal(helmInserts(state).length, 1, 'Helm answers the marked message itself');
   assert.equal(helmInserts(state)[0].idempotency_key, `helm:${ask.id}`);
-  assert.equal(helmInserts(state)[0].body, HELM_AVAILABILITY_LINE);
-  assert.equal(state.misses.length, 1, 'and the question files to the miss queue');
-  assert.equal(state.misses[0].question, ask.body);
+  // Bite H4: the ask is state-shaped, so the answer is the
+  // composed three lines from this fixture's (empty) records,
+  // not H3's interim availability line, and an answered
+  // question files no miss.
+  assert.equal(helmInserts(state)[0].body, 'Running: no seat is connected.\nBlocked: nothing is blocked.\nNext: nothing is queued.');
+  assert.equal(state.misses.length, 0, 'an answered state ask files no miss');
 });
 
-test('mesh on fakes: an unnamed message with an empty vendor due set gets exactly one Helm answer and one miss filing (bite H3)', async () => {
+test('mesh on fakes: an unnamed message with an empty vendor due set gets exactly one Helm answer (bite H3; composed, bite H4)', async () => {
   const config = emptyConfig();
   config.agents = ['claude'];
   // The message names only a role: dispatch computes an empty
@@ -1040,14 +1043,16 @@ test('mesh on fakes: an unnamed message with an empty vendor due set gets exactl
   await mesh.drainFilingTail();
   assert.equal(first.work.length, 0, 'no vendor work item: nobody was due');
   assert.equal(helmInserts(state).length, 1, 'exactly one Helm answer post');
-  assert.equal(helmInserts(state)[0].body, 'No seat is connected to answer that here');
+  // Bite H4: the ask names state, blocked, and next — a state
+  // ask — so the answer is composed from the records (this
+  // fixture's records are empty) and files no miss, where H3
+  // posted the availability line and filed one.
+  assert.equal(helmInserts(state)[0].body, 'Running: no seat is connected.\nBlocked: nothing is blocked.\nNext: nothing is queued.');
   assert.equal(helmInserts(state)[0].idempotency_key, `helm:${ask.id}`);
   assert.deepEqual(helmInserts(state)[0].metadata, { helm: { due: 'last-resort', forSubject: 'user_author' } });
   assert.equal(state.updates.length, 0, 'a last-resort answer carries no helmOnly mark');
-  assert.equal(state.misses.length, 1, 'exactly one miss-queue filing');
-  assert.equal(state.misses[0].question, ask.body);
-  assert.equal(state.misses[0].senderSubject, 'user_author');
-  assert.equal(filedAsks.length, 0, 'an undispatched ask files no ask record — the miss is its record');
+  assert.equal(state.misses.length, 0, 'an answered state ask files no miss');
+  assert.equal(filedAsks.length, 0, 'an undispatched ask files no ask record either');
 
   // The next poll sees Helm's answer in the window: nothing is
   // posted or filed again.
@@ -1055,7 +1060,7 @@ test('mesh on fakes: an unnamed message with an empty vendor due set gets exactl
   await mesh.drainFilingTail();
   assert.equal(second.work.length, 0);
   assert.equal(helmInserts(state).length, 1, 'still exactly one Helm answer after a second poll');
-  assert.equal(state.misses.length, 1, 'still exactly one filing');
+  assert.equal(state.misses.length, 0, 'still no filing');
 });
 
 test('mesh on fakes: a message whose due seats are all withheld by the claim gate is answered by Helm (bite H3)', async () => {
@@ -1092,7 +1097,10 @@ test('mesh on fakes: @Helm named answers alone — a due vendor seat is not hand
   assert.equal(state.updates.length, 1, 'the human message is marked helmOnly in the same write');
   assert.equal(state.updates[0].messageId, ask.id);
   assert.deepEqual(state.updates[0].mark, { helmOnly: { answeredBy: 'helm' } });
-  assert.equal(state.misses.length, 1, 'the question files to the miss queue');
+  // Bite H4: "what is running here?" is a state ask — composed
+  // from the records and answered, so nothing files.
+  assert.equal(helmInserts(state)[0].body, 'Running: no seat is connected.\nBlocked: nothing is blocked.\nNext: nothing is queued.');
+  assert.equal(state.misses.length, 0, 'an answered state ask files no miss');
   assert.equal(filedAsks.length, 0, 'no ask record: the message was never dispatched');
 
   // And once marked and answered, later polls leave it alone.
@@ -1100,7 +1108,7 @@ test('mesh on fakes: @Helm named answers alone — a due vendor seat is not hand
   await mesh.drainFilingTail();
   assert.equal(second.work.length, 0);
   assert.equal(helmInserts(state).length, 1, 'no second Helm answer');
-  assert.equal(state.misses.length, 1, 'no second filing');
+  assert.equal(state.misses.length, 0, 'no filing on later polls either');
 });
 
 test('mesh on fakes: @all gets Helm as one of the team, beside the seats\u2019 work items (bite H3)', async () => {
@@ -1115,8 +1123,9 @@ test('mesh on fakes: @all gets Helm as one of the team, beside the seats\u2019 w
   assert.deepEqual(result.work[0].agents, ['claude', 'gemini']);
   assert.equal(helmInserts(state).length, 1, 'and Helm answers as one of the team');
   assert.equal(helmInserts(state)[0].metadata.helm.due, 'team');
+  assert.equal(helmInserts(state)[0].body, 'Running: no seat is connected.\nBlocked: nothing is blocked.\nNext: nothing is queued.', 'bite H4: the state ask is composed from the records');
   assert.equal(state.updates.length, 0, 'a team answer carries no helmOnly mark');
-  assert.equal(state.misses.length, 1, 'the question files to the miss queue');
+  assert.equal(state.misses.length, 0, 'an answered state ask files no miss');
   assert.equal(filedAsks.length, 1, 'the dispatched ask files its ask record as today');
 });
 
@@ -1134,4 +1143,94 @@ test('mesh on fakes: a vendor-due message gets no Helm post and no miss filing (
   assert.equal(state.inserts.length, 0, 'nothing at all is posted');
   assert.equal(state.misses.length, 0, 'nothing is filed to the miss queue');
   assert.equal(filedAsks.length, 1, 'the ask record files as today');
+});
+
+// ---------------------------------------------------------------------------
+// Bite H4 (DESIGN 3.3): Helm's answers are composed from records.
+// These run the same stateful fake pool as the H3 cases, with the
+// composer's record roads injected (helmConnectorReadImpl,
+// helmEntriesReadImpl) and the tenant state carrying a connected
+// provider, so the composed lines can be pinned end to end.
+
+const H4_EMPTY_STATE_LINES = 'Running: no seat is connected.\nBlocked: nothing is blocked.\nNext: nothing is queued.';
+
+test('mesh on fakes: a state ask names Weather from the connector read, and the line follows the read (bite H4)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  config.armedConnectors = [{ seatId: 'claude', entryId: 'weather' }];
+  const ask = h3Row({ body: '@Helm what is the state here?' });
+  const awake = { state: 'awake', gated: true, connectedProviders: ['claude'], hasRunner: true, reason: null };
+
+  const connectedRun = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const connectedMesh = h3Mesh(connectedRun.pool, {
+    agentStateImpl: async () => awake,
+    helmConnectorReadImpl: async () => [{ name: 'Weather', state: 'connected' }],
+  }).mesh;
+  await connectedMesh.agentWork(H3_DEVICE, 'claude');
+  await connectedMesh.drainFilingTail();
+  assert.equal(helmInserts(connectedRun.state).length, 1, 'one Helm answer');
+  assert.equal(
+    helmInserts(connectedRun.state)[0].body,
+    'Running: Claude answering; Weather is connected.\nBlocked: nothing is blocked.\nNext: nothing is queued.',
+    'Weather connected in the read: the Running line says so, and nothing contradicts it',
+  );
+  assert.equal(connectedRun.state.misses.length, 0, 'an answered state ask files no miss');
+
+  const offlineRun = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const offlineMesh = h3Mesh(offlineRun.pool, {
+    agentStateImpl: async () => awake,
+    helmConnectorReadImpl: async () => [{ name: 'Weather', state: 'not-connected' }],
+  }).mesh;
+  await offlineMesh.agentWork(H3_DEVICE, 'claude');
+  await offlineMesh.drainFilingTail();
+  assert.equal(
+    helmInserts(offlineRun.state)[0].body,
+    'Running: Claude answering.\nBlocked: Weather is not connected.\nNext: nothing is queued.',
+    'Weather not connected in the read: the Blocked line says so, and the Running line does not claim it',
+  );
+  assert.equal(offlineRun.state.misses.length, 0);
+});
+
+test('mesh on fakes: a fact question is answered with the filed entry quoted verbatim (bite H4)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const factText = 'The approvals pop-up is the Allow box that pops up in the app.';
+  const ask = h3Row({ body: '@Helm what do you have filed about the approvals pop-up?' });
+  const { pool, state } = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const { mesh } = h3Mesh(pool, {
+    helmEntriesReadImpl: async () => [{ key: 'fact:11111111-2222-4333-8444-555555555555', value: { fact: factText } }],
+  });
+  await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(helmInserts(state).length, 1, 'one Helm answer');
+  assert.equal(helmInserts(state)[0].body, factText, 'the stored text, exactly — no rewording, no trim');
+  assert.equal(state.misses.length, 0, 'an answered fact question files no miss');
+});
+
+test('mesh on fakes: a fact question with nothing filed gets the nothing-filed line and exactly one miss (bite H4)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const ask = h3Row({ body: '@Helm what do you have filed about the payroll run?' });
+  const { pool, state } = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const { mesh } = h3Mesh(pool, { helmEntriesReadImpl: async () => [] });
+  await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(helmInserts(state).length, 1, 'one Helm answer');
+  assert.equal(helmInserts(state)[0].body, 'I have nothing filed about that');
+  assert.equal(state.misses.length, 1, 'exactly one miss-queue filing');
+  assert.equal(state.misses[0].question, ask.body);
+});
+
+test('mesh on fakes: a failed filed-entries read never produces a nothing-filed claim (bite H4)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const ask = h3Row({ body: '@Helm what do you have filed about the payroll run?' });
+  const { pool, state } = fakeHelmPool({ configBody: serializeConfig(config), rows: [ask] });
+  const { mesh } = h3Mesh(pool, {
+    helmEntriesReadImpl: async () => { throw new Error('read is down'); },
+  });
+  await mesh.agentWork(H3_DEVICE, 'claude');
+  await mesh.drainFilingTail();
+  assert.equal(helmInserts(state)[0].body, HELM_AVAILABILITY_LINE, 'the read failed, so Helm falls back to the availability line — it does not claim the record is empty');
+  assert.equal(state.misses.length, 1, 'and the question still files');
 });

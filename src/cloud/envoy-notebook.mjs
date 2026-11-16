@@ -122,6 +122,49 @@ export function formatNotebookBlock({ blockers = [], entries = [], lessons = [] 
 }
 
 /**
+ * Read the tenant's notebook ENTRIES, structured (fix programme
+ * bite H4): the same scoping and the same per-key discipline as
+ * the block read below — the tenant's own rows plus the shared
+ * rows, a key filed both under the tenant and in the shared rows
+ * resolving to the tenant's row, newest first — but returned as
+ * rows ({ key, value }) instead of rendered text, for a reader
+ * that must quote an entry's own text rather than the block's
+ * bounded rendering of it (Helm's fact answers, envoy-helm.mjs).
+ * Returns the entries (possibly none), or null on any read
+ * failure, logged loudly: unlike the block read, the failure is
+ * distinguishable from an empty notebook, because a caller
+ * answering from the entries must not claim "nothing filed" on a
+ * read that never happened. Never throws.
+ */
+export async function readNotebookEntries(pool, tenantId, { log = (...args) => console.error(...args) } = {}) {
+  const slug = String(tenantId ?? '');
+  if (!slug || !pool || typeof pool.query !== 'function') return null;
+  try {
+    const entries = await pool.query(
+      `select project_slug, key, value from helmion.context_entries
+        where project_slug = $1 or project_slug is null
+        order by (project_slug is null), updated_at desc, key`,
+      [slug],
+    );
+    const seenKeys = new Set();
+    const dedupedEntries = [];
+    for (const row of entries.rows) {
+      const key = String(row?.key ?? '');
+      if (!key || seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      dedupedEntries.push({ key, value: row?.value ?? null });
+    }
+    return dedupedEntries;
+  } catch (error) {
+    log(
+      `[envoy-notebook] notebook entries read FAILED for tenant ${slug}: ${error?.message ?? error} `
+      + '— the caller answers without the filed entries this poll; dispatch is unchanged.',
+    );
+    return null;
+  }
+}
+
+/**
  * Read the tenant's notebook block from the live store at dispatch
  * time. `pool` is the mesh's own pool — deliberately NOT the dispatch
  * transaction's client, so a notebook failure can never poison the
