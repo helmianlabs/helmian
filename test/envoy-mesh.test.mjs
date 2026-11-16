@@ -898,6 +898,77 @@ test('mesh on fakes: a Librarian-filed fact is never handed to a seat (bite L1)'
   assert.equal(plainAsks.length, 1, 'and its ask record files as today');
 });
 
+test('mesh on fakes: a Librarian-answered recall is never handed to a seat (bite L2)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const configBody = serializeConfig(config);
+  const countingMesh = (pool, filedAsks) => createEnvoyMesh({
+    pool,
+    publishImpl: async () => {},
+    notebookImpl: async () => null,
+    kbImpl: async () => null,
+    librarianImpl: {
+      async fileAsk(actor, job) { filedAsks.push(job); return { filed: true }; },
+      async renameChannelIfGeneric() { return true; },
+      async fileIncident() { return { filed: true }; },
+    },
+    armingLogImpl: () => {},
+  });
+
+  // The marked send: the recall hook already answered the
+  // question from the filed record and quoted it in the
+  // channel, so the poll produces no work item for it and
+  // files no ask record for it either — the Librarian's
+  // answer is its record. The mark's shape is the same
+  // whether the recall found its entry or answered
+  // none-found, so both marks skip alike.
+  for (const mark of [
+    { librarianRecall: { key: 'fact:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', answeredBy: 'librarian' } },
+    { librarianRecall: { key: null, answeredBy: 'librarian' } },
+  ]) {
+    const markedAsks = [];
+    const marked = countingMesh(fakeWorkPool({ configBody, askMetadata: mark }).pool, markedAsks);
+    const markedResult = await marked.agentWork(G6_DEVICE, 'claude');
+    await marked.drainFilingTail();
+    assert.equal(markedResult.work.length, 0, 'an answered recall earns no seat a work item');
+    assert.equal(markedAsks.length, 0, 'and no ask record is filed for it');
+  }
+});
+
+test('mesh on fakes: a Librarian-carried-out incident command is never handed to a seat (bite L3)', async () => {
+  const config = emptyConfig();
+  config.agents = ['claude'];
+  const configBody = serializeConfig(config);
+  const countingMesh = (pool, filedAsks) => createEnvoyMesh({
+    pool,
+    publishImpl: async () => {},
+    notebookImpl: async () => null,
+    kbImpl: async () => null,
+    librarianImpl: {
+      async fileAsk(actor, job) { filedAsks.push(job); return { filed: true }; },
+      async renameChannelIfGeneric() { return true; },
+      async fileIncident() { return { filed: true }; },
+    },
+    armingLogImpl: () => {},
+  });
+
+  // The marked send: the command hook already ran the
+  // store's solve / refile / supersede and the Librarian
+  // confirmed it in the channel, so the poll produces no
+  // work item for it and files no ask record for it either —
+  // the confirmation is its record. (A command the store
+  // declined carries no mark and is not this test's send.)
+  const markedAsks = [];
+  const marked = countingMesh(fakeWorkPool({
+    configBody,
+    askMetadata: { librarianIncident: { kind: 'solve', id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', actedBy: 'librarian' } },
+  }).pool, markedAsks);
+  const markedResult = await marked.agentWork(G6_DEVICE, 'claude');
+  await marked.drainFilingTail();
+  assert.equal(markedResult.work.length, 0, 'a carried-out incident command earns no seat a work item');
+  assert.equal(markedAsks.length, 0, 'and no ask record is filed for it');
+});
+
 // ---------------------------------------------------------------------------
 // Bite H3 (DESIGN 3.3): presence law in dispatch. A stateful fake
 // pool serves one channel's rows (inserts land in the row set, so

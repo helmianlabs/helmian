@@ -1030,6 +1030,28 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
     // metadata.librarianFact, set by the filing hook when it
     // posted the confirmation.
     if (message.authorKind === 'human' && message.metadata?.librarianFact) continue;
+    // A recall the Librarian answered from the filed record
+    // (bite L2) is never work for a seat either: the Librarian
+    // quoted the entry verbatim in the channel, and handing
+    // the question on would make a seat answer it from the
+    // history window instead — the improvisation the recall
+    // road exists to replace. The mark is the human message's
+    // metadata.librarianRecall, set by the recall hook when it
+    // posted the answer.
+    if (message.authorKind === 'human' && message.metadata?.librarianRecall) continue;
+    // An incident command the Librarian carried out (bite L3)
+    // is never work for a seat either: the store's solve /
+    // refile / supersede already ran and the Librarian
+    // confirmed it in the channel, and handing the command
+    // on would make a seat improvise a second verdict on the
+    // incident. The mark is the human message's
+    // metadata.librarianIncident, set by the command hook
+    // when it posted the confirmation. A command the store
+    // declined — a second solve, an unknown id — posts
+    // nothing and carries no mark, so it is not skipped
+    // here: it stands as an ordinary send, the L1/L2
+    // decline shape.
+    if (message.authorKind === 'human' && message.metadata?.librarianIncident) continue;
     // A message Helm owns (fix programme bite H3, DESIGN 3.3):
     // a send addressed to Helm is marked metadata.helmOnly when
     // Helm answers it (envoy-helm.mjs), in the same transaction
