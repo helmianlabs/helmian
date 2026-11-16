@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=24f19758bfa96eb5';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=24f19758bfa96eb5';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=24f19758bfa96eb5';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=24f19758bfa96eb5';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=24f19758bfa96eb5';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=24f19758bfa96eb5';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=24f19758bfa96eb5';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=24f19758bfa96eb5';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=24f19758bfa96eb5';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=24f19758bfa96eb5';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=24f19758bfa96eb5';
-import { createConnectFields } from './connect-fields.mjs?v=24f19758bfa96eb5';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=24f19758bfa96eb5';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=24f19758bfa96eb5';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=d3ad99781863e8ad';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=d3ad99781863e8ad';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, level1Model, level2Model, librarySeat, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=d3ad99781863e8ad';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=d3ad99781863e8ad';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=d3ad99781863e8ad';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=d3ad99781863e8ad';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=d3ad99781863e8ad';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=d3ad99781863e8ad';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=d3ad99781863e8ad';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=d3ad99781863e8ad';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=d3ad99781863e8ad';
+import { createConnectFields } from './connect-fields.mjs?v=d3ad99781863e8ad';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=d3ad99781863e8ad';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=d3ad99781863e8ad';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -459,17 +459,22 @@ export function watchOfferSignature(offers) {
 // patch live with the crew rail below.
 //
 // One seat's icon truth: null for any agent with no browser (only
-// WATCH_SEATS ever get an icon), else the idle marker or the live
+// WATCH_SEATS ever get an icon), else the dimmed door or the live
 // door, with the words its title and accessible name carry. The
-// sig changes only when the visible state changes (idle, or live
-// on a given page), so the row patch writes nothing on a poll
-// where nothing moved.
+// icon stands beside every browser seat at all times (Troy,
+// 2026-11-15): dimmed while no screen is open, lit while one is.
+// Both states are doors. A dimmed click opens the workbench
+// Browser tab on its agent screens face, where the idle stage
+// stands; a live click opens the seat's screen itself. The sig
+// changes only when the visible state changes (idle, or live on
+// a given page), so the row patch writes nothing on a poll where
+// nothing moved, and the icon's presence never toggles at all.
 export function crewWatchIconState(seat, offers, now = Date.now()) {
   if (!WATCH_SEATS.includes(seat)) return null;
   const name = NAMES[seat] ?? seat;
   const offer = (offers ?? []).find((o) => o?.seat === seat && Date.parse(o?.expiresAt ?? '') > now) ?? null;
   if (!offer) {
-    const title = `${name} works in a browser. Nothing is open right now.`;
+    const title = `${name} works in a browser. Nothing is open right now. Click to open the browser tab.`;
     return { seat, state: 'idle', sig: `${seat}|idle`, title, ariaLabel: title };
   }
   const step = watchStepText({ ...offer, name: offer.name ?? name });
@@ -2449,10 +2454,11 @@ function crewWatchGlyph() {
   return svg;
 }
 // Write one icon state onto its span: class, title and accessible
-// name, plus the control dressing only while live (a live icon is
-// a named, keyboard-reachable control; an idle one is a marker).
-// The span's own dataset carries the last signature written, so a
-// state that did not change writes nothing at all.
+// name, plus the control dressing. Both states are doors (Troy,
+// 2026-11-15), so both stand as named, keyboard-reachable
+// controls; the class alone carries dimmed versus lit. The span's
+// own dataset carries the last signature written, so a state that
+// did not change writes nothing at all.
 function applyCrewWatchIcon(node, iconState) {
   if (!node || !iconState) return;
   if (node.dataset.sig === iconState.sig) return;
@@ -2461,15 +2467,15 @@ function applyCrewWatchIcon(node, iconState) {
   node.className = `ew-crew-watch ${iconState.state}`;
   node.title = iconState.title;
   node.setAttribute('aria-label', iconState.ariaLabel);
-  if (iconState.state === 'live') { node.setAttribute('role', 'button'); node.setAttribute('tabindex', '0'); }
-  else { node.removeAttribute('role'); node.removeAttribute('tabindex'); }
+  node.setAttribute('role', 'button');
+  node.setAttribute('tabindex', '0');
 }
 // The icon node for one row. It is a span, never a button: the
 // crew row itself is a button and buttons cannot nest. Its click
 // (and Enter/Space) stops propagation before the row's own
-// handler can retarget the composer, and fires only while the
-// icon stands live; an idle icon opens nothing and mints
-// nothing, it only keeps the click from falling through.
+// handler can retarget the composer, and fires in both states:
+// openCrewWatch decides what the click opens from the seat's
+// state at click time.
 function crewWatchIconNode(seat, iconState) {
   const node = h('span', { class: 'ew-crew-watch' }, crewWatchGlyph());
   node.dataset.state = iconState.state;
@@ -2480,24 +2486,27 @@ function crewWatchIconNode(seat, iconState) {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
     }
-    if (node.dataset.state !== 'live') return;
     openCrewWatch(seat);
   };
   node.addEventListener('click', fire);
   node.addEventListener('keydown', fire);
   return node;
 }
-// A live icon click opens the agent's screen: the workbench comes
-// forward on its Browser tab, then the existing per-watch road
-// runs (startWatch mints from the signed-in session, exactly as
-// the watch bar's button does). The offer is re-read at click
-// time, so a stale live face can never open an empty watch; a
-// seat already being watched is only brought forward, never
-// re-minted or restarted.
+// An icon click brings the workbench forward on its Browser tab,
+// on the agent screens face. The state is re-read at click time:
+// a seat with no browser gets no icon and never reaches here; a
+// dimmed seat's click goes no further, so the face shows its idle
+// stage and starts nothing; a live seat's click runs the existing
+// per-watch road (startWatch mints from the signed-in session,
+// exactly as the watch bar's button does), so a stale live face
+// can never open an empty watch, and a seat already being watched
+// is only brought forward, never re-minted or restarted.
 function openCrewWatch(seat) {
-  if (crewWatchIconState(seat, liveWatchOffers())?.state !== 'live') return;
+  const state = crewWatchIconState(seat, liveWatchOffers());
+  if (!state) return;
   openBench('browser');
   setBrowserFace('agents');
+  if (state.state !== 'live') return;
   if (crewWatchClick(seat, watchView.seat) === 'start') void startWatch(seat);
 }
 
@@ -6019,7 +6028,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=24f19758bfa96eb5');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=d3ad99781863e8ad');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
