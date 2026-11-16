@@ -31,11 +31,15 @@ Discord mirror, with no migration.
   owner/admin), `agent-work` and `agent-messages` (device token only, for the PC
   bridge), `bridge/links|outbound|confirm-link|inbound` (bearer
   `HELMIAN_ENVOY_BRIDGE_TOKEN`, Discord bridge only).
-- **Routing**: `@all` reaches every agent, `@Claude` etc. reach the named ones,
-  no mention goes to Maestro if it is in the channel, otherwise to every agent.
-  Agents only see messages after they joined. Only Maestro's @mentions hand
-  work to other agents, one hop deep. Replies are idempotent per message
-  (`reply:<messageId>`). Workers start their answer with `Claim:`.
+- **Routing**: desk-style dispatch applies to every channel. `@all` reaches
+  every agent, `@Claude` etc. reach the named ones, and a human message with
+  no mention reaches every agent in the channel, the same as `@all`. Maestro
+  is the human's manager seat: it is never a routable answerer, receives no
+  sends, and relays none. Agents only see messages after they joined. Outside
+  Free-Willy debate mode, agent messages hand work to nobody; in debate mode
+  they reach the other seats, up to the channel's round-turn cap (default 10,
+  at most 50). Replies are idempotent per message (`reply:<messageId>`).
+  Workers start their answer with `Claim:`.
 - **Execution** stays on the user's PC bridge (`bin/pc-bridge.mjs`), which polls
   `agent-work`, runs each agent with keys from the PC vault, and posts with
   `agent-messages`. No provider key is stored in Vercel (migration 019 rule).

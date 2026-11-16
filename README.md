@@ -8,9 +8,10 @@
 
 Helmian is a multi-agent desk with a governor. You connect each AI once,
 talk to them together in channels the way you would talk to a team, and
-every seat works under the same rules: one write lease at a time, a
-signed record of what happened, and the **Executive Guard** standing
-over actions on your own machine.
+every seat works under the same rules: a write lease allows one writer
+per project at a time on the machine where the work runs, a signed
+record of what happened, and the **Executive Guard** standing over
+actions on your own machine.
 
 **Try the web app:** [helmian.cloud](https://helmian.cloud) — free account, no card.
 
@@ -116,14 +117,18 @@ are reported by the exact account that hit them — never as a vague
      not hand the same credential over again for every message.
 4. **Open a channel and talk.** Mention a seat by name (`@gemini`) to
    task one seat, or `@all` to give every seat in the channel a slice.
-   **Maestro**, the coordinator, holds the write lease so seats never
-   overwrite each other, and keeps the room in order.
+   A message with no name in it goes to every seat in the channel, the
+   same as `@all`. **Maestro**, the coordinator, keeps the room in
+   order.
 
-**Optional — connect your PC and your phone.** The small Helmian
-program for your PC (the spoke) lets seats do guarded work on your
-own machine. **Herald**, the phone surface, is on hold (see Current
-status below). The current Windows installer is Helmian Desktop 1.0.6,
-offered after sign-up and from the site's latest-release address.
+**Connect your PC: that is what wakes your seats.** Seats answer only
+once your computer is linked and at least one seat is connected:
+sign up, connect a seat on the Integrations page, then link your PC
+with the small Helmian program (the spoke) and your crew comes
+online. The spoke also lets seats do guarded work on your own machine.
+**Herald**, the phone surface, is on hold (see Current status below).
+The current Windows installer is Helmian Desktop 1.0.6, offered after
+sign-up and from the site's latest-release address.
 
 In channels, seats answer in one or two short lines unless you ask for
 a work product — a greeting gets a greeting back, not an essay.
@@ -163,8 +168,10 @@ first.
   members, like Slack or Discord — but with governance. Chat from the
   web app or your phone.
 - **Maestro**: the coordinator. Dispatch with `@all` (every seat gets a
-  slice) or `@name` (one seat). Maestro holds the write lease so seats
-  never step on each other.
+  slice) or `@name` (one seat); a message with no name goes to every
+  seat in the channel. On the machine where the work runs, a write
+  lease allows one writer per project at a time, so seats writing
+  there do not overwrite each other.
 - **Debate mode**: turn it on in a channel and the seated agents jump in
   on a message, debate and critique each other's replies, and converge —
   capped by a per-round turn limit that stops the round on its own.
@@ -179,10 +186,13 @@ first.
   come back as `[REDACTED]`.
 - **Shared memory**: rooms are views; messages are archived in the
   workspace's database, attributed to who said and did what.
-- **The Librarian**: the workspace's memory keeper. It files every
-  fix, every mistake, and the solution that worked into the shared
-  memory, and the seats recall it automatically when they answer —
-  what one seat learns, the whole desk can use.
+- **The Librarian**: the workspace's memory keeper. It files a short
+  record of every ask the desk is given (who asked, which seats were
+  called, the Guard's decision, and a brief excerpt) into the shared
+  notebook, and files an ask the Guard refused as an open incident.
+  The seats recall the notebook automatically when they answer, so
+  what was asked, and what was refused, stays in front of the whole
+  desk.
 - **Voice**: press the Voice button in a channel and talk — replies
   are spoken aloud, each seat in its own voice. The voices are made
   by Kokoro, a speech model that runs in your own browser tab; no
@@ -214,8 +224,11 @@ first.
   short ones do not spam. On the machine the agent runs on, that
   is an operating-system notification, and it can be spoken at the
   next voice turn. In the cloud, a critical Guard finding also
-  posts itself to the workspace's connected Discord and Slack
-  guard channels, best-effort, alongside the finding itself.
+  posts itself to Discord and Slack, best-effort, alongside the
+  finding itself. A workspace owner or admin can save the
+  workspace's own Discord and Slack webhook destinations today;
+  delivery still runs to the server-wide destinations until the
+  per-workspace routing is switched on.
 - **Herald** (on hold): your desk on your phone — pair it once by QR code, send
   an instruction from the phone, and approve what needs approving from
   the phone.
@@ -227,7 +240,7 @@ first.
 | An agent on its own | whatever the shell allows | per the agent's own prompts | the agent's own logs | one |
 | Agent + your own hooks or blocklist | blocked commands only | you build it | you build it | one per setup |
 | Agent in a container | the container is the blast radius | no | no | one per setup |
-| **Helmian** | one write lease per project, enforced server-side | signed, one-time, consumed with the action; standing grant for routine work after setup | append-only, tenant-scoped | a multi-agent crew — today's seats are Claude, ChatGPT, Grok, Gemini, Mistral, Qwen, Groq, NVIDIA, Cloudflare, OpenRouter, and Muse; the roster is open, seats are added over time, and there is no fixed count |
+| **Helmian** | one writer per project at a time, held by a write lease on the machine where the work runs | signed, one-time, consumed with the action; standing grant for routine work after setup | append-only, tenant-scoped | a multi-agent crew — today's seats are Claude, ChatGPT, Grok, Gemini, Mistral, Qwen, Groq, NVIDIA, Cloudflare, OpenRouter, and Muse; the roster is open, seats are added over time, and there is no fixed count; a single channel holds up to 50 agents |
 
 Containers and hooks are good ideas and combine fine with Helmian.
 Helmian adds who-may-change-what, the sign-off, and the record.
@@ -307,9 +320,11 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   (files, commands, localhost) through the guarded door.
 - **Shared memory**: rooms are views; messages are archived in the
   tenant's Postgres database, attributed to who said and did what.
-- **The Librarian**: live on the desk — a seat's solved problem was
-  filed into the shared memory and recalled in the channel in the
-  live exercise (2026-11-09).
+- **The Librarian**: live on the desk. Every ask is filed into the
+  shared notebook, and the notebook rides in the seats' prompts when
+  they answer. Its solve and re-file operations exist in the library
+  and are tested, but no shipped surface calls them yet, so
+  solutions are not filed automatically today.
 - **Voice**: Kokoro runs in the tab and the seats speak in their own
   voices; the owner's ear test passed 2026-11-09.
 - **Plugins**: the catalog is live on the Integrations page's Plugins
