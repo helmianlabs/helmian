@@ -35,7 +35,8 @@ import { createGuardStore } from './guard-findings.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
 import { screenIntakeContent, siteGuardRefusalText, siteGuardStopRecord, ingestSiteGuardFindings, createSiteGuardRateLimiter, siteGuardSenderKey, siteGuardRateRefusalText, siteGuardRateStopRecord, ingestSiteGuardRateFinding } from './site-guard.mjs';
 import { readNotebookBlock } from './envoy-notebook.mjs';
-import { createLibrarianStore, deriveChannelName, fileDispatchAsk, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
+import { createLibrarianStore, deriveChannelName, fileAssignmentCompletion, fileDispatchAsk, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
+import { settleMaestroAssignmentsIfNeeded } from './envoy-assignments.mjs';
 import { createSkillLibraryStore } from './skill-library.mjs';
 import { armingPairsForDispatch, resolveDispatchArming, resolveKeepLoadedPairs } from './connector-arming-dispatch.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
@@ -720,6 +721,14 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       const insertSpecs = [];
       const withheld = new Map();
       const work = [];
+      // Maestro settle watching (fix programme bite M4, DESIGN
+      // 2.3): the channels this poll serves, collected as the
+      // computation walks them. After the result is computed,
+      // the deferred tail below checks each one's open
+      // assignments for close-outs and unsettled parts — the
+      // poll-side tail group the design assigns to this file,
+      // in the filing tail's family.
+      const settleChannelIds = new Set();
       const { state, seating } = await tx(actor, async (client) => {
         // Claim gate (tenant-agent-state.mjs): once a tenant has ANY
         // readiness signal — a registered runner, a presence report, a
@@ -794,6 +803,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         if (!entry.channel) throw fail(404, 'ENVOY_CHANNEL_NOT_FOUND');
         const channel = entry.channel;
         const rows = entry.rows;
+        settleChannelIds.add(String(channel.id));
         // Librarian naming candidate: a channel still carrying a
         // generic fallback title is named from its earliest human
         // message in this window at this dispatch (post-commit,
@@ -1202,7 +1212,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // rejection — so a surprise throw is logged loudly here and
       // can neither crash the process nor skip the other group. The
       // wrappers' own contract says neither group can throw at all.
-      if (findingJobs.length || siteGuardJobs.length || siteGuardRateJobs.length || librarianJobs.length || namingJobs.size || incidentJobs.length) {
+      if (findingJobs.length || siteGuardJobs.length || siteGuardRateJobs.length || librarianJobs.length || namingJobs.size || incidentJobs.length || settleChannelIds.size) {
         trackFilingTail((async () => {
           // Guard spine bite 3: witness every evaluation this poll produced
           // into the Guard findings feed, allows and refusals alike. This
@@ -1252,6 +1262,34 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             }
           } catch (error) {
             console.error(`[envoy-mesh] librarian filing tail FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — the dispatch stands unchanged; the shared notebook has a gap for this poll.`);
+          }
+          // Maestro settle watching (fix programme bite M4,
+          // DESIGN 2.3): check the channels this poll served for
+          // open assignments. The watcher (envoy-assignments.mjs)
+          // posts the one close line for a fully answered
+          // assignment and one unsettled line per part whose
+          // owner posted nothing within the work window, each
+          // under its own idempotency key, in one transaction
+          // for the whole poll; the lines it actually wrote
+          // publish here, after that transaction commits, and a
+          // settled assignment's completion record files through
+          // the Librarian beside them. Same tail discipline as
+          // the groups above: a failure is logged loudly, changes
+          // nothing about the work handed out, and the next poll
+          // watches again — the watcher's decisions are read off
+          // the channel record, so nothing is lost by waiting.
+          try {
+            if (settleChannelIds.size) {
+              const librarian = librarianImpl ?? createLibrarianStore(pool);
+              const librarianOpts = librarianLogImpl ? { log: librarianLogImpl } : {};
+              const settled = await settleMaestroAssignmentsIfNeeded({ pool, tenantId: actor.tenantId, channelIds: [...settleChannelIds], now: now(), workWindowMs: WORK_WINDOW_MS });
+              for (const row of settled.posted) publish(actor.tenantId, row, publishImpl);
+              for (const completion of settled.completions) {
+                await fileAssignmentCompletion(librarian, actor, completion, librarianOpts);
+              }
+            }
+          } catch (error) {
+            console.error(`[envoy-mesh] maestro settle tail FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — the dispatch stands unchanged; settle lines and completion records wait for the next poll.`);
           }
         })());
       }

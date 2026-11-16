@@ -164,6 +164,48 @@ export function librarianFactEntryFor(job) {
   return Object.freeze({ key: `fact:${messageId}`, value });
 }
 
+/**
+ * Shape one Maestro assignment completion into its notebook
+ * entry (bite M4, DESIGN 2.3: the close-out files a completion
+ * record through the Librarian; bite L4 builds on this record).
+ * Pure. Returns { key, value } or null when the filing is
+ * missing the ids the key is built from. The key is
+ * completion:<messageId> — one entry per marked message, and
+ * the store's insert is on-conflict-do-nothing, so filing the
+ * same completion on every poll that observes it leaves
+ * exactly one record: the first filing stands, with the first
+ * filing's timestamp. The value carries the channel, who asked,
+ * and the parts with their owners — only parts that had an
+ * owner are recorded, because an unassigned part was never
+ * handed out and its state was already named in the assignment
+ * post itself. Bounded like every librarian entry: the part
+ * list is capped at LIBRARIAN_MAX_SEATS.
+ */
+export function librarianCompletionEntryFor(job) {
+  const channelId = String(job?.channelId ?? '');
+  const messageId = String(job?.messageId ?? '');
+  if (!channelId || !messageId) return null;
+  const parts = (Array.isArray(job?.assignment?.parts) ? job.assignment.parts : [])
+    .filter((p) => p && typeof p.owner === 'string' && p.owner)
+    .slice(0, LIBRARIAN_MAX_SEATS)
+    .map((p) => ({
+      n: Number(p.n) || 0,
+      owner: String(p.owner),
+      ...(p.ownerName ? { ownerName: boundedLine(p.ownerName, 120) } : {}),
+    }));
+  const value = {
+    channel: boundedLine(job?.channelTitle ?? '', 120) || null,
+    ...(job?.channelSlug ? { slug: String(job.channelSlug) } : {}),
+    channelId,
+    human: boundedLine(job?.humanName ?? '', 120) || String(job?.humanSubject ?? '') || null,
+    ...(job?.humanSubject ? { subject: String(job.humanSubject) } : {}),
+    parts,
+    seats: [...new Set(parts.map((p) => p.owner))],
+    at: String(job?.at ?? ''),
+  };
+  return Object.freeze({ key: `completion:${messageId}`, value });
+}
+
 function contextFor(actor) {
   return { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: randomUUID(), requestId: randomUUID() };
 }
@@ -236,6 +278,44 @@ export function createLibrarianStore(pool) {
           [slug, entry.key, JSON.stringify(entry.value)],
         );
         return { filed: result.rowCount === 1, key: entry.key, fact: entry.value.fact };
+      });
+    },
+
+    /**
+     * File one Maestro assignment completion into the shared
+     * notebook (bite M4), through this same store: the
+     * Librarian holds the only pen, so the close-out's record
+     * lands in the same context_entries table, under the acting
+     * tenant's slug, as the ask and fact records above — never
+     * a second write path, and never a NULL slug (an actor with
+     * no tenant id is refused before any transaction opens, the
+     * fileFact discipline). Unlike the ask upsert, the insert
+     * is on-conflict-do-nothing: a completion is a fact about a
+     * moment, the settle watcher may observe the same settled
+     * assignment on many polls, and exactly one record — the
+     * first, with the first filing's timestamp — must stand.
+     * Returns { filed } for the call that wrote the record and
+     * { alreadyFiled } for every later call. Throws on failure;
+     * the fail-soft wrapper below is the mesh tail's road in.
+     */
+    async fileAssignmentCompletion(actor, job) {
+      const entry = librarianCompletionEntryFor(job);
+      if (!entry) return { filed: false, reason: 'unkeyed' };
+      const slug = String(actor?.tenantId ?? '');
+      if (!slug) return { filed: false, reason: 'no-tenant' };
+      const context = contextFor(actor);
+      return withTenantTransaction(pool, context, async (client) => {
+        await requireActiveTenantMembership(client, context);
+        await client.query(
+          `insert into helmion.projects(slug, name, root_path) values ($1,$2,null) on conflict (slug) do nothing`,
+          [slug, slug],
+        );
+        const result = await client.query(
+          `insert into helmion.context_entries(project_slug, key, value) values ($1,$2,$3::jsonb)
+           on conflict (project_slug, key) do nothing`,
+          [slug, entry.key, JSON.stringify(entry.value)],
+        );
+        return { filed: result.rowCount === 1, alreadyFiled: result.rowCount === 0, key: entry.key };
       });
     },
 
@@ -433,6 +513,31 @@ export async function fileDispatchAsk(store, actor, job, { log = (...args) => co
       `[envoy-librarian] notebook filing FAILED (key ${entry.key}, channel ${String(job?.channelId)}, `
       + `message ${String(job?.messageId)}): ${error?.message ?? error} `
       + '— the dispatch stands unchanged; the shared notebook has a gap for this ask.',
+    );
+    return false;
+  }
+}
+
+/**
+ * File one Maestro assignment completion through the librarian
+ * store, as the acting tenant identity (bite M4). Returns true
+ * when the completion record stands in the notebook after the
+ * call — whether this call wrote it or an earlier poll's did.
+ * NEVER throws: the close-out was posted before this runs, and
+ * a filing failure is a gap in the shared memory, announced in
+ * the log — never a failed settle. Mirrors fileDispatchAsk.
+ */
+export async function fileAssignmentCompletion(store, actor, job, { log = (...args) => console.error(...args) } = {}) {
+  const entry = librarianCompletionEntryFor(job);
+  if (!entry) return false;
+  try {
+    const result = await store.fileAssignmentCompletion(actor, job);
+    return result?.filed === true || result?.alreadyFiled === true;
+  } catch (error) {
+    log(
+      `[envoy-librarian] completion filing FAILED (key ${entry.key}, channel ${String(job?.channelId)}, `
+      + `message ${String(job?.messageId)}): ${error?.message ?? error} `
+      + '— the close-out stands unchanged; the shared notebook has a gap for this completion.',
     );
     return false;
   }
