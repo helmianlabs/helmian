@@ -260,6 +260,315 @@ export async function postLibrarianFactIfNeeded({ pool, tenantId, channelId, mes
   } finally { client.release(); }
 }
 
+// ---------- the Librarian recall (bite L2, 2026-11-16) ----------
+// The other half of the Librarian's channel road: a human who
+// addresses the Librarian with a recall question ("Librarian:
+// what do you have filed about X") is asking the workspace's
+// memory keeper about the filed record, and the Librarian
+// answers alone, as agent:librarian, quoting the matching
+// entry verbatim — bounded at the entry's own text, so no
+// seat answers from the 12-message history window and no seat
+// drops a character from a date (tonight's message 4: the
+// fact came back with the "15" dropped, twice, because seats
+// were improvising a recall where no recall behaviour
+// existed). The lookup is the store's lookupFacts (facts
+// first, then ask records, under the acting tenant's slug
+// exactly); a question whose topic names incidents is
+// answered from lookupIncidents instead, the store's incident
+// read. If nothing matches, the Librarian says so in one line
+// — "I have nothing filed about X" — and files nothing. The
+// send is marked (metadata.librarianRecall) so the mesh never
+// hands it to the desk, the guide pattern one namespace over
+// from L1's filing mark. The hook sits in the same Librarian
+// slot as L1's filing hook in the section 1.5 precedence,
+// after it: a file request files (and never parses as a
+// recall — the recall shapes lead with "what"), a recall the
+// filing hook leaves is answered here, and a Librarian send
+// that is neither falls through to ordinary dispatch
+// untouched — the name never swallows an ordinary ask.
+// Answering is best-effort in the house shape: a failure is
+// logged by the caller and never fails the send, and an
+// unanswered recall is never marked — the answer and the
+// mark land in one transaction, the mark only with the
+// answer, so a send whose answer failed to post is never
+// hidden from the desk.
+export const LIBRARIAN_RECALL_KEY_PREFIX = 'librarian-recall:';
+
+// The recall shapes, over what follows the Librarian's
+// address (the L1 address pattern): the design's question —
+// "what do you have filed about X" — and its closest kin.
+// The topic is what the question is about: it feeds the
+// lookup and names the none-found line. A trailing "?" or
+// "." is punctuation, not topic.
+const LIBRARIAN_RECALL_HAVE_FILED_RE = /^what\s+(?:(?:do|did)\s+you\s+have|have\s+you)\s+filed\s+(?:about|on|for)\s+(.+)$/is;
+const LIBRARIAN_RECALL_IS_FILED_RE = /^what(?:'s|\s+is)\s+filed\s+(?:about|on|for)\s+(.+)$/is;
+const LIBRARIAN_RECALL_ON_FILE_RE = /^what\s+do\s+you\s+have\s+on\s+file\s+(?:about|on|for)\s+(.+)$/is;
+const LIBRARIAN_INCIDENT_WORD_RE = /\bincidents?\b/i;
+
+/**
+ * The recall a Librarian-addressed send asks for, or null
+ * when the send is not a recall question. Pure and
+ * deterministic: returns { topic, incident } — the topic
+ * the question names, and whether the topic is
+ * incident-shaped (answered from the incident read, not
+ * the filed entries). A recall shape with no topic after
+ * it ("what do you have filed?") asks about nothing in
+ * particular and is not a recall: it falls through.
+ */
+export function librarianRecallRequestIn(body) {
+  const text = String(body ?? '');
+  const address = LIBRARIAN_ADDRESS_RE.exec(text);
+  if (!address) return null;
+  const rest = text.slice(address[0].length);
+  const match = LIBRARIAN_RECALL_HAVE_FILED_RE.exec(rest)
+    ?? LIBRARIAN_RECALL_IS_FILED_RE.exec(rest)
+    ?? LIBRARIAN_RECALL_ON_FILE_RE.exec(rest);
+  if (!match) return null;
+  const topic = match[1].replace(/[\s?.]+$/, '').trim();
+  if (!topic) return null;
+  return { topic, incident: LIBRARIAN_INCIDENT_WORD_RE.test(topic) };
+}
+
+/**
+ * Answer one Librarian-addressed send's recall question from
+ * the filed record and mark the send. The lookup runs in the
+ * store's own tenant transaction; the answer and the mark
+ * run in one transaction of their own, and only when the
+ * lookup completed — the answer posts exactly once per send
+ * (idempotency key librarian-recall:<messageId>), and the
+ * mark lands only with it. A match answers with the entry's
+ * own text, verbatim, nothing added; an incident-shaped
+ * topic answers with the newest matching incident in the
+ * knowledge base's own rendering ([category] title, with
+ * its fix when one is filed); no match answers with the
+ * none-found line naming the topic, and files nothing.
+ * Returns { answered, found?, key? } — a thrown error is
+ * the caller's to log; this helper never swallows one
+ * silently.
+ */
+export async function postLibrarianRecallIfNeeded({ pool, tenantId, channelId, messageId, senderSubject, senderRole, body, store = null } = {}) {
+  const request = librarianRecallRequestIn(body);
+  if (!request) return { answered: false };
+  const librarian = store ?? createLibrarianStore(pool);
+  const actor = { tenantId, subject: senderSubject, role: senderRole };
+  let answerBody;
+  let found = false;
+  let key = null;
+  if (request.incident) {
+    // The incident read's own search discipline: the topic
+    // minus the shape word is the search string (a bare
+    // "incidents" topic searches nothing and reads newest
+    // first). The newest match is the answer.
+    const query = request.topic.replace(/\bincidents?\b/gi, ' ').replace(/\s+/g, ' ').trim() || null;
+    const incidents = await librarian.lookupIncidents(actor, { query, limit: 20 });
+    const incident = Array.isArray(incidents) ? incidents[0] ?? null : null;
+    if (incident) {
+      found = true;
+      answerBody = incident.solution ? `[${incident.category}] ${incident.title} — Fix: ${incident.solution}` : `[${incident.category}] ${incident.title}`;
+    } else {
+      answerBody = `I have nothing filed about ${request.topic}`;
+    }
+  } else {
+    const hit = await librarian.lookupFacts(actor, { query: request.topic });
+    if (hit?.found) {
+      found = true;
+      key = hit.key ?? null;
+      answerBody = hit.text;
+    } else {
+      answerBody = `I have nothing filed about ${request.topic}`;
+    }
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query(`select set_config('helmion.tenant_id', $1, true)`, [String(tenantId)]);
+    const inserted = await client.query(
+      `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key, metadata)
+       values ($1,$2,$3,'agent',$4,$5,$6)
+       on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing
+       returning id`,
+      [String(tenantId), String(channelId), LIBRARIAN_SUBJECT, answerBody, `${LIBRARIAN_RECALL_KEY_PREFIX}${messageId}`,
+        JSON.stringify({ librarianRecall: { key, forSubject: String(senderSubject) } })],
+    );
+    if (inserted.rowCount !== 1) { await client.query('commit'); return { answered: true, confirmed: false, found, key }; }
+    await client.query(
+      `update helmion.envoy_messages
+          set metadata = coalesce(metadata, '{}'::jsonb) || $5::jsonb
+        where tenant_id=$1 and channel_id=$2 and id=$3 and author_subject=$4`,
+      [String(tenantId), String(channelId), messageId, String(senderSubject),
+        JSON.stringify({ librarianRecall: { key, answeredBy: 'librarian' } })],
+    );
+    await client.query('commit');
+    return { answered: true, confirmed: true, found, key, messageId: String(inserted.rows[0].id) };
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally { client.release(); }
+}
+
+// ---------- the Librarian incident commands (bite L3, 2026-11-16) ----------
+// The third Librarian road: a human reviewing the workspace's
+// incidents in channel. The store has carried solveIncident,
+// refileIncident and supersedeIncident since the knowledge
+// base was built, with zero callers in shipped code — so
+// nothing was ever solved, readKnowledgeBaseBlock rendered an
+// always-empty base, and the flywheel the README describes
+// could not turn. These commands are the human road into
+// those methods: a Librarian-addressed send in one of the
+// three command shapes runs the store method and, when the
+// store acts, the Librarian confirms in the channel as
+// agent:librarian, quoting the incident id and the outcome.
+// The hook sits in the same Librarian slot of the section
+// 1.5 precedence as L1 and L2, after both: a file request
+// files, a recall the filing hook leaves is answered, a
+// command the recall hook leaves runs here, and a Librarian
+// send that is none of the three falls through to ordinary
+// dispatch untouched — the name never swallows an ordinary
+// ask, and an ordinary ask that merely mentions an incident
+// is not a command (the shapes below must lead the send,
+// anchored, with the incident id in its place).
+// The decline discipline is the store's own: solveIncident
+// and refileIncident answer false when they decline (an
+// already-solved or unknown incident, a category the base
+// does not carry), and a declined command posts NOTHING and
+// marks NOTHING — the send stands as an ordinary message,
+// the L1/L2 shape for a road that did not act.
+// supersedeIncident declines by throwing (its existing
+// contract: an unknown incident, a replacement that cannot
+// file), so its decline rides the caller's log the same
+// way — nothing posted, nothing marked. When the store
+// acts, the confirmation and the mark (metadata.
+// librarianIncident) land in one transaction, the mark only
+// with the confirmation, so the mesh never hands a carried-
+// out command to the desk as an ask.
+export const LIBRARIAN_INCIDENT_KEY_PREFIX = 'librarian-incident:';
+
+// The three command shapes, over what follows the
+// Librarian's address (the L1 address pattern) — the
+// design's sentences, anchored at the head of the send:
+// the incident id is the token in its place, and what each
+// shape needs after it (a solution after the colon, a
+// category after "as", the replacement incident's own
+// description) must be present, or the send is not the
+// command.
+const LIBRARIAN_SOLVE_RE = /^incident\s+(\S+)\s+is\s+solved\s*:\s*(.+)$/is;
+const LIBRARIAN_REFILE_RE = /^refile\s+incident\s+(\S+)\s+as\s+(.+)$/is;
+const LIBRARIAN_SUPERSEDE_RE = /^incident\s+(\S+)\s+is\s+replaced\s+by\s+(.+)$/is;
+
+/**
+ * The incident command a Librarian-addressed send carries,
+ * or null when the send is not one. Pure and deterministic:
+ * returns { kind: 'solve', id, solution },
+ * { kind: 'refile', id, category } (the category lowercased,
+ * as the store files it), or
+ * { kind: 'supersede', id, replacement } (the replacement
+ * incident's description, as written). A shape missing its
+ * payload — a solve with no solution after the colon, a
+ * refile with no category — is not a command and falls
+ * through.
+ */
+export function librarianIncidentCommandIn(body) {
+  const text = String(body ?? '');
+  const address = LIBRARIAN_ADDRESS_RE.exec(text);
+  if (!address) return null;
+  const rest = text.slice(address[0].length);
+  let match = LIBRARIAN_SOLVE_RE.exec(rest);
+  if (match) {
+    const solution = match[2].trim();
+    return solution ? { kind: 'solve', id: match[1], solution } : null;
+  }
+  match = LIBRARIAN_REFILE_RE.exec(rest);
+  if (match) {
+    const category = match[2].replace(/[\s.?!]+$/, '').trim().toLowerCase();
+    return category ? { kind: 'refile', id: match[1], category } : null;
+  }
+  match = LIBRARIAN_SUPERSEDE_RE.exec(rest);
+  if (match) {
+    const replacement = match[2].trim();
+    return replacement ? { kind: 'supersede', id: match[1], replacement } : null;
+  }
+  return null;
+}
+
+/**
+ * Run one Librarian-addressed send's incident command
+ * through the store and confirm it in the channel. The
+ * store call runs in the store's own tenant transaction;
+ * the confirmation and the mark run in one transaction of
+ * their own, and only when the store acted — the
+ * confirmation posts exactly once per send (idempotency
+ * key librarian-incident:<messageId>), quoting the
+ * incident id and the outcome, and the mark lands only
+ * with it. A command the store declines by value (solve,
+ * refile) returns { handled: true, acted: false } and
+ * posts nothing; a supersede the store declines throws,
+ * the caller's to log, and likewise posts nothing.
+ * Returns { handled: false } for a send that is not a
+ * command, before any store exists.
+ */
+export async function postLibrarianIncidentCommandIfNeeded({ pool, tenantId, channelId, messageId, senderSubject, senderRole, body, store = null } = {}) {
+  const command = librarianIncidentCommandIn(body);
+  if (!command) return { handled: false };
+  const librarian = store ?? createLibrarianStore(pool);
+  const actor = { tenantId, subject: senderSubject, role: senderRole };
+  let answerBody;
+  if (command.kind === 'solve') {
+    const solved = await librarian.solveIncident(actor, { id: command.id, solution: command.solution });
+    if (solved !== true) return { handled: true, acted: false, kind: command.kind, reason: 'not-solved' };
+    answerBody = `Solved incident ${command.id}: ${command.solution}`;
+  } else if (command.kind === 'refile') {
+    const out = await librarian.refileIncident(actor, { id: command.id, toCategory: command.category });
+    if (!out?.refiled) return { handled: true, acted: false, kind: command.kind, reason: 'not-refiled' };
+    answerBody = out.learnedRule
+      ? `Refiled incident ${command.id} as ${command.category}; learned rule ${out.learnedRule}`
+      : `Refiled incident ${command.id} as ${command.category}`;
+  } else {
+    // The command carries ONE description of the
+    // replacement incident; the store's filing requires a
+    // title and a mistake, so the description fills both
+    // rather than a second sentence being invented for
+    // either. The key makes the filing idempotent per
+    // send: a re-run declines inside the store instead of
+    // filing a second replacement.
+    const filed = await librarian.supersedeIncident(actor, {
+      oldId: command.id,
+      incident: {
+        key: `supersede:${messageId}`,
+        title: command.replacement,
+        mistake: command.replacement,
+        actor: String(senderSubject),
+      },
+    });
+    answerBody = `Incident ${command.id} is replaced by incident ${filed.id}`;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query(`select set_config('helmion.tenant_id', $1, true)`, [String(tenantId)]);
+    const inserted = await client.query(
+      `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key, metadata)
+       values ($1,$2,$3,'agent',$4,$5,$6)
+       on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing
+       returning id`,
+      [String(tenantId), String(channelId), LIBRARIAN_SUBJECT, answerBody, `${LIBRARIAN_INCIDENT_KEY_PREFIX}${messageId}`,
+        JSON.stringify({ librarianIncident: { kind: command.kind, id: command.id, forSubject: String(senderSubject) } })],
+    );
+    if (inserted.rowCount !== 1) { await client.query('commit'); return { handled: true, acted: true, confirmed: false, kind: command.kind }; }
+    await client.query(
+      `update helmion.envoy_messages
+          set metadata = coalesce(metadata, '{}'::jsonb) || $5::jsonb
+        where tenant_id=$1 and channel_id=$2 and id=$3 and author_subject=$4`,
+      [String(tenantId), String(channelId), messageId, String(senderSubject),
+        JSON.stringify({ librarianIncident: { kind: command.kind, id: command.id, actedBy: 'librarian' } })],
+    );
+    await client.query('commit');
+    return { handled: true, acted: true, confirmed: true, kind: command.kind, messageId: String(inserted.rows[0].id) };
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally { client.release(); }
+}
+
 export function createEnvoyStore(pool) {
   return Object.freeze({
     async listChannels(actor) {
@@ -412,22 +721,46 @@ export function createEnvoyStore(pool) {
         // are named apart (bite H2): the guide posts as
         // agent:helm; the empty-desk line below stays
         // agent:maestro, the manager saying the desk is empty.
-        // The Librarian's filing hook (bite L1), in that slot
+        // The Librarian's hooks (bites L1, L2 and L3), in that slot
         // after the coordinator: a Librarian-addressed file
         // request is filed through the one store and confirmed in
-        // the channel, and a filed send is answered, so the
-        // empty-desk answer does not also fire under it. A
-        // Librarian-addressed send that is not a file request is
-        // left exactly as it was: ordinary dispatch, and the
-        // empty-desk answer on an empty desk.
+        // the channel, a recall question the filing hook
+        // leaves is answered from the filed record, quoting it,
+        // and an incident command the recall hook leaves runs
+        // through the store's solve / refile / supersede and is
+        // confirmed when the store acts — a filed, answered or
+        // commanded send is the Librarian's, so the
+        // empty-desk answer does not also fire under it (a
+        // command the store declines posts nothing itself, but
+        // the send was still the Librarian's road, not an ask
+        // for the desk). A Librarian-addressed send that is
+        // none of the three is left exactly as it was:
+        // ordinary dispatch, and the empty-desk answer on an
+        // empty desk.
         const role = roleAddresseeIn(message.body);
         let kbAnswer = null;
         let factAnswer = null;
+        let recallAnswer = null;
+        let incidentAnswer = null;
         if (role === 'librarian') {
           try {
             factAnswer = await postLibrarianFactIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id, senderSubject: message.authorSubject, senderName: out.receipt.message.authorName ?? null, senderRole: actor.role, body: message.body });
           } catch (error) {
             console.error('[envoy-chat] librarian fact filing failed:', error.message);
+          }
+          if (!factAnswer?.filed) {
+            try {
+              recallAnswer = await postLibrarianRecallIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id, senderSubject: message.authorSubject, senderRole: actor.role, body: message.body });
+            } catch (error) {
+              console.error('[envoy-chat] librarian recall failed:', error.message);
+            }
+          }
+          if (!factAnswer?.filed && !recallAnswer?.answered) {
+            try {
+              incidentAnswer = await postLibrarianIncidentCommandIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id, senderSubject: message.authorSubject, senderRole: actor.role, body: message.body });
+            } catch (error) {
+              console.error('[envoy-chat] librarian incident command failed:', error.message);
+            }
           }
         }
         if (!role) {
@@ -437,7 +770,7 @@ export function createEnvoyStore(pool) {
             console.error('[envoy-chat] helm kb answer failed:', error.message);
           }
         }
-        if (!assignment?.assigned && !kbAnswer?.answered && !factAnswer?.filed) {
+        if (!assignment?.assigned && !kbAnswer?.answered && !factAnswer?.filed && !recallAnswer?.answered && !incidentAnswer?.handled) {
           try {
             await postEmptyDeskAnswerIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id });
           } catch (error) {
