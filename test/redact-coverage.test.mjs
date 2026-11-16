@@ -26,6 +26,23 @@ const MUST_REDACT = [
   ['neon npg_', 'npg_kAJDnzPv7K4Eexample', 'npg_kAJDnzPv7K4Eexample'],
   ['openai proj', 'sk-proj-AbCdEfGhIjKlMnOpQrStUv', 'sk-proj-AbCdEfGhIjKlMnOpQrStUv'],
   ['xai', 'xai-6OIu5CJWkS3pYBCVNNMKEV', 'xai-6OIu5CJWkS3pYBCVNNMKEV'],
+  // The 2026-11-15 audit (letter 719) found the shapes below passing through
+  // untouched even though the Guard extension scanners, the hands protocol,
+  // and the audit log already carried several of them. Pinned 2026-11-16.
+  ['nvidia nvapi-', 'NVIDIA_API_KEY=nvapi-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789', 'nvapi-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789'],
+  ['github fine-grained pat', 'token: github_pat_11ABCDEFG0aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789', 'github_pat_11ABCDEFG0aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789'],
+  ['github ghu_', 'ghu_AbCdEfGhIjKlMnOpQrStUvWxYz012345', 'ghu_AbCdEfGhIjKlMnOpQrStUvWxYz012345'],
+  ['github ghr_', 'ghr_AbCdEfGhIjKlMnOpQrStUvWxYz012345', 'ghr_AbCdEfGhIjKlMnOpQrStUvWxYz012345'],
+  ['webhook whsec_', 'WEBHOOK_SECRET=whsec_AbCdEfGhIjKlMnOpQrStUvWxYz0123', 'whsec_AbCdEfGhIjKlMnOpQrStUvWxYz0123'],
+  ['slack app xapp-', 'SLACK_APP_TOKEN=xapp-1-A0123456789-0123456789012-abcdef0123456789abcdef0123456789', 'xapp-1-A0123456789-0123456789012-abcdef0123456789abcdef0123456789'],
+  ['slack xoxe refresh', 'xoxe-123456789012-abcdefghijklmnop', 'xoxe-123456789012-abcdefghijklmnop'],
+  ['discord bot', 'DISCORD_BOT_TOKEN=AAAAAAAAAAAAAAAAAAAAAAAA.BBBBBB.CCCCCCCCCCCCCCCCCCCCCCCCCCC', 'AAAAAAAAAAAAAAAAAAAAAAAA.BBBBBB.CCCCCCCCCCCCCCCCCCCCCCCCCCC'],
+  ['gitlab glpat-', 'glpat-AbCdEfGhIjKlMnOpQrSt', 'glpat-AbCdEfGhIjKlMnOpQrSt'],
+  ['resend re_', 'RESEND=re_12345678_abcdefghijklmnop', 're_12345678_abcdefghijklmnop'],
+  ['google oauth ya29.', 'access_token: ya29.AbCdEfGhIjKlMnOpQrStUvWxYz0123456789', 'ya29.AbCdEfGhIjKlMnOpQrStUvWxYz0123456789'],
+  ['mistral named assignment', 'MISTRAL_API_KEY=fakefakefakefakefakefakefakefake', 'fakefakefakefakefakefakefakefake'],
+  ['cloudflare named assignment', 'CLOUDFLARE_API_TOKEN=fakefakefakefakefakefakefakefakefakefake', 'fakefakefakefakefakefakefakefakefakefake'],
+  ['cloudflare json assignment', '"CLOUDFLARE_API_TOKEN": "fakefakefakefakefakefakefakefakefakefake"', 'fakefakefakefakefakefakefakefakefakefake'],
 ];
 
 for (const [label, input, secret] of MUST_REDACT) {
@@ -55,6 +72,24 @@ test('does NOT redact ordinary text that merely looks technical', () => {
     'The function returns a token count, not a token',
     'See docs at https://example.com/api/keys for setup',
     'const skipped = items.filter(Boolean);',
+  ].join('\n');
+  const out = redactSecrets(benign);
+  assert.equal(out.includes('[REDACTED'), false, `false positive: ${out}`);
+});
+
+test('does NOT redact bare hashes, ids, or bare prefixes', () => {
+  // The prefix-less formats (Mistral, Cloudflare) are covered only under
+  // their credential names, on purpose: a bare 32 or 40 character string is
+  // as likely to be a hash or an id as a key, and eating those would make
+  // redacted output useless. Bare prefixes with no body are not secrets
+  // either (the Guard README makes the same call).
+  const benign = [
+    'md5 d41d8cd98f00b204e9800998ecf8427e',
+    'commit a4e870cb19ff5c1c7dd5fa7a085b9255e5263761',
+    'session 0d7ca4d3-a2f4-458a-936b-d8a002a569e0',
+    'Set WEBHOOK_SECRET=whsec_ in the env file before deploying',
+    'The github_pat_ prefix marks a fine-grained token',
+    'product id AbCdEfGhIjKlMnOpQrStUvWxYz012345 shipped',
   ].join('\n');
   const out = redactSecrets(benign);
   assert.equal(out.includes('[REDACTED'), false, `false positive: ${out}`);

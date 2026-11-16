@@ -42,9 +42,9 @@ const REDACT_PATTERNS = [
     pattern: /gsk_[A-Za-z0-9_-]+/g,
     replace: '[REDACTED]',
   },
-  // GitHub tokens (ghp_, gho_, ghs_)
+  // GitHub tokens (ghp_, gho_, ghs_, ghu_, ghr_)
   {
-    pattern: /gh[pos]_[A-Za-z0-9_]+/g,
+    pattern: /gh[pousr]_[A-Za-z0-9_]+/g,
     replace: '[REDACTED]',
   },
   // Google API keys
@@ -74,9 +74,9 @@ const REDACT_PATTERNS = [
     pattern: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
     replace: '[REDACTED]',
   },
-  // Slack tokens (bot/user/app/legacy)
+  // Slack tokens (bot/user/app/legacy/refresh)
   {
-    pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}/g,
+    pattern: /\bxox[baprse]-[A-Za-z0-9-]{10,}/g,
     replace: '[REDACTED]',
   },
   // Hugging Face access tokens
@@ -93,6 +93,72 @@ const REDACT_PATTERNS = [
   {
     pattern: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g,
     replace: '[REDACTED PRIVATE KEY]',
+  },
+  // Added 2026-11-16 after the full source audit (letter 719) measured this set
+  // against the credential formats the rest of the codebase already handles and
+  // found these passing through untouched. The GitHub fine-grained PAT, the
+  // webhook secret, the GitLab and Resend shapes, and the Google OAuth shape
+  // are the exact patterns the Guard extension scanners
+  // (extension/background/redact.js, extension/content/sanitize.js), the hands
+  // protocol (hands-mcp/src/shared/protocol.mjs), and the audit log
+  // (src/core/audit-log.mjs) already carry; this module had fallen behind them.
+  // GitHub fine-grained personal access tokens
+  {
+    pattern: /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
+    replace: '[REDACTED]',
+  },
+  // Webhook signing secrets (Stripe whsec_ and compatible issuers)
+  {
+    pattern: /\bwhsec_[A-Za-z0-9]{20,}/g,
+    replace: '[REDACTED]',
+  },
+  // NVIDIA API keys (the nvapi- prefix; the key slot is NVIDIA_API_KEY in
+  // src/runner/vault.mjs)
+  {
+    pattern: /\bnvapi-[A-Za-z0-9_-]{20,}/g,
+    replace: '[REDACTED]',
+  },
+  // Slack app-level tokens (xapp-; the bridge's SLACK_APP_TOKEN, see
+  // slack-bridge/README.md)
+  {
+    pattern: /\bxapp-[A-Za-z0-9-]{10,}/g,
+    replace: '[REDACTED]',
+  },
+  // Discord bot tokens: three dot-separated segments, the first encoding the
+  // bot's numeric user id (the bridge's DISCORD_BOT_TOKEN, see
+  // discord-bridge/README.md). Segment lengths keep this off ordinary dotted
+  // text; JWTs are caught by their own pattern above and never start a
+  // Discord-shaped first segment.
+  {
+    pattern: /\b[A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}/g,
+    replace: '[REDACTED]',
+  },
+  // GitLab personal access tokens
+  {
+    pattern: /\bglpat-[A-Za-z0-9_-]{20,}/g,
+    replace: '[REDACTED]',
+  },
+  // Resend API keys (re_ plus a segment, an underscore, and the secret body)
+  {
+    pattern: /\bre_[A-Za-z0-9]{8,}_[A-Za-z0-9]{16,}/g,
+    replace: '[REDACTED]',
+  },
+  // Google OAuth access tokens (ya29. prefix; the shape src/core/audit-log.mjs
+  // already masks)
+  {
+    pattern: /\bya29\.[A-Za-z0-9._-]{10,}/g,
+    replace: '[REDACTED]',
+  },
+  // Mistral and Cloudflare keys carry no fixed prefix: a bare shape rule
+  // strong enough to catch them would also eat ordinary hashes and ids, which
+  // this module must never do. They are covered where they actually leak,
+  // under the exact credential names the runner vault registers for them
+  // (src/runner/vault.mjs: MISTRAL_API_KEY, CLOUDFLARE_API_TOKEN), in
+  // assignment or JSON form. A bare pasted key with no name still passes;
+  // that limit is deliberate and recorded in the bite report.
+  {
+    pattern: /\b(MISTRAL_API_KEY|CLOUDFLARE_API_TOKEN)(["']?\s*[:=]\s*["']?)[^\s"']+/g,
+    replace: '$1$2[REDACTED]',
   },
 ];
 
