@@ -36,9 +36,22 @@
 // configs written while the switch existed; routing never consults
 // it, and a stored false does not restore the old silence. Maestro
 // still never answers.
+//
+// Helm (Helm identity, bite H1): a second reserved presence in the
+// same family as Maestro, and likewise never an agent. 'helm'
+// resolves in the alias table so @helm parses to a role addressee
+// and describeAuthor can name the 'agent:helm' subject Helm posts
+// under, but Helm is NOT in AGENT_PROVIDERS: no runner serves it,
+// no prompt is composed for it (agentPrompt refuses it beside
+// 'maestro'), no channel config may seat it (parseConfig drops
+// it), no custom agent may take its handle (RESERVED_HANDLES), and
+// it is filtered out of every team and due set beside 'maestro'.
+// What Helm does with the address (the presence law, the guide's
+// voice) is later bites' work; this registry change is identity
+// and presence only.
 
 export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse']);
-export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter', muse: 'Muse' });
+export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', helm: 'Helm', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter', muse: 'Muse' });
 export const CUSTOM_AGENT_ENGINES = Object.freeze(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse', 'custom']);
 // One connect road (owner's law, 2026-11-01): a custom agent's account
 // connects with an email and a password, and the seat works off that
@@ -51,6 +64,10 @@ export const MAX_DEBATE_TURNS = 50;
 export const DEFAULT_DEBATE_TURNS = 10;
 const ALIASES = Object.freeze({
   maestro: 'maestro', manager: 'maestro',
+  // Helm (bite H1): a reserved role handle in Maestro's family.
+  // The alias makes @helm resolve and 'agent:helm' describable;
+  // every routing surface filters it back out (see the header).
+  helm: 'helm',
   claude: 'claude', anthropic: 'claude',
   chatgpt: 'openai', openai: 'openai', gpt: 'openai', codex: 'openai',
   grok: 'grok', xai: 'grok', supergrok: 'grok',
@@ -128,11 +145,13 @@ export function normalizeProvider(value) {
 export function normalizeEngine(value) {
   const key = String(value ?? '').trim().toLowerCase().replace(/^@/, '');
   const engine = ENGINE_ALIASES[key] ?? null;
-  return engine && engine !== 'maestro' ? engine : null;
+  // 'maestro' and 'helm' resolve as role handles above, but
+  // neither is an engine a custom agent may run on.
+  return engine && engine !== 'maestro' && engine !== 'helm' ? engine : null;
 }
 
 const CUSTOM_HANDLE_RE = /^[a-z][a-z0-9_-]{1,31}$/;
-const RESERVED_HANDLES = new Set(['all', 'everyone', 'here', 'maestro', 'manager', 'system', 'helmian']);
+const RESERVED_HANDLES = new Set(['all', 'everyone', 'here', 'maestro', 'manager', 'helm', 'system', 'helmian']);
 
 export function normalizeCustomHandle(value) {
   const key = String(value ?? '').trim().toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 32);
@@ -252,7 +271,11 @@ export function parseConfig(body) {
     }
     const agents = [...new Set((Array.isArray(raw.agents) ? raw.agents : []).map((a) => {
       const std = normalizeProvider(a);
-      if (std) return std;
+      // 'helm' resolves as a role handle but is never a channel
+      // member: a config naming it drops it (bite H1). Maestro's
+      // historical entries, by contrast, are kept and read as
+      // inert (see the header).
+      if (std) return std === 'helm' ? null : std;
       const h = normalizeCustomHandle(a);
       return h && seenCustom.has(h) ? h : null;
     }).filter(Boolean))].slice(0, MAX_CHANNEL_AGENTS);
@@ -373,6 +396,42 @@ export function mentionsIn(text, customHandles = []) {
   return { all, providers: [...found] };
 }
 
+// ---------- role addressees (hook precedence, DESIGN section 1.5) ----------
+
+// The three roles a human send can be addressed to by name.
+// Roles are not providers: 'helm' and 'librarian' are not in
+// AGENT_PROVIDERS at all, and 'maestro' is filtered out of every
+// team, so mentionsIn can see at most one of the three and must
+// not be bent to see the others. A role-addressed message is
+// owned by that role's hook: under the precedence rule (coordinator,
+// Helm, Librarian, guide, empty-desk) the setup guide matcher
+// never fires on it. That is the rule that keeps a dispatch order
+// to Maestro that happens to name a connector from being answered
+// with a guide entry instead of reaching the crew.
+export const ROLE_ADDRESSEES = Object.freeze(['maestro', 'helm', 'librarian']);
+
+const ROLE_VOCATIVE_RE = /^\s*(?:(?:hey|hi|hello)\s+)?@?(?:the\s+)?(maestro|helm|librarian)\b/i;
+const ROLE_MENTION_RE = /@(?:the\s+)?(maestro|helm|librarian)\b/i;
+
+/**
+ * The role a message is addressed to ('maestro', 'helm', or
+ * 'librarian'), or null. Addressed means one of two shapes: a
+ * vocative at the start of the message ("Maestro: ...",
+ * "Helm, ...", "Librarian: ...", optionally after a greeting),
+ * or an @mention of the role anywhere in the message. A role
+ * named mid-message with no @mention is not an address, so an
+ * ordinary setup question that merely talks about a role ("how
+ * do I talk to Maestro?") stays the guide's, exactly as before.
+ * Pure.
+ */
+export function roleAddresseeIn(text) {
+  const body = String(text ?? '');
+  const vocative = ROLE_VOCATIVE_RE.exec(body);
+  if (vocative) return vocative[1].toLowerCase();
+  const mention = ROLE_MENTION_RE.exec(body);
+  return mention ? mention[1].toLowerCase() : null;
+}
+
 // The providers that can actually take an agent turn: every roster
 // provider except 'maestro'. Maestro is the human's seat; it never
 // answers, is never dispatched to, and never dispatches.
@@ -391,7 +450,9 @@ export function agentsToAnswer(message, members, { desk = false, room = false, d
     const h = normalizeCustomHandle(m);
     return h && customSet.has(h) ? h : null;
   }).filter(Boolean))];
-  const team = roster.filter((p) => p !== 'maestro');
+  // 'maestro' is the human's seat and 'helm' is a reserved
+  // presence: neither is ever on a team or in a due set.
+  const team = roster.filter((p) => p !== 'maestro' && p !== 'helm');
   if (team.length === 0) return [];
   const text = String(message?.body ?? '');
   const kind = String(message?.authorKind ?? '');
@@ -413,7 +474,7 @@ export function agentsToAnswer(message, members, { desk = false, room = false, d
       const subj = String(message?.authorSubject ?? '');
       const rawAuthor = subj.startsWith('agent:') ? subj.slice(6).toLowerCase() : '';
       const authorId = normalizeProvider(rawAuthor) ?? (customSet.has(rawAuthor) ? rawAuthor : rawAuthor);
-      if (!authorId || authorId === 'maestro') return [];
+      if (!authorId || authorId === 'maestro' || authorId === 'helm') return [];
       const peers = team.filter((p) => p !== authorId);
       if (peers.length === 0) return [];
       if (all) return peers;
@@ -497,6 +558,10 @@ export function agentPrompt({ provider, channelTitle, members, context = [], mes
   // There is no Maestro prompt: no turn is ever composed for 'maestro',
   // because Maestro is the human's seat, not an agent (Bite 2).
   if (p === 'maestro') throw new Error('maestro is not an agent provider');
+  // There is no Helm prompt either: Helm is a reserved presence
+  // that answers through deterministic cloud code, never a
+  // runner turn (bite H1).
+  if (p === 'helm') throw new Error('helm is not an agent provider');
   const custom = customMap.get(p);
   const me = custom ? `${custom.emoji} ${custom.name} (@${custom.handle})` : (AGENT_NAMES[p] ?? 'Agent');
   const others = (members ?? []).map((x) => {

@@ -1177,8 +1177,10 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
     async seedRoomAgent(actor, channelId, provider) {
       const p = normalizeProvider(provider);
       if (!p) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
-      // Maestro has no private room: it is the human's seat, not an agent.
-      if (p === 'maestro') throw fail(400, 'ENVOY_AGENT_NOT_AN_AGENT');
+      // Maestro has no private room: it is the human's seat, not an
+      // agent. Helm has none either: it is a reserved presence in
+      // every channel, never a seat with a room (bite H1).
+      if (p === 'maestro' || p === 'helm') throw fail(400, 'ENVOY_AGENT_NOT_AN_AGENT');
       return tx(actor, async (client) => {
         const channel = await channelRow(client, actor.tenantId, channelId);
         if (channel.kind !== 'agent') throw fail(400, 'ENVOY_ROOM_KIND_INVALID');

@@ -268,19 +268,36 @@ export function createEnvoyStore(pool) {
       // so the answer lands on the sender's own post-send reload
       // and on every client's next poll, like any stored reply.
       if (!out.receipt.replayed && message.authorKind === 'human') {
-        // Helm's setup guide first (helm-kb.mjs): a setup question
-        // is answered by Maestro from the guide — word for word,
-        // one step at a time — on any desk, with zero seats
-        // connected or a full crew, and an unanswered question on
-        // an empty desk is filed to the guide's miss queue there.
-        // Only a message the guide leaves unanswered falls through
-        // to the empty-desk answer below, so a fresh send gets at
-        // most one Maestro message and the two never fight.
+        // Hook precedence (DESIGN section 1.5): role-addressed
+        // routing first, the guide matcher second, the empty-desk
+        // answer third, enforced here in one place so no later
+        // hook can reintroduce a preemption. A message addressed
+        // to Maestro, Helm, or the Librarian is owned by that
+        // role's hook and never reaches the guide matcher: a
+        // dispatch order that happens to name a connector is a
+        // job for the crew, not a setup question, and answering
+        // it with a guide entry word for word is the failure this
+        // order exists to prevent. A role-addressed send the
+        // role's own hook leaves unanswered still falls through
+        // to the empty-desk answer below, exactly as a send the
+        // guide leaves unanswered does.
+        //
+        // Helm's setup guide (helm-kb.mjs), for unaddressed
+        // messages only: a setup question is answered by Maestro
+        // from the guide — word for word, one step at a time —
+        // on any desk, with zero seats connected or a full crew,
+        // and an unanswered question on an empty desk is filed
+        // to the guide's miss queue there. Only a message the
+        // guide leaves unanswered falls through to the empty-desk
+        // answer below, so a fresh send gets at most one Maestro
+        // message and the two never fight.
         let kbAnswer = null;
-        try {
-          kbAnswer = await postHelmKbAnswerIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id, senderSubject: message.authorSubject, body: message.body });
-        } catch (error) {
-          console.error('[envoy-chat] helm kb answer failed:', error.message);
+        if (!roleAddresseeIn(message.body)) {
+          try {
+            kbAnswer = await postHelmKbAnswerIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id, senderSubject: message.authorSubject, body: message.body });
+          } catch (error) {
+            console.error('[envoy-chat] helm kb answer failed:', error.message);
+          }
         }
         if (!kbAnswer?.answered) {
           try {
@@ -303,7 +320,7 @@ export function createEnvoyStore(pool) {
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';
 import { appendAuditEvent } from './audit-event-repository.mjs';
 import { tenantAgentStateOn } from './tenant-agent-state.mjs';
-import { CONFIG_SUBJECT, describeAuthor, normalizeMessageMetadata, parseConfig } from './envoy-agents.mjs';
+import { CONFIG_SUBJECT, describeAuthor, normalizeMessageMetadata, parseConfig, roleAddresseeIn } from './envoy-agents.mjs';
 import { discordBotStatus, slackBotStatus } from './bot-status.mjs';
 import { postHelmKbAnswerIfNeeded } from './helm-kb.mjs';
 
