@@ -798,6 +798,14 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
     // The mark is the human message's metadata.helmKb, set by
     // the answer hook when it posted.
     if (message.authorKind === 'human' && message.metadata?.helmKb) continue;
+    // A fact a human filed through the Librarian (bite L1) is
+    // never work for a seat either: the Librarian already filed
+    // it through the one store and confirmed it in the channel,
+    // and handing the send on would make a seat improvise a
+    // competing filing. The mark is the human message's
+    // metadata.librarianFact, set by the filing hook when it
+    // posted the confirmation.
+    if (message.authorKind === 'human' && message.metadata?.librarianFact) continue;
           const at = new Date(row.created_at).getTime();
           // Maestro always-on (Troy's ruling, 2026-11-09): desk-style
           // dispatch is how EVERY channel routes now — an unnamed
@@ -1179,8 +1187,10 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       if (!p) throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
       // Maestro has no private room: it is the human's seat, not an
       // agent. Helm has none either: it is a reserved presence in
-      // every channel, never a seat with a room (bite H1).
-      if (p === 'maestro' || p === 'helm') throw fail(400, 'ENVOY_AGENT_NOT_AN_AGENT');
+      // every channel, never a seat with a room (bite H1). The
+      // Librarian likewise: the pen works in every channel and
+      // sits in none (bite L1).
+      if (p === 'maestro' || p === 'helm' || p === 'librarian') throw fail(400, 'ENVOY_AGENT_NOT_AN_AGENT');
       return tx(actor, async (client) => {
         const channel = await channelRow(client, actor.tenantId, channelId);
         if (channel.kind !== 'agent') throw fail(400, 'ENVOY_ROOM_KIND_INVALID');

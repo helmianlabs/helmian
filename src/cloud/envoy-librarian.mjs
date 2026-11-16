@@ -125,6 +125,45 @@ export function librarianEntryFor(job) {
   return Object.freeze({ key: `chat:${channelId}:${messageId}`, value });
 }
 
+/**
+ * Shape one human-filed fact into its notebook entry (bite L1).
+ * Pure. Returns { key, value } or null when the filing is missing
+ * the message id the key is built from or carries no fact text.
+ * The key is fact:<messageId> — one entry per filing message, so
+ * re-filing the same words in a new message files a second entry
+ * and recall (bite L2) returns the newest match; the design's
+ * stated rule, chosen over a content dedupe the product does not
+ * define. The value carries the fact text, who filed it, when, and
+ * the channel (its title when the caller has it, its id always —
+ * the send path that files facts knows the id, not the title).
+ * Bounded like every librarian entry: the whole value is capped
+ * at LIBRARIAN_ENTRY_MAX_CHARS by shrinking the fact to fit, so
+ * the confirmation a human reads quotes exactly what was filed.
+ */
+export function librarianFactEntryFor(job) {
+  const messageId = String(job?.messageId ?? '');
+  if (!messageId || !String(job?.fact ?? '').trim()) return null;
+  const build = (fact) => ({
+    fact,
+    channel: boundedLine(job?.channelTitle ?? '', 120) || null,
+    ...(job?.channelSlug ? { slug: String(job.channelSlug) } : {}),
+    channelId: String(job?.channelId ?? '') || null,
+    human: boundedLine(job?.humanName ?? '', 120) || String(job?.humanSubject ?? '') || null,
+    ...(job?.humanSubject ? { subject: String(job.humanSubject) } : {}),
+    at: String(job?.at ?? ''),
+  });
+  let fact = boundedLine(job?.fact ?? '', LIBRARIAN_ENTRY_MAX_CHARS);
+  let value = build(fact);
+  let json = JSON.stringify(value);
+  while (json.length > LIBRARIAN_ENTRY_MAX_CHARS && fact.length) {
+    fact = fact.slice(0, Math.max(0, fact.length - (json.length - LIBRARIAN_ENTRY_MAX_CHARS) - 1)).trim();
+    value = build(fact);
+    json = JSON.stringify(value);
+  }
+  if (!fact) return null;
+  return Object.freeze({ key: `fact:${messageId}`, value });
+}
+
 function contextFor(actor) {
   return { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: randomUUID(), requestId: randomUUID() };
 }
@@ -160,6 +199,43 @@ export function createLibrarianStore(pool) {
           [slug, entry.key, JSON.stringify(entry.value)],
         );
         return { filed: result.rowCount === 1, key: entry.key };
+      });
+    },
+
+    /**
+     * File one human-stated fact into the shared notebook (bite
+     * L1), through this same store: the Librarian holds the only
+     * pen, so a fact a human files by name lands in the same
+     * context_entries table, under the same upsert shape, as the
+     * ask records above — never a second write path. The slug is
+     * the acting tenant's id from the membership-checked tenant
+     * transaction, never a caller-supplied slug and never NULL:
+     * an actor with no tenant id is refused outright, before any
+     * transaction opens (a NULL slug row would be visible to
+     * every tenant through the notebook read's NULL-inclusive
+     * predicate). Returns the stored fact text beside the filed
+     * flag, so the caller's confirmation quotes what was filed.
+     * Throws on failure; the filing hook in envoy-chat.mjs logs
+     * and leaves the send standing, unmarked and unconfirmed.
+     */
+    async fileFact(actor, job) {
+      const entry = librarianFactEntryFor(job);
+      if (!entry) return { filed: false, reason: 'unkeyed' };
+      const slug = String(actor?.tenantId ?? '');
+      if (!slug) return { filed: false, reason: 'no-tenant' };
+      const context = contextFor(actor);
+      return withTenantTransaction(pool, context, async (client) => {
+        await requireActiveTenantMembership(client, context);
+        await client.query(
+          `insert into helmion.projects(slug, name, root_path) values ($1,$2,null) on conflict (slug) do nothing`,
+          [slug, slug],
+        );
+        const result = await client.query(
+          `insert into helmion.context_entries(project_slug, key, value) values ($1,$2,$3::jsonb)
+           on conflict (project_slug, key) do update set value = excluded.value, updated_at = clock_timestamp()`,
+          [slug, entry.key, JSON.stringify(entry.value)],
+        );
+        return { filed: result.rowCount === 1, key: entry.key, fact: entry.value.fact };
       });
     },
 
