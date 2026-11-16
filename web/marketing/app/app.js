@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry, guardPaneApprovalsModel, approvalPopupModel } from './app-model.mjs?v=431e105e158dd3d7';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=431e105e158dd3d7';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=431e105e158dd3d7';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=431e105e158dd3d7';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry, guardPaneApprovalsModel, approvalPopupModel } from './app-model.mjs?v=fa5a68b2c64929ce';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=fa5a68b2c64929ce';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=fa5a68b2c64929ce';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=fa5a68b2c64929ce';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -2127,6 +2127,21 @@ function guardMotionState(finding, now = Date.now()) {
   }
   return { tone: 'grey', pulse: false, acked: false };
 }
+// A finding filed from the dispatch intake screen names the road its
+// message arrived by (detail.authorSource, fix-a10): the desk, Discord,
+// or Slack — so a bridge-borne flag reads differently from a desk-typed
+// one without anyone joining back to the message row. Findings filed
+// before that, and findings from other sources entirely, carry no
+// author source: the card then claims none. A missing source is "not
+// recorded", never guessed.
+function findingAuthorSource(finding) {
+  const source = finding?.detail?.authorSource;
+  if (!source) return null;
+  if (source === 'desk') return 'from the desk';
+  if (source === 'discord') return 'from Discord';
+  if (source === 'slack') return 'from Slack';
+  return `from ${source}`;
+}
 function findingCards() {
   // Guard findings carry server-side ack state; an ack clears the card from
   // the pile (criticals included — owner's call, 2026-11-08).
@@ -2134,7 +2149,7 @@ function findingCards() {
     id: `finding:${f.fingerprint}`,
     severity: f.severity,
     title: f.title,
-    body: [f.source, f.sightingCount > 1 ? `Seen ${f.sightingCount} times` : null, f.acked ? `Acknowledged by ${f.ackedBy}` : null].filter(Boolean).join(' · '),
+    body: [f.source, findingAuthorSource(f), f.sightingCount > 1 ? `Seen ${f.sightingCount} times` : null, f.acked ? `Acknowledged by ${f.ackedBy}` : null].filter(Boolean).join(' · '),
     at: f.lastSeenAt || null,
     ack: !!f.acked,
     finding: f,
@@ -2616,7 +2631,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=431e105e158dd3d7'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=fa5a68b2c64929ce'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2630,9 +2645,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  integrationsMod ??= await import('./integrations-view.mjs?v=431e105e158dd3d7');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=431e105e158dd3d7');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=431e105e158dd3d7');
+  integrationsMod ??= await import('./integrations-view.mjs?v=fa5a68b2c64929ce');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=fa5a68b2c64929ce');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=fa5a68b2c64929ce');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2829,7 +2844,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=431e105e158dd3d7')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=fa5a68b2c64929ce')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -2971,7 +2986,16 @@ function renderProfileSyncModel(model) {
   if (filesEl) {
     if (model.lines.length) {
       filesEl.hidden = false;
-      filesEl.replaceChildren(...model.lines.map((line) => el('div', 'sm', `✓ ${line}`)));
+      // The mark is the truth the line carries (FIX-A5): a checkmark is
+      // earned only by a file the server verified against the shipped
+      // kit; a mismatch shows its failure mark; a file the PC merely
+      // reported renders with no mark at all. A bare string line (any
+      // older model shape) is a report, never a verification.
+      filesEl.replaceChildren(...model.lines.map((line) => {
+        const text = typeof line === 'string' ? line : line.text;
+        const mark = typeof line === 'string' ? 'reported' : line.mark;
+        return el('div', 'sm', mark === 'verified' ? `✓ ${text}` : mark === 'failed' ? `✗ ${text}` : text);
+      }));
     } else {
       filesEl.hidden = true;
       filesEl.replaceChildren();
@@ -3038,7 +3062,14 @@ async function triggerProfileSync() {
         return 'done';
       }
       if (model.state === 'failed') {
-        toast(job?.expired === true ? 'Profile sync cancelled — no computer picked it up' : 'Profile sync failed on your PC');
+        // A job the device closed 'done' whose files failed the kit
+        // check is a verification failure, not a failure on the PC —
+        // the toast names the one that happened.
+        toast(job?.expired === true
+          ? 'Profile sync cancelled — no computer picked it up'
+          : job?.status === 'done'
+            ? 'Profile sync reported files that do not match — not verified'
+            : 'Profile sync failed on your PC');
         return 'failed';
       }
       if (Date.now() > deadline) {
@@ -3705,7 +3736,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=431e105e158dd3d7');
+  workspaceModule ??= await import('./envoy-workspace.js?v=fa5a68b2c64929ce');
   // The feed load rides along unawaited (boot-load fix, 2026-11-11):
   // it used to be awaited here, so the whole workspace mount — the
   // Desktop view's first paint — waited on the slowest of the events,
@@ -4263,7 +4294,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=431e105e158dd3d7');
+    const mod = await import('./maestro-activation.mjs?v=fa5a68b2c64929ce');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }
