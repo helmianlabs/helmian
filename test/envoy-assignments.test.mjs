@@ -12,6 +12,14 @@
 // ones production runs; only the database is fake). The
 // live-database exercise stays with the HELMIAN_TEST_PG_URL
 // suites.
+//
+// Bite M5 adds the roll call to the same module: a
+// Maestro-addressed message that asks for a roll call and
+// enumerates no parts gets one report-in part per assignable
+// seat, in roster order, on a sequential record. Its pure
+// builder and its store road are pinned here too; the mesh's
+// sequential release is pinned in
+// test/envoy-assignment-sequential.test.mjs.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -19,6 +27,8 @@ import {
   parseMaestroParts,
   namedOwnerForPart,
   buildMaestroAssignment,
+  buildMaestroRollCallAssignment,
+  isMaestroRollCall,
   maestroAssignmentBody,
   postMaestroAssignmentIfNeeded,
   MAESTRO_ASSIGNMENT_SUBJECT,
@@ -186,6 +196,67 @@ test('the post names exactly one owner per assigned part, in order, quotes the p
     'Part 3: Grok: "check the Notion connector."',
   ].join('\n'));
   assert.ok(!body.includes('\u2014'), 'the post carries no em dash');
+});
+
+// ---------- the roll call (bite M5) ----------
+
+test('roll call: the ask is the phrase, in its natural addressed forms', () => {
+  for (const body of [
+    'Maestro, run a roll call. One agent at a time, in order.',
+    '@Maestro: roll call, please.',
+    'Maestro: do a roll call.',
+    'Maestro, take a roll-call of the room.',
+    'Maestro, rollcall.',
+  ]) {
+    assert.equal(isMaestroRollCall(body), true, `${JSON.stringify(body)} asks for a roll call`);
+  }
+  for (const body of [
+    'Maestro: what is running here?',
+    'Maestro: call the roll of honour at the ceremony.',
+    'Maestro: please check the Weather connector.',
+    '',
+    null,
+  ]) {
+    assert.equal(isMaestroRollCall(body), false, `${JSON.stringify(body)} does not`);
+  }
+});
+
+test('roll call: one report-in part per assignable seat, in roster order, on a sequential record', () => {
+  const built = buildMaestroRollCallAssignment({ members: ['claude', 'grok', 'gemini'], gate: null });
+  assert.equal(built.v, 1);
+  assert.equal(built.sequential, true, 'a conducted round is sequential by default');
+  assert.deepEqual(built.parts.map((p) => [p.n, p.owner, p.ownerName, p.text]), [
+    [1, 'claude', 'Claude', 'Claude: report in.'],
+    [2, 'grok', 'Grok', 'Grok: report in.'],
+    [3, 'gemini', 'Gemini', 'Gemini: report in.'],
+  ]);
+  assert.ok(built.parts.every((p) => p.namedOwner === p.owner && p.unassignedReason === null),
+    'each part is owned by the seat it calls on');
+  assert.equal(maestroAssignmentBody(built), [
+    'Maestro here. This job has 3 parts, one owner per part:',
+    'Part 1: Claude: "Claude: report in."',
+    'Part 2: Grok: "Grok: report in."',
+    'Part 3: Gemini: "Gemini: report in."',
+  ].join('\n'), 'the post names the seats in roster order, as any assignment post does');
+});
+
+test('roll call: the claim gate binds the round, roles are never called, a custom agent is called by its name', () => {
+  const gated = buildMaestroRollCallAssignment({ members: ['claude', 'grok', 'gemini'], gate: new Set(['grok', 'gemini']) });
+  assert.deepEqual(gated.parts.map((p) => p.owner), ['grok', 'gemini'], 'a gated-out seat is not called on');
+  const withRoles = buildMaestroRollCallAssignment({ members: ['maestro', 'claude', 'helm', 'librarian'], gate: null });
+  assert.deepEqual(withRoles.parts.map((p) => p.owner), ['claude'], 'the roles are never owners, so they are never called');
+  const custom = { handle: 'helper-bot', id: 'helper-bot', name: 'Helper Bot', provider: 'ollama' };
+  const viaEngine = buildMaestroRollCallAssignment({ members: ['claude', 'helper-bot'], customAgents: [custom], gate: null });
+  assert.deepEqual(viaEngine.parts.map((p) => [p.owner, p.text]), [
+    ['claude', 'Claude: report in.'],
+    ['helper-bot', 'Helper Bot: report in.'],
+  ]);
+});
+
+test('roll call: no assignable seat, no round', () => {
+  assert.equal(buildMaestroRollCallAssignment({ members: [], gate: null }), null);
+  assert.equal(buildMaestroRollCallAssignment({ members: ['maestro'], gate: null }), null, 'a roster of roles alone conducts nothing');
+  assert.equal(buildMaestroRollCallAssignment({ members: ['claude'], gate: new Set(['grok']) }), null, 'every seat gated out');
 });
 
 // ---------- the store road, on a scripted pool ----------
@@ -369,6 +440,57 @@ test('store: the hook alone returns the assignment and is idempotent per message
   assert.equal(assignmentPosts(messages).length, 1);
   const noParse = await postMaestroAssignmentIfNeeded({ pool, tenantId: ASG_TENANT, channelId: ASG_CHANNEL, messageId: '4343', senderSubject: 'user_owner', body: 'Maestro: what is running here?' });
   assert.equal(noParse.assigned, false);
+});
+
+test('store: a roll call gets ONE assignment post naming the seats in roster order, and the record is sequential', async () => {
+  const { pool, messages } = assignmentsFakePool({
+    agents: ['claude', 'grok', 'gemini'],
+    connections: [vaultConnection('claude'), vaultConnection('grok'), vaultConnection('gemini')],
+  });
+  const store = createEnvoyStore(pool);
+  const out = await store.appendMessage(asgOwner, { channelId: ASG_CHANNEL, body: 'Maestro, run a roll call. One agent at a time, in order.', idempotencyKey: 'send-rollcall' });
+  const posts = assignmentPosts(messages);
+  assert.equal(posts.length, 1, 'exactly one assignment post');
+  assert.equal(posts[0].author_subject, MAESTRO_ASSIGNMENT_SUBJECT);
+  assert.equal(posts[0].body, [
+    'Maestro here. This job has 3 parts, one owner per part:',
+    'Part 1: Claude: "Claude: report in."',
+    'Part 2: Grok: "Grok: report in."',
+    'Part 3: Gemini: "Gemini: report in."',
+  ].join('\n'), 'the post names the seats in roster order');
+  const human = messages.find((m) => m.id === Number(out.receipt.message.id));
+  const record = human.metadata?.maestroAssignment;
+  assert.ok(record, 'the human message carries the roll call record');
+  assert.equal(record.sequential, true, 'the record is sequential: the mesh conducts the round');
+  assert.deepEqual(record.parts.map((p) => [p.n, p.owner]), [[1, 'claude'], [2, 'grok'], [3, 'gemini']]);
+  assert.deepEqual(posts[0].metadata?.maestroAssignment, record, 'the post carries the same record');
+});
+
+test('store: a job that enumerates its parts takes the parts road even when it mentions a roll call', async () => {
+  const { pool, messages } = assignmentsFakePool({
+    agents: ['claude', 'grok', 'gemini'],
+    connections: [vaultConnection('claude'), vaultConnection('grok'), vaultConnection('gemini')],
+  });
+  const store = createEnvoyStore(pool);
+  const body = [
+    'Maestro: run a roll call of these two jobs.',
+    'Part one: Claude: draft the release notes.',
+    'Part two: Gemini: draft the changelog.',
+  ].join('\n');
+  const out = await store.appendMessage(asgOwner, { channelId: ASG_CHANNEL, body, idempotencyKey: 'send-rollcall-parts' });
+  const posts = assignmentPosts(messages);
+  assert.equal(posts.length, 1);
+  const record = messages.find((m) => m.id === Number(out.receipt.message.id)).metadata?.maestroAssignment;
+  assert.equal(record.sequential, false, 'an enumerated job is a parts job, not a conducted round');
+  assert.deepEqual(record.parts.map((p) => p.text), ['Claude: draft the release notes.', 'Gemini: draft the changelog.']);
+});
+
+test('store: a roll call on an empty desk gets no assignment and the one empty-desk line', async () => {
+  const { pool, messages } = assignmentsFakePool();
+  const store = createEnvoyStore(pool);
+  await store.appendMessage(asgOwner, { channelId: ASG_CHANNEL, body: 'Maestro, run a roll call. One agent at a time, in order.', idempotencyKey: 'send-rollcall-empty' });
+  assert.equal(assignmentPosts(messages).length, 0, 'no seat can be called on, so no assignment post');
+  assert.equal(messages.filter((m) => m.body === EMPTY_DESK_ANSWER_BODY).length, 1, 'the send falls through to the empty-desk answer, once');
 });
 
 test('wiring: the coordinator runs before the guide in appendMessage, and the empty-desk answer yields to it', () => {

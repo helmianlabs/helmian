@@ -22,6 +22,13 @@
 // whose owner posted nothing within the work window — once per
 // part, never as silence (DESIGN 2.3, 2.5, 5.6).
 //
+// Bite M5 adds the roll call: a Maestro-addressed message that
+// asks for a roll call and enumerates no parts is itself an
+// assignment — one report-in part per assignable seat, in
+// roster order, and the record carries sequential: true, so
+// the mesh releases the parts one at a time, in order, and
+// Maestro conducts the round (DESIGN 2.3, 5.3).
+//
 // The parser accepts explicit enumeration only, in the shapes
 // DESIGN 2.3 names: "Part one / Part two / Part three" lines (or
 // the same markers inline in one paragraph), numbered lists,
@@ -248,16 +255,16 @@ export function namedOwnerForPart(text, customAgents = []) {
 // ---------- owner picking (pure) ----------
 
 /**
- * Build the assignment record from a parse: one owner per part,
- * or an unassigned part with the reason named. `members` is the
- * channel roster in config order (providers and custom handles);
- * `gate` is tenant-agent-state's claimGateFor result (null when
- * the tenant is ungated, in which case every roster seat is
- * assignable). The record is what the assignment post is rendered
- * from and what metadata.maestroAssignment carries for bite M3.
- * Pure.
+ * The roster arithmetic both assignment builders share: the
+ * channel roster in config order (providers and custom
+ * handles) with the roles removed — they are never owners —
+ * the claim gate applied, and the display name of any seat.
+ * `pool` is the assignable set: the seats a part can actually
+ * be handed to here, DESIGN 2.3's "connected and joined" test
+ * (tenant-agent-state's claimGateFor; an ungated tenant gates
+ * nobody). Pure.
  */
-export function buildMaestroAssignment(parsed, { members = [], customAgents = [], gate = null } = {}) {
+function rosterPool({ members = [], customAgents = [], gate = null } = {}) {
   const customs = customAgents ?? [];
   const maps = customMaps(customs);
   const roster = [...new Set((members ?? []).map((m) => String(m)))].filter((p) => !ROLE_OWNERS.has(p));
@@ -274,6 +281,21 @@ export function buildMaestroAssignment(parsed, { members = [], customAgents = []
     const custom = maps.byHandle.get(seat.toLowerCase());
     return custom ? String(custom.name ?? seat) : (AGENT_NAMES[seat] ?? seat);
   };
+  return { customs, maps, roster, rosterSet, pool, poolSet, nameOf };
+}
+
+/**
+ * Build the assignment record from a parse: one owner per part,
+ * or an unassigned part with the reason named. `members` is the
+ * channel roster in config order (providers and custom handles);
+ * `gate` is tenant-agent-state's claimGateFor result (null when
+ * the tenant is ungated, in which case every roster seat is
+ * assignable). The record is what the assignment post is rendered
+ * from and what metadata.maestroAssignment carries for bite M3.
+ * Pure.
+ */
+export function buildMaestroAssignment(parsed, { members = [], customAgents = [], gate = null } = {}) {
+  const { customs, rosterSet, pool, poolSet, nameOf } = rosterPool({ members, customAgents, gate });
   const parts = (parsed?.parts ?? []).map((part) => {
     const built = {
       n: part.n,
@@ -318,6 +340,60 @@ export function buildMaestroAssignment(parsed, { members = [], customAgents = []
   return Object.freeze({ v: 1, sequential: false, parts: Object.freeze(parts) });
 }
 
+// ---------- the roll call (bite M5) ----------
+
+const ROLL_CALL_RE = /\broll[\s-]*call\b/i;
+
+/**
+ * Whether a body asks for a roll call (DESIGN 2.3, bite M5):
+ * "Maestro, run a roll call. One agent at a time, in order."
+ * and its natural addressed forms. The coordinator consults
+ * this only for a Maestro-addressed message that does NOT
+ * parse into enumerated parts — a job that enumerates its
+ * parts is a parts job even when it mentions a roll call. The
+ * ask is the phrase itself: a Maestro-addressed message that
+ * names a roll call and enumerates nothing is a request to
+ * conduct one. A false hit is the coordinator's own failure
+ * mode — visible, never silent: an assignment post appears in
+ * the channel naming the round it took the message to ask
+ * for. Pure.
+ */
+export function isMaestroRollCall(body) {
+  return ROLL_CALL_RE.test(String(body ?? ''));
+}
+
+/**
+ * Build the roll call's assignment record (DESIGN 2.3, bite
+ * M5; conducting at 5.3): one report-in part per assignable
+ * seat, in roster order, each part owned by the seat it calls
+ * on, and the record sequential — the mesh releases part N+1
+ * only when part N's reply exists in the channel, so the
+ * round is conducted one voice at a time. Each part's text
+ * names its seat in the shape a human-written named part
+ * takes ("Claude: ..."), so the assignment post and the
+ * seat's slice read the same as any named part. Returns null
+ * when no seat is assignable: there is no round to conduct,
+ * and the send falls through exactly as an unassignable parts
+ * job does. Pure.
+ */
+export function buildMaestroRollCallAssignment({ members = [], customAgents = [], gate = null } = {}) {
+  const { pool, nameOf } = rosterPool({ members, customAgents, gate });
+  if (!pool.length) return null;
+  const parts = pool.map((seat, i) => {
+    const name = nameOf(seat);
+    return {
+      n: i + 1,
+      text: `${name}: report in.`,
+      owner: seat,
+      ownerName: name,
+      namedOwner: seat,
+      namedOwnerName: name,
+      unassignedReason: null,
+    };
+  });
+  return Object.freeze({ v: 1, sequential: true, parts: Object.freeze(parts) });
+}
+
 /**
  * The assignment post's words: one line per part, in order, the
  * owner named and the part text quoted; an unassigned part says
@@ -354,34 +430,39 @@ async function readChannelConfig(client, tenantId, channelId) {
 
 /**
  * Coordinate one durable human message addressed to Maestro, if
- * it parses into explicitly enumerated parts. Runs in its own
+ * it parses into explicitly enumerated parts — or, failing that
+ * parse, if it asks for a roll call (bite M5: one report-in
+ * part per assignable seat, sequential). Runs in its own
  * tenant transaction after the send is durable (the guide and
  * empty-desk pattern): a failure is the caller's to log and never
  * fails the send. On a parse with at least one assignable part,
  * posts the one assignment message as agent:maestro (idempotency
  * key maestro-assignment:<messageId>) and merges the assignment
  * record onto the human message's metadata as maestroAssignment.
- * On anything else (no parse, no roster, no part assignable)
- * posts nothing, marks nothing, and returns { assigned: false }:
- * the send falls through to the hooks after the coordinator in
- * the precedence order, unchanged. `stateOn` is injectable for
- * tests, the empty-desk pattern.
+ * On anything else (no parse, no roll call, no roster, no part
+ * assignable) posts nothing, marks nothing, and returns
+ * { assigned: false }: the send falls through to the hooks after
+ * the coordinator in the precedence order, unchanged. `stateOn`
+ * is injectable for tests, the empty-desk pattern.
  */
 export async function postMaestroAssignmentIfNeeded({ pool, tenantId, channelId, messageId, senderSubject, body, stateOn = tenantAgentStateOn } = {}) {
   const parsed = parseMaestroParts(body);
-  if (!parsed) return { assigned: false };
+  if (!parsed && !isMaestroRollCall(body)) return { assigned: false };
   const client = await pool.connect();
   try {
     await client.query('begin');
     await client.query(`select set_config('helmion.tenant_id', $1, true)`, [String(tenantId)]);
     const config = await readChannelConfig(client, tenantId, channelId);
     const state = await stateOn(client, tenantId);
-    const assignment = buildMaestroAssignment(parsed, {
+    const rosterArgs = {
       members: config?.agents ?? [],
       customAgents: config?.customAgents ?? [],
       gate: claimGateFor(state),
-    });
-    if (!assignment.parts.some((part) => part.owner)) {
+    };
+    const assignment = parsed
+      ? buildMaestroAssignment(parsed, rosterArgs)
+      : buildMaestroRollCallAssignment(rosterArgs);
+    if (!assignment || !assignment.parts.some((part) => part.owner)) {
       await client.query('commit');
       return { assigned: false };
     }
