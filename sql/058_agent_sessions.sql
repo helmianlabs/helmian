@@ -3,6 +3,14 @@
 -- named sessions bound to a provider with a routing tier. The Agents panel
 -- reads this table for the roster, live status colors, and per-session
 -- Guard filtering.
+--
+-- CORRECTION (2026-11-15, audit letter 730): Maestro is the human's manager
+-- seat, never an agent, and is not a creatable provider. Dispatch, prompting,
+-- and reply posting all refuse 'maestro' as an answerer
+-- (src/cloud/envoy-agents.mjs). The 'maestro' value in the provider check
+-- below is a leftover of the older session model: a session row with
+-- provider='maestro' can never be served by any runner. This note corrects
+-- the header only; the SQL below is unchanged.
 create table if not exists helmion.workspace_agent_sessions (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null references helmion.tenants(tenant_id) on delete cascade,
