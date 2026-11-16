@@ -331,8 +331,13 @@ test('one poll over 16 channels: same payload, a fraction of the round trips', a
   // state reads + config + 16 x (channel row + recent messages) +
   // commit = 40 sequential round trips, every one of them inside
   // the held dispatch transaction, plus the side reads awaited
-  // inside it. New shape: one short read transaction —
-  assert.equal(queries.length, 9, `expected 9 round trips, got ${queries.length}: ${JSON.stringify(queries)}`);
+  // inside it. New shape: one short read transaction (9) — plus,
+  // since bite M4, the settle watcher's one short transaction in
+  // the drained tail (begin + tenant stamp + one marked-assignment
+  // read over every served channel + commit = 4): a constant four
+  // however many channels the poll served, and nothing more when
+  // no assignment is open, which is this fixture's case.
+  assert.equal(queries.length, 13, `expected 13 round trips, got ${queries.length}: ${JSON.stringify(queries)}`);
   assert.equal(queries.filter((q) => q.includes('lateral')).length, 1, 'exactly one bulk channel+messages read');
   assert.equal(queries.filter((q) => q.includes('from helmion.envoy_channels') && !q.includes('lateral')).length, 0, 'no per-channel channel-row reads remain');
   assert.equal(queries.filter((q) => q.includes('limit 40') && !q.includes('lateral')).length, 0, 'no per-channel recent-message reads remain');
