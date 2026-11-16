@@ -750,6 +750,10 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-approval:hover { border-color:var(--amber, #F59E0B); }
 .ew-approval-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ew-approval-time { color:var(--muted); font-size:11px; flex:none; }
+.ew-approval-card { display:flex; flex-direction:column; gap:5px; padding:7px 9px; border-radius:8px; border:1px solid rgba(245,158,11,.35); background:rgba(245,158,11,.07); color:var(--text); font-size:12.5px; }
+.ew-approval-main { display:flex; justify-content:space-between; gap:8px; }
+.ew-approval-meta { color:var(--muted); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ew-approval-btns { display:flex; gap:6px; }
 .ew-approvals-open { display:inline-block; margin:8px 10px 0; text-decoration:none; }
 .ew-field { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); }
 .ew-field select { width:100%; }
@@ -1111,6 +1115,7 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 [data-theme="light"] .ew-agent-state { color:var(--amber); background:#FBF0DA; }
 [data-theme="light"] .ew-first-run { background:#F4EFE4; }
 [data-theme="light"] .ew-approval { background:#FBF0DA; border-color:rgba(137,94,13,.4); }
+[data-theme="light"] .ew-approval-card { background:#FBF0DA; border-color:rgba(137,94,13,.4); }
 [data-theme="light"] .ew-approval:hover { border-color:var(--amber); }
 [data-theme="light"] .ew-count { background:#F6C453; }
 [data-theme="light"] .int-state.on .int-dot { background:var(--green); }
