@@ -1567,7 +1567,10 @@ test('watch pane: the shell carries the watch bar and the canvas, the desk carri
 // the click decision (start a watch, or only bring the tab
 // forward), plus the row wiring asserted as source below. What
 // the mapping returns null for has no browser and gets no icon;
-// what the decision returns 'focus' for is never re-minted.
+// what the decision returns 'focus' for is never re-minted. Since
+// 2026-11-15 the idle state is a dimmed door too: it stands beside
+// every browser seat at rest, and its click opens the Browser tab
+// on the agent screens face without starting any watch.
 
 test('crew watch icon: agents with no browser get no icon at all', () => {
   for (const seat of ['maestro', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'all', 'a-custom-handle']) {
@@ -1577,17 +1580,17 @@ test('crew watch icon: agents with no browser get no icon at all', () => {
   assert.equal(crewWatchIconState(undefined, [], NOW), null);
 });
 
-test('crew watch icon: a browser seat with no offer stands idle as a marker', () => {
+test('crew watch icon: a browser seat with no offer stands dimmed, a door to the browser tab', () => {
   const idle = crewWatchIconState('mistral', [], NOW);
   assert.equal(idle.state, 'idle');
   assert.equal(idle.sig, 'mistral|idle');
-  assert.equal(idle.title, 'Mistral works in a browser. Nothing is open right now.');
-  assert.equal(idle.ariaLabel, 'Mistral works in a browser. Nothing is open right now.');
+  assert.equal(idle.title, 'Mistral works in a browser. Nothing is open right now. Click to open the browser tab.');
+  assert.equal(idle.ariaLabel, 'Mistral works in a browser. Nothing is open right now. Click to open the browser tab.');
   // An offer for a different seat does not light this one.
   const other = [{ seat: 'grok', name: 'Grok', url: 'https://grok.com/c/1', expiresAt: iso(-60_000) }];
   assert.equal(crewWatchIconState('mistral', other, NOW).state, 'idle');
   assert.equal(crewWatchIconState('grok', other, NOW).state, 'live');
-  // A malformed feed is an idle marker, never a live door.
+  // A malformed feed is a dimmed door, never a live one.
   assert.equal(crewWatchIconState('mistral', null, NOW).state, 'idle');
   assert.equal(crewWatchIconState('mistral', [{ seat: 'mistral' }], NOW).state, 'idle');
 });
@@ -1629,7 +1632,7 @@ test('crew watch icon: the click starts a watch once and never re-mints the seat
 test('crew watch icon: the row wiring carries the icon, the door, and the presence-poll patch', async () => {
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
-  for (const needle of ['function crewWatchIconNode', 'function crewWatchGlyph', 'function applyCrewWatchIcon', 'function openCrewWatch', 'function syncCrewWatchIcons', "createElementNS(SVG_NS, 'svg')", 'event.stopPropagation()', "node.dataset.state !== 'live'", "openBench('browser')", 'crewWatchIconState(p, offers)', 'entry.watchIconEl', "'ew-crew-name-text'"]) {
+  for (const needle of ['function crewWatchIconNode', 'function crewWatchGlyph', 'function applyCrewWatchIcon', 'function openCrewWatch', 'function syncCrewWatchIcons', "createElementNS(SVG_NS, 'svg')", 'event.stopPropagation()', 'const state = crewWatchIconState(seat, liveWatchOffers());', "openBench('browser')", 'crewWatchIconState(p, offers)', 'entry.watchIconEl', "'ew-crew-name-text'"]) {
     assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
   }
   const presence = js.slice(js.indexOf('async function loadPresence()'), js.indexOf('function renderAgentState()'));
@@ -1640,4 +1643,46 @@ test('crew watch icon: the row wiring carries the icon, the door, and the presen
   assert.match(css, /\.ew-crew-watch \{[^}]*width:14px; height:14px;/, 'the icon box is a fixed 14px, so rows never change geometry');
   assert.match(css, /\.ew-crew-watch\.live [^{]*\{[^}]*fill:currentColor/, 'the live state fills the screen with the accent color');
   assert.match(css, /\.ew-crew-name \{[^}]*display:flex/, 'the name line carries the icon inline after the name');
+});
+
+test('crew watch icon: every browser seat carries the dimmed door at rest, and the dimmed click lands on the idle stage', async () => {
+  // Pure mapping: with no offers at all, every browser seat stands
+  // dimmed (never null, never live) with the door named in its
+  // title, and every direct-connection seat still gets nothing.
+  for (const seat of WATCH_SEATS) {
+    const st = crewWatchIconState(seat, [], NOW);
+    assert.equal(st?.state, 'idle', `${seat} carries the dimmed monitor at rest`);
+    assert.match(st.title, /Click to open the browser tab\.$/, `${seat} dimmed title names the door`);
+  }
+  for (const seat of ['groq', 'nvidia', 'cloudflare', 'openrouter', 'qwen', 'muse']) {
+    assert.equal(crewWatchIconState(seat, [], NOW), null, `${seat} works without a browser and gets no icon`);
+  }
+  const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
+  // The node fires in both states: no live-only gate stands in the
+  // click handler any more, and both states route through the one
+  // open path.
+  const node = js.slice(js.indexOf('function crewWatchIconNode('), js.indexOf('function openCrewWatch('));
+  assert.ok(!node.includes("dataset.state !== 'live'"), 'the dimmed icon click is not gated off');
+  assert.ok(node.includes('openCrewWatch(seat)'), 'both states fire the one open path');
+  // Both states carry the control dressing, so the dimmed icon is
+  // a named, keyboard-reachable control too.
+  const apply = js.slice(js.indexOf('function applyCrewWatchIcon('), js.indexOf('function crewWatchIconNode('));
+  assert.ok(apply.includes("setAttribute('role', 'button')"), 'the icon is a named control in both states');
+  assert.ok(!apply.includes("removeAttribute('role')"), 'the dimmed state keeps the control dressing');
+  // The open path: the tab comes forward on the agent screens
+  // face, and a dimmed click returns before any watch can start,
+  // so the face keeps the idle stage it already carries.
+  const open = js.slice(js.indexOf('function openCrewWatch('), js.indexOf('function crewRow('));
+  assert.ok(open.includes("openBench('browser')"), 'the click opens the workbench Browser tab');
+  assert.ok(open.includes("setBrowserFace('agents')"), 'the click lands on the agent screens face');
+  assert.ok(open.indexOf("state.state !== 'live'") > -1 && open.indexOf("state.state !== 'live'") < open.indexOf('startWatch'), 'a dimmed click returns before any watch starts');
+  // The idle stage the dimmed click lands on carries the standing
+  // wording, in the shell and in the pane sync alike.
+  const idleWords = 'No agent is working in a browser right now. Agents that answer through a direct connection work without a browser.';
+  assert.ok(html.includes(idleWords), 'the shell idle stage carries the wording');
+  assert.ok(js.includes(idleWords), 'the pane idle sync carries the wording');
+  // The dimmed door shows the pointer hand at the same 14px box.
+  assert.match(css, /\.ew-crew-watch \{[^}]*cursor:pointer/, 'the dimmed icon is a door, hand cursor included');
 });

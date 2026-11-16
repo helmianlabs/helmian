@@ -451,13 +451,14 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-crew-name-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* The crew screen icon (live view icon bite): a fixed 14px box,
    so a row's geometry never moves when it appears or changes
-   state. Idle is a dimmed outline marker; live fills the screen
-   with the accent color and takes the pointer. */
-.ew-crew-watch { flex:none; display:inline-flex; align-items:center; justify-content:center; width:14px; height:14px; color:var(--muted); opacity:.45; }
+   state. Idle is a dimmed outline; live fills the screen with
+   the accent color. Both states are doors and take the pointer:
+   idle opens the browser tab, live opens the seat's screen. */
+.ew-crew-watch { flex:none; display:inline-flex; align-items:center; justify-content:center; width:14px; height:14px; color:var(--muted); opacity:.45; cursor:pointer; }
 .ew-crew-watch svg { display:block; }
 .ew-crew-watch-screen { fill:none; stroke:currentColor; stroke-width:1.8; }
 .ew-crew-watch-stand { fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; }
-.ew-crew-watch.live { color:var(--accent); opacity:1; cursor:pointer; }
+.ew-crew-watch.live { color:var(--accent); opacity:1; }
 .ew-crew-watch.live .ew-crew-watch-screen { fill:currentColor; }
 .ew-crew-watch:focus-visible { outline:2px solid var(--accent); outline-offset:1px; border-radius:3px; }
 .ew-crew-line { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
