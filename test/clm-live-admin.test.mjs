@@ -480,7 +480,7 @@ test('session and readiness routes require live Neon owner/admin membership and 
   const headers = { cookie: 'helmion_admin_session=active-session' };
   const session = await fetch(`${app.url}${LIVE_ADMIN_SESSION_PATH}`, { headers });
   assert.equal(session.status, 200);
-  assert.deepEqual((await session.json()).actor, { subject: 'user-1', tenantId: 'helmian-platform', role: 'admin' });
+  assert.deepEqual((await session.json()).actor, { subject: 'user-1', tenantId: 'helmian-platform', role: 'admin', tenantName: 'Helmian Platform' });
   const response = await fetch(`${app.url}${LIVE_ADMIN_CONTROL_PATH}?tenant_id=tenant-b`, { headers });
   assert.equal(response.status, 200);
   const result = (await response.json()).result;

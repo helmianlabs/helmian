@@ -12,7 +12,7 @@ test('bridge messages get the bridge display name, not "agent"', () => {
   ] }, SUBJECT);
   assert.equal(lines.length, 1);
   assert.equal(lines[0].who, BRIDGE_DISPLAY_NAME);
-  assert.equal(lines[0].who, 'Maestro');
+  assert.equal(lines[0].who, 'PC bridge');
   assert.equal(lines[0].bridge, true);
   assert.equal(lines[0].mine, false, 'bridge reply is not mine, so voice speaks it');
 });
