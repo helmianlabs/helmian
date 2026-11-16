@@ -154,7 +154,7 @@ const BENIGN = {
   },
 };
 
-async function loadPopup({ pcView, onDecide } = {}) {
+async function loadPopup({ pcView, onDecide, onDoorView, onPcView } = {}) {
   const document = await fakeDocument();
   const messages = [];
   const tabsCreated = [];
@@ -164,8 +164,11 @@ async function loadPopup({ pcView, onDecide } = {}) {
       sendMessage(message, callback) {
         messages.push(message);
         let response;
-        if (message.type === 'helmion:pc-approvals-view') response = { ok: true, view: pcView };
-        else if (message.type === 'helmion:pc-approvals-decide') {
+        if (message.type === 'helmion:pc-approvals-view') {
+          response = onPcView ? onPcView(message) : { ok: true, view: pcView };
+        } else if (message.type === 'helmion:approvals-view' && onDoorView) {
+          response = onDoorView(message);
+        } else if (message.type === 'helmion:pc-approvals-decide') {
           response = onDecide ? onDecide(message) : { ok: true, view: pcView };
         } else response = BENIGN[message.type] || { ok: false, error: `unscripted: ${message.type}` };
         setTimeout(() => callback(response), 0);
@@ -219,7 +222,7 @@ test('the section renders a row per waiting approval, with who is asking and the
 
   const viewAsks = messages.filter((m) => m.type === 'helmion:pc-approvals-view');
   assert.equal(viewAsks.length, 1, 'opening the pop-up asks the worker for the PC view once');
-  assert.equal(viewAsks[0].options.force, false);
+  assert.equal(viewAsks[0].options.force, true, 'and the ask is forced, so the rows render from a fresh fetch, never the stored list');
 
   const rendered = rows(document);
   assert.equal(rendered.length, 2);
@@ -236,6 +239,49 @@ test('an empty list reads as nothing waiting, not as a blank section', async () 
   const { document } = await loadPopup({ pcView: listView([]) });
   assert.equal(rows(document).length, 0);
   assert.equal(status(document), 'Nothing is waiting for a decision.');
+});
+
+// ─── Opening the pop-up forces a fresh fetch (stale-approval fix) ──────────
+// The reported bug: an approval decided on the phone (the door page) stayed
+// on the desktop display as "1 waiting", because the pop-up's opening asks
+// were unforced and the worker's polls are gated — a 60 s cadence, and a
+// 5-minute backoff after any fetch error — so the stored list was rendered
+// as if it were current. The fake worker below keeps the real gate's shape:
+// it holds a stored list (one waiting item per road, already decided
+// elsewhere) and a live list (empty), and answers a view ask with the
+// stored list unless the ask is forced, exactly as the two clients'
+// not-due gate behaves. Opening the pop-up must ask forced on BOTH roads
+// and render the fresh answer, so the decided item is gone on open.
+test('opening the pop-up forces a fresh fetch on both roads, so a decision made elsewhere clears the display', async () => {
+  const storedPc = listView([item('stale-pc', 'Delete the old build folder')]);
+  const freshPc = listView([]);
+  const storedDoor = {
+    session: 'in', state: 'list',
+    items: [{ id: 'stale-door', summary: 'Wipe the spare drive', meta: 'hands-mcp' }],
+    count: 1, flash: '', lastError: '', updatedAt: Date.now(),
+  };
+  const freshDoor = { ...storedDoor, items: [], count: 0 };
+  const gated = (stored, fresh) => (message) => ({
+    ok: true,
+    view: message.options && message.options.force === true ? fresh : stored,
+  });
+  const { document, messages } = await loadPopup({
+    onPcView: gated(storedPc, freshPc),
+    onDoorView: gated(storedDoor, freshDoor),
+  });
+
+  const pcAsks = messages.filter((m) => m.type === 'helmion:pc-approvals-view');
+  assert.equal(pcAsks.length, 1, 'opening the pop-up asks for the PC view once');
+  assert.equal(pcAsks[0].options.force, true, 'the PC ask is forced past the poll gate');
+  const doorAsks = messages.filter((m) => m.type === 'helmion:approvals-view');
+  assert.equal(doorAsks.length, 1, 'opening the pop-up asks for the door view once');
+  assert.equal(doorAsks[0].options.force, true, 'the door ask is forced past the poll gate');
+
+  assert.equal(rows(document).length, 0, 'the PC section renders the fresh list, not the stored one');
+  assert.equal(status(document), 'Nothing is waiting for a decision.');
+  const doorRows = document.byId.get('approvalsList').childNodes;
+  assert.equal(doorRows.length, 0, 'the door section renders the fresh list, not the stored one');
+  assert.equal(document.byId.get('approvalsStatus').textContent, 'Nothing is waiting for a decision.');
 });
 
 // ─── Deciding ──────────────────────────────────────────────────────────────
