@@ -91,6 +91,33 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 @media (min-width: 901px) {
   #shell.full { grid-template-columns:0 minmax(0,1fr) 0; }
   #shell.full > #sidebar, #shell.full > #guard { display:none; }
+  /* Second bite (2026-11-16): live exercise of the two rules above
+     proved they only reclaim the rail — the panels that actually eat
+     the window live one level down, inside #main, and stayed fully
+     visible (the Guard pane kept its resized 269px, the workbench
+     its track, the channels strip its 48px; the chat gained only
+     ~60px). The rules below cover that inner layout in both its
+     shapes: the .desktop-grid (side tracks collapse to 0 around the
+     chat track; its Guard panel, workbench and separators hide) and
+     the Envoy workspace row the desktop view renders (.ew: channels
+     strip, Guard pane, workbench and the .ew-split separators hide,
+     leaving the chat as the row's only box). The mechanism is
+     display, never widths: envoy-workspace.js applies the user's
+     dragged pane widths as --ew-* custom properties inline on the
+     root element (persisted in local storage), so a rule fighting
+     those widths could lose to them or corrupt the restore — but
+     nothing sets an inline or !important display on the panes, so
+     display:none at ID strength removes their boxes outright, and
+     removing .full restores the exact prior layout, resized widths
+     included, because no state anywhere else is touched. The chat's
+     left margin is zeroed for the channels-peek case: a peeking
+     channels pane pushes the chat with margin-left:var(--ew-channels)
+     keyed to the pane's sibling state, which a display:none pane
+     would otherwise leave behind. */
+  #shell.full .desktop-grid { grid-template-columns:0 0 minmax(0,1fr) 0 0 0 0; }
+  #shell.full .desktop-grid #guard-panel, #shell.full .desktop-grid #workbench, #shell.full .desktop-grid .dsplit { display:none; }
+  #shell.full .ew-channels, #shell.full .ew-guard, #shell.full .ew-bench, #shell.full .ew-split { display:none; }
+  #shell.full .ew-chat { margin-left:0; }
 }
 
 /* Nav peek push (2026-11-09): the unpinned rail's hover/focus peek takes

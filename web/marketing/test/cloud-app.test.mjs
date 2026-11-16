@@ -311,7 +311,6 @@ test('the session console always stays inline (the Workspace is the one chat; no
   assert.match(js, /if \(!consolePollTimer\) consolePollTimer = setInterval/, 'one chat poll timer, not one per visit');
   assert.match(js, /p\.hidden = p\.dataset\.viewPanel !== panelView && !p\.closest\('#chat-panel'\)/);
 });
-
 // Full screen (2026-11-16): the button was dead by cascade. envoy.css sets
 // the desktop shell grid on #shell — one ID, specificity (1,0,0) — while
 // the full-mode rule hung off .shell.full — two classes, (0,2,0) — so at
@@ -345,4 +344,53 @@ test('full screen: the full-mode rule wins the cascade and collapses both side t
   // The handler and the button are the other half of the contract.
   assert.match(js, /\$\('#fullscreen'\)\.onclick = \(\) => \{ shell\.classList\.toggle\('full'\);/, 'the button toggles .full on the shell');
   assert.match(html, /<button id="fullscreen" class="ew-btn sm hide-mobile"/, 'the button stays desktop-only');
+});
+
+// Full screen, second bite (2026-11-16): the first bite's rules aim at
+// the OUTER shell grid, and live exercise proved they only reclaim the
+// rail's track — the panels that actually eat the window live one level
+// down, inside #main, and stayed fully visible (the Guard pane kept its
+// resized 269px, the workbench its track, the channels strip its 48px;
+// the chat gained only the rail's ~60px). The visible layout inside
+// #main is the Envoy workspace row (.ew): the channels pane resting as
+// its strip, the chat, the Guard pane, the workbench, split by .ew-split
+// separators; the same row also exists in the .desktop-grid shape. Pane
+// widths there are NOT stylesheet values: envoy-workspace.js writes the
+// user's dragged widths as --ew-* custom properties inline on the root
+// element (applyLayout/setVar, persisted in local storage), and the
+// panes consume them as flex-basis. So a full-mode rule that fought the
+// widths would lose or corrupt the restore — but nothing anywhere sets
+// an inline or !important display on those panes, so display:none at
+// ID strength removes their boxes outright, the flex row gives the chat
+// everything, and leaving full mode restores the exact prior layout
+// (vars, collapsed states and stored widths untouched) by construction.
+// These pins hold that: the inner grid's columns collapse to the chat
+// track alone, the three panels and their separators hide, the chat's
+// peek margin is zeroed, and no full-mode rule touches a width or a
+// --ew-* var.
+test('full screen: full mode also collapses the inner workspace and hides its panes', () => {
+  // The inner grid collapses to the chat track alone (columns were
+  // 280px 6px minmax(0,1fr) 6px 320px 6px 340px).
+  assert.match(css, /#shell\.full \.desktop-grid \{ grid-template-columns:0 0 minmax\(0,1fr\) 0 0 0 0; \}/, 'full mode collapses the inner grid to the chat track');
+  // The grid's Guard panel, workbench and separators hide.
+  assert.match(css, /#shell\.full \.desktop-grid #guard-panel, #shell\.full \.desktop-grid #workbench, #shell\.full \.desktop-grid \.dsplit \{ display:none; \}/, 'full mode hides the inner grid Guard panel, workbench and separators');
+  // The Envoy row the desktop view actually renders: channels strip,
+  // Guard pane, workbench and the split separators hide; the chat pane
+  // is the only box left in the row.
+  assert.match(css, /#shell\.full \.ew-channels, #shell\.full \.ew-guard, #shell\.full \.ew-bench, #shell\.full \.ew-split \{ display:none; \}/, 'full mode hides the channels strip, Guard pane, workbench and separators in the Envoy row');
+  // A channels peek pushes the chat with a left margin keyed to the
+  // peeking pane; in full mode that margin must not survive.
+  assert.match(css, /#shell\.full \.ew-chat \{ margin-left:0; \}/, 'full mode zeroes the chat peek margin');
+  // All of it sits inside the same desktop-only full-mode block as the
+  // shell rules (the marker comment opens it), never at mobile widths.
+  const marker = css.indexOf('/* Full mode (the chat head');
+  assert.ok(marker > 0, 'the full-mode block exists in app.css');
+  const block = css.slice(marker, marker + 6000);
+  assert.match(block, /@media \(min-width: 901px\) \{[\s\S]*#shell\.full \.desktop-grid/, 'the inner-grid full rules sit inside the min-width: 901px guard');
+  assert.match(block, /@media \(min-width: 901px\) \{[\s\S]*#shell\.full \.ew-channels/, 'the Envoy-row full rules sit inside the min-width: 901px guard');
+  // The mechanism is display, never width-fighting: no full-mode rule
+  // may set a pane width, a flex-basis or a --ew-* var, or the restore
+  // would come back at defaults instead of the user's dragged widths.
+  assert.doesNotMatch(css, /#shell\.full[^{]*\{[^}]*--ew-/, 'no full-mode rule touches a --ew-* width var');
+  assert.doesNotMatch(css, /#shell\.full \.ew-(channels|guard|bench)[^{]*\{[^}]*flex-basis/, 'no full-mode rule fights the panes flex-basis');
 });

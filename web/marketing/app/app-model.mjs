@@ -588,6 +588,17 @@ export function friendlyWorkspace(id) {
 // job with an empty report says the PC wrote nothing; a failed job
 // renders the failure. The pre-S1 page rendered a hardcoded list the
 // server invented; this model has no path to one.
+// Report honesty (FIX-A5, 2026-11-16): a done job's lines carry the
+// server's per-file verdicts (job.fileChecks, checked against the
+// expected kit hashes the job carried from enqueue). A line is an
+// object { text, mark }: 'verified' (a kit file whose hash matches
+// what Helmian shipped — the only line that earns a checkmark),
+// 'failed' (a kit file whose hash does not match — the sync's rendered
+// state is failed, however the PC described its run), or 'reported'
+// (everything no cloud expectation can cover — the estate, the context
+// files — rendered plainly as reported by the PC, not verified, with
+// no checkmark). A job with no verdicts (enqueued before the check
+// existed) reads every file as 'reported'.
 export function profileSyncResultModel(job = null) {
   if (!job || typeof job !== 'object') {
     return { state: 'idle', statusText: '', lines: [] };
@@ -615,10 +626,43 @@ export function profileSyncResultModel(job = null) {
     if (!files.length) {
       return { state: 'done', statusText: 'Your PC ran the sync and reported no files written — everything was already in place.', lines: [] };
     }
+    const checks = Array.isArray(job.fileChecks) ? job.fileChecks : [];
+    const verdicts = files.map((f, i) => (checks[i] === 'verified' ? 'verified' : checks[i] === 'mismatch' ? 'failed' : 'reported'));
+    const verified = verdicts.filter((v) => v === 'verified').length;
+    const mismatched = verdicts.filter((v) => v === 'failed').length;
+    const reported = verdicts.length - verified - mismatched;
+    const lines = files.map((f, i) => {
+      const base = `${f.path} (${f.action})`;
+      if (verdicts[i] === 'verified') return { text: base, mark: 'verified' };
+      if (verdicts[i] === 'failed') return { text: `${base} — FAILED: not the file Helmian shipped`, mark: 'failed' };
+      return { text: `${base} — reported by your PC, not verified`, mark: 'reported' };
+    });
+    const plural = files.length === 1 ? '' : 's';
+    if (mismatched > 0) {
+      return {
+        state: 'failed',
+        statusText: `Your PC reported ${files.length} file${plural}, but ${mismatched} did not match the files Helmian shipped — this sync failed verification and its files cannot be trusted as installed.`,
+        lines,
+      };
+    }
+    if (verified > 0 && reported > 0) {
+      return {
+        state: 'done',
+        statusText: `Synced ${files.length} file${plural} — ${verified} verified against the kit Helmian shipped, ${reported} reported by your PC and not verified`,
+        lines,
+      };
+    }
+    if (verified > 0) {
+      return {
+        state: 'done',
+        statusText: `Synced ${files.length} file${plural} — verified against the kit Helmian shipped`,
+        lines,
+      };
+    }
     return {
       state: 'done',
-      statusText: `Synced ${files.length} file${files.length === 1 ? '' : 's'} — as reported by your PC`,
-      lines: files.map((f) => `${f.path} (${f.action})`),
+      statusText: `Synced ${files.length} file${plural} — reported by your PC, not verified`,
+      lines,
     };
   }
   return { state: 'idle', statusText: '', lines: [] };
