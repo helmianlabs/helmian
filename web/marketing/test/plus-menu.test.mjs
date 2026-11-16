@@ -99,7 +99,7 @@ test('plus menu Level 2 — Claude: attach, screenshot, project, GitHub, Skills,
     'submenu:Plugins',
     'note:Loading plugins...',
     'capability:Web search',
-    'manage:Manage connectors:integrations:none',
+    'manage:Manage connectors:panel:none',
   ]);
   const gmail = findRow(model, 'gmail');
   assert.equal(gmail.row.mirror.managedIn, 'Claude', 'the mirror row names where the vendor manages it');
@@ -353,7 +353,7 @@ test('plus menu Level 2 — ChatGPT: no web-search row (the attachments layer ca
     'toggle:helmian-github=off',
     'custom-add:',
     'mirror:gmail',
-    'manage:Manage connectors:integrations:none',
+    'manage:Manage connectors:panel:none',
   ]);
   assert.ok(!flat(model).some((r) => r.kind === 'capability'), 'no capability row is rendered for ChatGPT at all');
 });
@@ -392,7 +392,7 @@ test('plus menu Level 2 — Gemini: Connected Apps mirror first, then the live H
     'label:Connectors',
     'toggle:helmian-github=off',
     'custom-add:',
-    'manage:Manage connectors:integrations:none',
+    'manage:Manage connectors:panel:none',
   ]);
 });
 
@@ -405,7 +405,7 @@ test('plus menu Level 2 — Groq: the beta note rides its live group', () => {
     'note:Beta — Groq remote MCP',
     'toggle:helmian-github=off',
     'custom-add:',
-    'manage:Manage connectors:integrations:none',
+    'manage:Manage connectors:panel:none',
   ]);
 });
 
@@ -418,17 +418,17 @@ test('plus menu Level 2 — Mistral: empty groups are honest notes; the Agents m
     'toggle:helmian-github=off',
     'custom-add:',
     'note:Nothing here yet.',
-    'manage:Manage connectors:integrations:none',
+    'manage:Manage connectors:panel:none',
   ]);
 });
 
-test('plus menu: no seat\'s Level 2 carries a vendor manage row — the only manage row is Helmian\'s Integrations road (Troy\'s ruling, 2026-11-08)', () => {
+test('plus menu: no seat\'s Level 2 carries a vendor manage row — the only manage row is Helmian\'s, opening in the panel (Troy\'s ruling, 2026-11-08; in place per his order, 2026-11-15)', () => {
   for (const seatId of MENU_SEAT_IDS) {
     const model = plusMenuLevel2Model({ seatId, library: library(seatId, []), conversationId: 'c1' });
     assert.ok(model, `${seatId} composes`);
     const manages = flat(model).filter((r) => r.kind === 'manage');
     assert.equal(manages.length, 1, seatId);
-    assert.deepEqual(manages[0], { kind: 'manage', label: 'Manage connectors', target: 'integrations' }, seatId);
+    assert.deepEqual(manages[0], { kind: 'manage', label: 'Manage connectors', target: 'panel' }, seatId);
     assert.equal(flat(model).at(-1).kind, 'manage', `${seatId}: the manage row still closes the menu`);
   }
 });
@@ -488,7 +488,7 @@ test('plus menu: a loading or failed library still renders the seat\'s own rows 
   const kinds = brief(loading);
   assert.equal(kinds[0], 'attach:Add files or photos');
   assert.ok(kinds.includes('note:Loading Claude\'s library...'));
-  assert.equal(kinds.at(-1), 'manage:Manage connectors:integrations:none');
+  assert.equal(kinds.at(-1), 'manage:Manage connectors:panel:none');
   assert.ok(!flat(loading).some((r) => r.kind === 'toggle'), 'no toggle is offered before its state is read');
   const errored = plusMenuLevel2Model({ seatId: 'claude', library: { seatId: 'claude', connectedCount: 0, rows: [], error: true } });
   assert.ok(brief(errored).includes('note:This library could not be loaded.'));
@@ -673,5 +673,5 @@ test('plus menu face: the switch and its word share one source, and the panel Co
   assert.ok(js.includes('ew-lib-connect'), 'the Connect control renders as a real button on the row');
   assert.ok(js.includes("'/api/admin/connector-library/connect'"), 'the panel Connect posts the same connect-start the Manage panel uses');
   assert.ok(js.includes("out?.status === 'authorize'"), 'the panel hands the person the authorize door the start returns');
-  assert.ok(js.includes('not in Helmian — open Helmian'), 'a mirror row states plainly that its connection is not Helmian’s to make, and its one action opens Helmian’s library at this seat');
+  assert.ok(js.includes('not in Helmian — open its management here'), 'a mirror row states plainly that Helmian does not manage it, and its one action opens its management in this panel');
 });

@@ -400,3 +400,52 @@ export function level2Model(library, state, conversationId) {
     customRow: Object.freeze({ label: 'Add custom connector', enabled: false, note: 'Custom connectors can\'t be added yet.' }),
   });
 }
+
+// ------------------------------------------------------- manage model
+// The in-panel Manage view (Troy's order, 2026-11-15): a seat's
+// "Manage connectors" opens that seat's management INSIDE the
+// panel — one block per connector carrying its state and the acts
+// that connector honestly supports for that seat — instead of
+// navigating away to the Integrations page. The model is derived
+// from the Level 2 row models, so the state words are the same
+// words the rows carry; the manage facts are ruled here, once:
+//
+// - canArm: the row is a connected Helmian-brokered row (the same
+//   test as the row's own toggle — rowModel's toggleable).
+// - canConnect: the row carries the panel's Connect (rowModel's
+//   connectable).
+// - canDisconnect: the row's state IS a library connection record
+//   the disconnect road can remove — a Helmian-brokered row that
+//   is connected or needs reconnecting. Two kinds are excluded
+//   because their state does not live in a connection record:
+//   the Helmian native (helmian-github — its state is joined from
+//   the workspace's repo links and the tool-connections store)
+//   and a local-only entry (mcp-local — its state is the desktop
+//   link's sync). A mirror is excluded by the brokerMode test
+//   itself: a mirror's connection lives in the vendor's product.
+// - canToolAccess: a Helmian-brokered row — tool access belongs
+//   to a connection on Helmian's pipe; the face itself words the
+//   truth for a row that is not connected yet ("Connect first").
+// - isMirror: a vendor-brokered row. Its manage block carries its
+//   state and the road to the seat's own account page, and no
+//   Helmian control it cannot honour.
+export function manageModel(library, state, conversationId) {
+  const level2 = level2Model(library, state, conversationId);
+  const rows = [...level2.connected, ...level2.catalog].map((row) => Object.freeze({
+    ...row,
+    canArm: row.toggleable,
+    canConnect: row.connectable,
+    canDisconnect: row.brokerMode === 'helmian'
+      && row.kind !== 'helmian-native'
+      && row.kind !== 'mcp-local'
+      && (row.state === 'connected' || row.state === 'needs-reconnect'),
+    canToolAccess: row.brokerMode === 'helmian' && row.kind !== 'mcp-local',
+    isMirror: row.brokerMode === 'vendor',
+  }));
+  return Object.freeze({
+    seatId: level2.seatId,
+    seatName: level2.seatName,
+    connectedCount: level2.connectedCount,
+    rows: Object.freeze(rows),
+  });
+}
