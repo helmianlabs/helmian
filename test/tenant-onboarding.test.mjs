@@ -219,6 +219,7 @@ function harnessTables() {
       { tenant_id: B, provider: 'grok', connected: false },
     ],
     provider_connections: [],
+    envoy_work_claims: [],
   };
 }
 
@@ -237,6 +238,22 @@ function harnessPool(tables) {
         const row = { id: nextId(), tenant_id, channel_id, author_subject, author_kind, body, idempotency_key, created_at: new Date().toISOString(), metadata: null };
         tables.envoy_messages.push(row);
         return { rows: [row], rowCount: 1 };
+      }
+      if (sql.includes('insert into helmion.envoy_work_claims')) {
+        // Bite J: the claim, emulated — one live claim per
+        // (tenant, message, seat); an expired claim is taken over.
+        // Vals ride 7 per row: tenant, channel, message, seat,
+        // claimedBy, claimedAt, expiresAt.
+        const won = [];
+        for (let i = 0; i + 6 < vals.length; i += 7) {
+          const live = tables.envoy_work_claims.find((r) => r.tenant_id === vals[i] && r.message_id === vals[i + 2] && r.seat === vals[i + 3]);
+          if (!live || live.expires_at <= vals[i + 5]) {
+            if (live) { live.claimed_by = vals[i + 4]; live.claimed_at = vals[i + 5]; live.expires_at = vals[i + 6]; }
+            else tables.envoy_work_claims.push({ tenant_id: vals[i], channel_id: vals[i + 1], message_id: vals[i + 2], seat: vals[i + 3], claimed_by: vals[i + 4], claimed_at: vals[i + 5], expires_at: vals[i + 6] });
+            won.push({ message_id: vals[i + 2], seat: vals[i + 3] });
+          }
+        }
+        return { rows: won, rowCount: won.length };
       }
       if (sql.includes('from helmion.tenant_memberships')) {
         const rows = tables.tenant_memberships.filter((r) => r.tenant_id === vals[0] && r.subject === vals[1] && r.active);

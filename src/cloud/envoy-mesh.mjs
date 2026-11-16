@@ -63,6 +63,15 @@ export const AGENT_MESSAGES_PATH = '/api/admin/envoy/agent-messages';
 export const BRIDGE_PREFIX = '/api/admin/envoy/bridge/';
 export const LINK_CODE_TTL_MS = 15 * 60 * 1000;
 const WORK_WINDOW_MS = 30 * 60 * 1000;
+// Bite J (the no-claim race, letter 727): how long one dispatch
+// hand-out's claim holds. A healthy turn is bounded far below this
+// (the agent loop's own abort defaults to 60 seconds; even the
+// slow PC-seat answers the watch treats as a failure shape land
+// inside ten minutes), and the claim must never outlive the work
+// window above: a runner that dies after claiming leaves the item
+// claimable again with half the window still to run, so the work
+// is re-offered while it can still be answered.
+export const WORK_CLAIM_TTL_MS = 15 * 60 * 1000;
 const MSG_COLS = 'id, channel_id, author_subject, author_kind, body, idempotency_key, created_at, metadata';
 
 let sharedPool = null;
@@ -285,6 +294,52 @@ async function insertMessage(client, { tenantId, channelId, subject, kind, body,
     [tenantId, channelId, subject, key],
   );
   return { row: again.rows[0] ?? null, replayed: true };
+}
+
+// The work claim (fix programme Bite J, sql/091; the no-claim race
+// of letter 727): one poll's hand-outs, taken atomically before the
+// work leaves the store. Each (message, seat) pair is one row of a
+// single conditional insert in the profile-sync claim's shape
+// (profile-sync.mjs claimNext — one statement decides): the claims
+// table's primary key arbitrates, so two runners polling the same
+// tenant in the same moment cannot both win a pair; the DO UPDATE
+// arm fires only when the standing claim has expired (its WHERE
+// is re-checked against the row's newest version after any lock
+// wait, so a live claim is never taken over), and a pair the
+// statement does not return is a pair this poll did not win.
+// Returns the set of won "messageId|seat" keys. Exported so the
+// shape can be pinned without a database.
+export async function claimWorkItems(client, { tenantId, claimedBy, at, items }) {
+  const wanted = new Map();
+  for (const item of items ?? []) {
+    for (const seat of item.seats ?? []) {
+      const key = `${item.messageId}|${seat}`;
+      if (!wanted.has(key)) wanted.set(key, { channelId: item.channelId, messageId: item.messageId, seat });
+    }
+  }
+  const won = new Set();
+  if (!wanted.size) return won;
+  const claimedAt = new Date(at).toISOString();
+  const expiresAt = new Date(at + WORK_CLAIM_TTL_MS).toISOString();
+  const tuples = [];
+  const vals = [];
+  for (const { channelId, messageId, seat } of wanted.values()) {
+    const base = vals.length;
+    tuples.push(`($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7})`);
+    vals.push(tenantId, channelId, messageId, seat, claimedBy, claimedAt, expiresAt);
+  }
+  const r = await client.query(
+    `insert into helmion.envoy_work_claims(tenant_id, channel_id, message_id, seat, claimed_by, claimed_at, expires_at)
+     values ${tuples.join(', ')}
+     on conflict (tenant_id, message_id, seat) do update
+       set channel_id = excluded.channel_id, claimed_by = excluded.claimed_by,
+           claimed_at = excluded.claimed_at, expires_at = excluded.expires_at
+       where helmion.envoy_work_claims.expires_at <= excluded.claimed_at
+     returning message_id, seat`,
+    vals,
+  );
+  for (const row of r.rows) won.add(`${row.message_id}|${row.seat}`);
+  return won;
 }
 
 async function writeConfig(client, tenantId, channelId, config) {
@@ -1598,6 +1653,40 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         });
       }
       for (const row of refusalRows) publish(actor.tenantId, row, publishImpl);
+      // Bite J (the no-claim race, letter 727): the computed work
+      // is not yet handed out — it is claimed first, in its own
+      // short transaction, in the refusal writes' discipline. The
+      // due computation above reads only the channel record, so
+      // without this step every poll that runs before a seat's
+      // reply lands computes the same due set and hands the same
+      // work out again — to a second runner serving the tenant
+      // (the desktop-and-laptop shape) that is a second provider
+      // invocation for one ask. The claim (claimWorkItems, one
+      // conditional insert over the poll's pairs) is the
+      // database-level arbitration: a pair another poll already
+      // holds unexpired is trimmed from its item, an item left
+      // with no seats leaves the result, and nothing else about
+      // the poll changes — the same items, the same order, the
+      // filings above untouched. Only the 20 items the result
+      // actually carries are claimed, so the cap's overflow stays
+      // claimable by the next poll exactly as it does today. A
+      // claim failure fails the poll, like a refusal-write
+      // failure: dispatch that cannot tell who holds the work
+      // must not hand it out blind.
+      if (result.work.length) {
+        const { wonKeys } = await tx(actor, async (client) => ({
+          wonKeys: [...(await claimWorkItems(client, {
+            tenantId: actor.tenantId,
+            claimedBy: actor.subject,
+            at: now(),
+            items: result.work.map((item) => ({ channelId: String(item.channel.id), messageId: String(item.message.id), seats: item.agents })),
+          }))],
+        }));
+        const won = new Set(wonKeys);
+        result.work = result.work
+          .map((item) => ({ ...item, agents: item.agents.filter((seat) => won.has(`${item.message.id}|${seat}`)) }))
+          .filter((item) => item.agents.length);
+      }
       // Envoy 504 fix, bite B: everything from here to the return
       // used to run serially on this response path — every poll paid
       // the full filing tail before it could answer, which is part

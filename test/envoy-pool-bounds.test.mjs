@@ -234,6 +234,7 @@ const channelRowFor = (id) => {
 
 function countingPool() {
   const queries = [];
+  const claims = new Map();
   const client = {
     async query(text, vals = []) {
       const sql = String(text);
@@ -272,6 +273,19 @@ function countingPool() {
         return { rows: [...rows], rowCount: rows.length };
       }
       if (sql.startsWith('insert into helmion.envoy_messages')) return { rows: [], rowCount: 1 };
+      if (sql.includes('helmion.envoy_work_claims')) {
+        // Bite J: the claim, emulated — one live claim per
+        // (tenant, message, seat); an expired claim is taken over.
+        // Vals ride 7 per row: tenant, channel, message, seat,
+        // claimedBy, claimedAt, expiresAt.
+        const won = [];
+        for (let i = 0; i + 6 < vals.length; i += 7) {
+          const key = `${vals[i]}|${vals[i + 2]}|${vals[i + 3]}`;
+          const live = claims.get(key);
+          if (!live || live <= vals[i + 5]) { claims.set(key, vals[i + 6]); won.push({ message_id: vals[i + 2], seat: vals[i + 3] }); }
+        }
+        return { rows: won, rowCount: won.length };
+      }
       return { rows: [], rowCount: 0 };
     },
     release() {},
@@ -336,8 +350,12 @@ test('one poll over 16 channels: same payload, a fraction of the round trips', a
   // the drained tail (begin + tenant stamp + one marked-assignment
   // read over every served channel + commit = 4): a constant four
   // however many channels the poll served, and nothing more when
-  // no assignment is open, which is this fixture's case.
-  assert.equal(queries.length, 13, `expected 13 round trips, got ${queries.length}: ${JSON.stringify(queries)}`);
+  // no assignment is open, which is this fixture's case — plus,
+  // since Bite J, the work claim's own short transaction when the
+  // poll carries work (begin + tenant stamp + membership + the one
+  // conditional claim insert + commit = 5): one statement decides
+  // every pair the poll hands out, however many channels it served.
+  assert.equal(queries.length, 18, `expected 18 round trips, got ${queries.length}: ${JSON.stringify(queries)}`);
   assert.equal(queries.filter((q) => q.includes('lateral')).length, 1, 'exactly one bulk channel+messages read');
   assert.equal(queries.filter((q) => q.includes('from helmion.envoy_channels') && !q.includes('lateral')).length, 0, 'no per-channel channel-row reads remain');
   assert.equal(queries.filter((q) => q.includes('limit 40') && !q.includes('lateral')).length, 0, 'no per-channel recent-message reads remain');

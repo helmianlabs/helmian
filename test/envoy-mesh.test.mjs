@@ -609,6 +609,7 @@ const G6_CHANNEL_ID = '11111111-2222-4333-8444-555555555555';
 const G6_TENANT = 'tenant-g6';
 
 function fakeConfigPool() {
+  const claims = new Map();
   const messages = [];
   let seq = 0;
   const channel = { id: G6_CHANNEL_ID, slug: 'build', title: 'Build', kind: 'team' };
@@ -635,6 +636,19 @@ function fakeConfigPool() {
         };
         messages.push(row);
         return { rows: [row], rowCount: 1 };
+      }
+      if (sql.includes('helmion.envoy_work_claims')) {
+        // Bite J: the claim, emulated — one live claim per
+        // (tenant, message, seat); an expired claim is taken over.
+        // Vals ride 7 per row: tenant, channel, message, seat,
+        // claimedBy, claimedAt, expiresAt.
+        const won = [];
+        for (let i = 0; i + 6 < vals.length; i += 7) {
+          const key = `${vals[i]}|${vals[i + 2]}|${vals[i + 3]}`;
+          const live = claims.get(key);
+          if (!live || live <= vals[i + 5]) { claims.set(key, vals[i + 6]); won.push({ message_id: vals[i + 2], seat: vals[i + 3] }); }
+        }
+        return { rows: won, rowCount: won.length };
       }
       return { rows: [], rowCount: 0 };
     },
@@ -690,6 +704,7 @@ test('mesh on fakes: set-tool-access writes the channel tool-loading setting (bi
 // One channel, one unanswered human ask that arms nothing. The
 // poll answers come from the config body the case supplies.
 function fakeWorkPool({ configBody, askMetadata = null }) {
+  const claims = new Map();
   const ask = {
     id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', channel_id: G6_CHANNEL_ID, author_subject: 'user_author',
     author_kind: 'human', body: 'What is the capital of Norway?', idempotency_key: 'g6-ask-1',
@@ -711,6 +726,19 @@ function fakeWorkPool({ configBody, askMetadata = null }) {
       if (sql.includes('from helmion.envoy_channels')) return { rows: [{ id: G6_CHANNEL_ID, slug: 'build', title: 'Build', kind: 'team' }], rowCount: 1 };
       if (sql.includes('limit 40')) return { rows: [ask], rowCount: 1 };
       if (sql.startsWith('insert into helmion.envoy_messages')) return { rows: [], rowCount: 1 };
+      if (sql.includes('helmion.envoy_work_claims')) {
+        // Bite J: the claim, emulated — one live claim per
+        // (tenant, message, seat); an expired claim is taken over.
+        // Vals ride 7 per row: tenant, channel, message, seat,
+        // claimedBy, claimedAt, expiresAt.
+        const won = [];
+        for (let i = 0; i + 6 < vals.length; i += 7) {
+          const key = `${vals[i]}|${vals[i + 2]}|${vals[i + 3]}`;
+          const live = claims.get(key);
+          if (!live || live <= vals[i + 5]) { claims.set(key, vals[i + 6]); won.push({ message_id: vals[i + 2], seat: vals[i + 3] }); }
+        }
+        return { rows: won, rowCount: won.length };
+      }
       return { rows: [], rowCount: 0 };
     },
     release() {},
@@ -813,6 +841,7 @@ test('mesh on fakes: a failed keep-loaded enumeration drops only the extra pairs
 // message rode in its own "Recent conversation" and then again in
 // full under "Reply to this message": every prompt carried it twice.
 function fakeDupPool({ configBody }) {
+  const claims = new Map();
   const earlier = {
     id: 'bbbbbbbb-1111-4222-8333-444444444444', channel_id: G6_CHANNEL_ID, author_subject: 'user_author',
     author_kind: 'human', body: 'CTXDUP earlier message, already in the channel.', idempotency_key: 'dup-earlier-1',
@@ -847,6 +876,19 @@ function fakeDupPool({ configBody }) {
       if (sql.includes('from helmion.envoy_channels')) return { rows: [{ id: G6_CHANNEL_ID, slug: 'build', title: 'Build', kind: 'team' }], rowCount: 1 };
       if (sql.includes('limit 40')) return { rows: [current], rowCount: 1 };
       if (sql.startsWith('insert into helmion.envoy_messages')) return { rows: [], rowCount: 1 };
+      if (sql.includes('helmion.envoy_work_claims')) {
+        // Bite J: the claim, emulated — one live claim per
+        // (tenant, message, seat); an expired claim is taken over.
+        // Vals ride 7 per row: tenant, channel, message, seat,
+        // claimedBy, claimedAt, expiresAt.
+        const won = [];
+        for (let i = 0; i + 6 < vals.length; i += 7) {
+          const key = `${vals[i]}|${vals[i + 2]}|${vals[i + 3]}`;
+          const live = claims.get(key);
+          if (!live || live <= vals[i + 5]) { claims.set(key, vals[i + 6]); won.push({ message_id: vals[i + 2], seat: vals[i + 3] }); }
+        }
+        return { rows: won, rowCount: won.length };
+      }
       return { rows: [], rowCount: 0 };
     },
     release() {},
@@ -997,6 +1039,7 @@ const h3Row = (over) => ({
 });
 
 function fakeHelmPool({ configBody, rows = [] }) {
+  const claims = new Map();
   const state = { rows: [...rows], inserts: [], updates: [], misses: [] };
   let insertSeq = 0;
   const client = {
@@ -1047,6 +1090,19 @@ function fakeHelmPool({ configBody, rows = [] }) {
           state.updates.push({ messageId: vals[2], mark: JSON.parse(vals[4]) });
         }
         return { rows: [], rowCount: row ? 1 : 0 };
+      }
+      if (sql.includes('helmion.envoy_work_claims')) {
+        // Bite J: the claim, emulated — one live claim per
+        // (tenant, message, seat); an expired claim is taken over.
+        // Vals ride 7 per row: tenant, channel, message, seat,
+        // claimedBy, claimedAt, expiresAt.
+        const won = [];
+        for (let i = 0; i + 6 < vals.length; i += 7) {
+          const key = `${vals[i]}|${vals[i + 2]}|${vals[i + 3]}`;
+          const live = claims.get(key);
+          if (!live || live <= vals[i + 5]) { claims.set(key, vals[i + 6]); won.push({ message_id: vals[i + 2], seat: vals[i + 3] }); }
+        }
+        return { rows: won, rowCount: won.length };
       }
       return { rows: [], rowCount: 0 };
     },
