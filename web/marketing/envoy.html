@@ -31,7 +31,6 @@
           <img class="brand-mark" src="assets/helmian-logo.png" alt="">
           <span class="brand-copy">
             <strong>Helmian</strong>
-            <small>Desktop control surface</small>
           </span>
         </a>
         <nav aria-label="Primary navigation">
@@ -39,8 +38,14 @@
           <a href="#how">How it works</a>
           <a href="#today">Envoy today</a>
           <a href="/herald">Herald</a>
-          <a href="/guard.html">Helmian Guard</a>
-          <a href="/site-guard.html">Helmian Site Guard</a>
+          <div class="nav-menu" data-nav-menu>
+            <button class="nav-menu-button" type="button" data-nav-menu-button aria-expanded="false" aria-haspopup="true">Products <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+            <div class="nav-menu-panel" data-nav-menu-panel hidden>
+              <a href="/admin/">Helmian Cloud</a>
+              <a href="/guard.html">Helmian Guard</a>
+              <a href="/site-guard.html">Helmian Site Guard</a>
+            </div>
+          </div>
           <a href="/admin/auth/login?return=/app">Sign in</a>
         </nav>
         <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme" aria-pressed="false"><svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
