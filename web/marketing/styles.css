@@ -99,9 +99,17 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .brand-copy { display: grid; line-height: 1.15; }
 .brand-copy strong { color: var(--accent); font-size: 15px; letter-spacing: 0.01em; }
 .brand-copy small { margin-top: 4px; color: var(--muted); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
-nav { display: flex; align-items: center; gap: 30px; }
+nav { display: flex; align-items: center; gap: 30px; flex-wrap: wrap; }
 nav a { color: var(--soft); font-size: 13px; font-weight: 650; text-decoration: none; }
 nav a:hover { color: var(--accent); }
+.nav-menu { position: relative; }
+.nav-menu-button { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; font: inherit; color: var(--soft); font-size: 13px; font-weight: 650; cursor: pointer; }
+.nav-menu-button:hover { color: var(--accent); }
+.nav-menu-button svg { width: 10px; height: 10px; }
+.nav-menu-panel { position: absolute; top: calc(100% + 12px); left: 50%; transform: translateX(-50%); z-index: 60; display: grid; gap: 2px; min-width: 210px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+.nav-menu-panel[hidden] { display: none; }
+.nav-menu-panel a { padding: 8px 10px; border-radius: 8px; white-space: nowrap; }
+.nav-menu-panel a:hover { background: var(--accent-panel); }
 
 .hero { display: grid; grid-template-columns: 0.92fr 1.08fr; gap: clamp(44px, 7vw, 92px); align-items: start; min-height: calc(100vh - 76px); padding-block: 56px 92px; }
 .hero > *, .interface-map > *, .mock-grid > * { min-width: 0; }
@@ -355,6 +363,8 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   .header-inner { padding-block: 14px; align-items: flex-start; flex-direction: column; }
   nav { width: 100%; gap: 2px 20px; flex-wrap: wrap; overflow-x: visible; padding-bottom: 2px; }
   nav a { padding-block: 10px; }
+  .nav-menu { width: 100%; }
+  .nav-menu-panel { position: static; transform: none; min-width: 0; margin-top: 6px; box-shadow: none; }
   .hero { padding-block: 68px 84px; }
   h1 { font-size: clamp(3rem, 15vw, 4.4rem); }
   .posture-list { display: grid; }

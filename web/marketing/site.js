@@ -55,3 +55,23 @@ for (const card of document.querySelectorAll('[data-download-key]')) {
 const year = document.querySelector('[data-current-year]');
 if (year) year.textContent = String(new Date().getFullYear());
 
+for (const menu of document.querySelectorAll('[data-nav-menu]')) {
+  const button = menu.querySelector('[data-nav-menu-button]');
+  const panel = menu.querySelector('[data-nav-menu-panel]');
+  if (!button || !panel) continue;
+  const setOpen = (open) => {
+    panel.hidden = !open;
+    button.setAttribute('aria-expanded', String(open));
+  };
+  button.addEventListener('click', () => setOpen(panel.hidden));
+  document.addEventListener('click', (event) => {
+    if (!menu.contains(event.target)) setOpen(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setOpen(false);
+  });
+  panel.addEventListener('click', (event) => {
+    if (event.target.closest('a')) setOpen(false);
+  });
+}
+
