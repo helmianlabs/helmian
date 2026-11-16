@@ -435,7 +435,10 @@ $('approvalsSignInBtn').addEventListener('click', async () => {
 });
 $('approvalsPassphrase').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('approvalsSignInBtn').click(); });
 
-refreshApprovals(false);
+// Opening the pop-up always forces a live refresh: a decision made on
+// another surface (the door page on a phone) must clear this display the
+// moment it is opened, not when the gated alarm poll next falls due.
+refreshApprovals(true);
 
 // ─── PC approvals pop-up ────────────────────────────────────────────────────
 // The Helmian app's own approvals: actions an AI asked the Executive Guard
@@ -596,7 +599,9 @@ $('pcAlertsBtn').addEventListener('click', async () => {
 });
 
 refreshPcAlertsRow();
-refreshPcApprovals(false);
+// Forced on open for the same reason as the door road above: what this
+// section shows must be the live list, never a stored one gone stale.
+refreshPcApprovals(true);
 
 // ─── Scribe door-knock ──────────────────────────────────────────────────────
 function requestNotifications() {

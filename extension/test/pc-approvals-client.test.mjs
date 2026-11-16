@@ -358,6 +358,31 @@ test('poll backs off five minutes after an error, then tries again', async () =>
   assert.equal(calls.length, 2);
 });
 
+// The pop-up's forced ask on open (stale-approval fix) only clears a stale
+// display if force breaks the error backoff too, not just the 60 s cadence:
+// after a failed poll the stored list is kept for five minutes, and an item
+// decided elsewhere in that window must still clear on a forced poll.
+test('a forced poll runs inside the error backoff and folds the fresh list', async () => {
+  const storage = seedWithItems([foldPcApproval(rawItem('a1'))]);
+  const { fetchImpl, calls } = fakeFetch([
+    { throw: new Error('offline') },
+    { status: 200, json: { approvals: [] } },
+  ]);
+  const failed = await pollPcApprovals(storage, { fetchImpl, now: NOW });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.count, 1, 'the stored item is kept while the road is down');
+  const during = await pollPcApprovals(storage, { fetchImpl, now: NOW + POLL_S * 1000 });
+  assert.equal(during.skipped, 'not-due', 'unforced polls still honour the backoff');
+  assert.equal(calls.length, 1);
+  const forced = await pollPcApprovals(storage, { fetchImpl, now: NOW + POLL_S * 1000, force: true });
+  assert.equal(forced.ok, true);
+  assert.equal(forced.count, 0, 'the forced poll fetched and the decided item is gone');
+  assert.equal(calls.length, 2);
+  const s = await getPcApprovalsState(storage);
+  assert.deepEqual(s.items, []);
+  assert.equal(s.stale, false);
+});
+
 test('badge text: blank at zero, the count, capped at 99+', () => {
   assert.equal(badgeTextFor(0), '');
   assert.equal(badgeTextFor(-3), '');
