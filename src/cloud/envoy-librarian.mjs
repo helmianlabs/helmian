@@ -206,6 +206,65 @@ export function librarianCompletionEntryFor(job) {
   return Object.freeze({ key: `completion:${messageId}`, value });
 }
 
+/**
+ * Shape one Helm search answer into its notebook entry (bite
+ * H5, DESIGN 3.3 and 4.3: every search answer with citations
+ * files into shared memory, dated, through the one pen). Pure.
+ * Returns { key, value } or null when the filing is missing
+ * the message id the key is built from or carries no answer
+ * text. The key is helm:<messageId> — one entry per answered
+ * message, and the store's insert is on-conflict-do-nothing,
+ * so filing the same answer on every poll that observes it
+ * leaves exactly one record: the first filing stands.
+ *
+ * The value carries the answer in its `fact` field — the
+ * field the recall read (bite L2) and Helm's own fact lookup
+ * (bite H4) quote — so a repeated question about the same
+ * topic is answered from this record, verbatim, citations and
+ * all, with no second search. Beside it ride the question,
+ * the structured sources (title and URL, the citations the
+ * answer names), the provider that served, who asked, when
+ * (the `at` is the filing's date), and the channel. Bounded
+ * like every librarian entry: the whole value is capped at
+ * LIBRARIAN_ENTRY_MAX_CHARS by shrinking the answer to fit,
+ * at a line boundary where one is near, so a filed answer
+ * never loses its citations to a mid-line cut while room
+ * remains.
+ */
+export function librarianHelmEntryFor(job) {
+  const messageId = String(job?.messageId ?? '');
+  if (!messageId || !String(job?.answer ?? '').trim()) return null;
+  const build = (answer) => ({
+    fact: answer,
+    question: boundedLine(job?.question ?? '', LIBRARIAN_EXCERPT_MAX_CHARS) || null,
+    sources: (Array.isArray(job?.sources) ? job.sources : [])
+      .filter((s) => s && String(s.url ?? ''))
+      .slice(0, 3)
+      .map((s) => ({ title: boundedLine(s.title ?? '', 120) || String(s.url), url: String(s.url).slice(0, 500) })),
+    provider: boundedLine(job?.provider ?? '', 40) || null,
+    channel: boundedLine(job?.channelTitle ?? '', 120) || null,
+    ...(job?.channelSlug ? { slug: String(job.channelSlug) } : {}),
+    channelId: String(job?.channelId ?? '') || null,
+    human: boundedLine(job?.humanName ?? '', 120) || String(job?.humanSubject ?? '') || null,
+    ...(job?.humanSubject ? { subject: String(job.humanSubject) } : {}),
+    at: String(job?.at ?? ''),
+  });
+  let answer = String(job?.answer ?? '').replace(/[\u0000-\u0009\u000b-\u001f\u007f]+/g, ' ').trim();
+  let value = build(answer);
+  let json = JSON.stringify(value);
+  while (json.length > LIBRARIAN_ENTRY_MAX_CHARS && answer.length) {
+    const over = json.length - LIBRARIAN_ENTRY_MAX_CHARS;
+    let cut = Math.max(0, answer.length - over - 1);
+    const newline = answer.lastIndexOf('\n', cut);
+    if (newline > cut / 2) cut = newline;
+    answer = answer.slice(0, cut).trim();
+    value = build(answer);
+    json = JSON.stringify(value);
+  }
+  if (!answer) return null;
+  return Object.freeze({ key: `helm:${messageId}`, value });
+}
+
 export const LIBRARIAN_RECALL_MAX_ENTRIES = 200;
 
 // The words that shape a recall question are not its topic —
@@ -383,6 +442,45 @@ export function createLibrarianStore(pool) {
      */
     async fileAssignmentCompletion(actor, job) {
       const entry = librarianCompletionEntryFor(job);
+      if (!entry) return { filed: false, reason: 'unkeyed' };
+      const slug = String(actor?.tenantId ?? '');
+      if (!slug) return { filed: false, reason: 'no-tenant' };
+      const context = contextFor(actor);
+      return withTenantTransaction(pool, context, async (client) => {
+        await requireActiveTenantMembership(client, context);
+        await client.query(
+          `insert into helmion.projects(slug, name, root_path) values ($1,$2,null) on conflict (slug) do nothing`,
+          [slug, slug],
+        );
+        const result = await client.query(
+          `insert into helmion.context_entries(project_slug, key, value) values ($1,$2,$3::jsonb)
+           on conflict (project_slug, key) do nothing`,
+          [slug, entry.key, JSON.stringify(entry.value)],
+        );
+        return { filed: result.rowCount === 1, alreadyFiled: result.rowCount === 0, key: entry.key };
+      });
+    },
+
+    /**
+     * File one Helm search answer into the shared notebook
+     * (bite H5), through this same store: the Librarian holds
+     * the only pen, so the search road's filing lands in the
+     * same context_entries table, under the acting tenant's
+     * slug, as the ask, fact, and completion records above —
+     * never a second write path, and never a NULL slug (an
+     * actor with no tenant id is refused before any transaction
+     * opens, the fileFact discipline). Like the completion
+     * insert, this one is on-conflict-do-nothing: a search
+     * answer is a fact about a moment, the answer post itself
+     * is idempotent under the same message id, and exactly one
+     * record — the first, with the first filing's timestamp —
+     * must stand however many polls file it. Returns { filed }
+     * for the call that wrote the record and { alreadyFiled }
+     * for every later call. Throws on failure; the fail-soft
+     * wrapper below is the mesh tail's road in.
+     */
+    async fileHelmAnswer(actor, job) {
+      const entry = librarianHelmEntryFor(job);
       if (!entry) return { filed: false, reason: 'unkeyed' };
       const slug = String(actor?.tenantId ?? '');
       if (!slug) return { filed: false, reason: 'no-tenant' };
@@ -660,6 +758,31 @@ export async function fileAssignmentCompletion(store, actor, job, { log = (...ar
       `[envoy-librarian] completion filing FAILED (key ${entry.key}, channel ${String(job?.channelId)}, `
       + `message ${String(job?.messageId)}): ${error?.message ?? error} `
       + '— the close-out stands unchanged; the shared notebook has a gap for this completion.',
+    );
+    return false;
+  }
+}
+
+/**
+ * File one Helm search answer through the librarian store, as
+ * the acting tenant identity (bite H5). Returns true when the
+ * entry stands in the notebook after the call — whether this
+ * call wrote it or an earlier poll's did. NEVER throws: the
+ * answer was posted before this runs, and a filing failure is
+ * a gap in the shared memory, announced in the log — never a
+ * failed dispatch. Mirrors fileAssignmentCompletion.
+ */
+export async function fileHelmSearchAnswer(store, actor, job, { log = (...args) => console.error(...args) } = {}) {
+  const entry = librarianHelmEntryFor(job);
+  if (!entry) return false;
+  try {
+    const result = await store.fileHelmAnswer(actor, job);
+    return result?.filed === true || result?.alreadyFiled === true;
+  } catch (error) {
+    log(
+      `[envoy-librarian] helm search filing FAILED (key ${entry.key}, channel ${String(job?.channelId)}, `
+      + `message ${String(job?.messageId)}): ${error?.message ?? error} `
+      + '— the answer stands unchanged; the shared notebook has a gap for this search answer.',
     );
     return false;
   }
