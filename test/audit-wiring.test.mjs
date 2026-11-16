@@ -628,9 +628,13 @@ test('THE CONTENT SCRIPT NAMES THE SITE ON EVERY REAL SCAN, AND NOT ON ITS PROBE
   // startPromptGuard throws before selfTest / page scan ever run.
   await loadContentScripts([
     'content/prompt-risk.js',
+    'content/sanitize.js',
+    'generated/helmion-injection.content.js',
+    'content/flags.js',
     'content/extract.js',
     'content/stream-watch.js',
     'content/ui.js',
+    'content/nudge.js',
     'content/guard.js',
   ], {
     document: doc,

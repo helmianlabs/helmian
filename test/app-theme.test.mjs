@@ -13,6 +13,7 @@ const appCss = read('../web/marketing/app/app.css');
 const envoyCss = read('../web/marketing/app/envoy.css');
 const indexHtml = read('../web/marketing/app/index.html');
 const appJs = read('../web/marketing/app/app.js');
+const themeInit = read('../web/marketing/app/theme-init.js');
 
 // The rule body for an exact selector (first match), whitespace-folded.
 function ruleBody(css, selector) {
@@ -102,9 +103,14 @@ test('both theme selects offer Light and System', () => {
 });
 
 test('the theme is set pre-paint from the same store app.js uses', () => {
-  const paint = indexHtml.indexOf('helmian.app.theme');
-  assert.ok(paint >= 0 && paint < indexHtml.indexOf('/app/app.css'), 'pre-paint script reads helmian.app.theme before the stylesheets');
-  assert.ok(indexHtml.includes("matchMedia('(prefers-color-scheme: light)')"), 'pre-paint resolves system');
+  // Since 0fc9153 the pre-paint step is the external theme-init.js: the
+  // /app CSP refuses inline scripts, so the inline copy this test used
+  // to pin never executed. The script tag must land before the
+  // stylesheets, and the script itself reads the same store app.js uses.
+  const tag = indexHtml.indexOf('/app/theme-init.js');
+  assert.ok(tag >= 0 && tag < indexHtml.indexOf('/app/app.css'), 'theme-init.js loads before the stylesheets');
+  assert.ok(themeInit.includes('helmian.app.theme'), 'pre-paint script reads helmian.app.theme');
+  assert.ok(themeInit.includes("matchMedia('(prefers-color-scheme: light)')"), 'pre-paint resolves system');
 });
 
 test("applyTheme resolves 'system' and follows OS changes", () => {
