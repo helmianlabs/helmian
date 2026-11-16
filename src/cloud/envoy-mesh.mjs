@@ -180,6 +180,37 @@ export function resolveDispatchSkills(toggles, records, dueSeats) {
   return out;
 }
 
+/**
+ * The per-part hand-out plan for a marked message (fix programme
+ * bite M3, DESIGN 2.3): the parts that may be handed out on this
+ * poll, each with its owner, in part order. A part is handed out
+ * only when its owner is named in the coordinator's record
+ * (envoy-assignments.mjs), is on the channel roster, is wanted by
+ * this poll, had joined before the message landed, and has not
+ * already answered the message — the reply record is per seat per
+ * message, so one answer settles every part that seat owns. A
+ * part the coordinator left unassigned is never in the plan, and
+ * neither is a part whose owner sits outside the roster: the due
+ * set of a marked message is the distinct owners of its surviving
+ * parts, and nothing else. The claim gate is applied by the
+ * caller, on the owners, exactly as it binds any due set. Pure.
+ */
+export function maestroPartPlan(assignment, { members = [], joined = null, answered = new Set(), messageId = '', at = 0, isWanted = () => true } = {}) {
+  const parts = Array.isArray(assignment?.parts) ? assignment.parts : [];
+  const roster = new Set((members ?? []).map((m) => String(m)));
+  const plan = [];
+  for (const part of parts) {
+    const owner = typeof part?.owner === 'string' && part.owner ? part.owner : null;
+    if (!owner) continue;
+    if (!roster.has(owner)) continue;
+    if (!isWanted(owner)) continue;
+    if (joined?.[owner] && at < Date.parse(joined[owner])) continue;
+    if (answered.has(`agent:${owner}|${messageId}`)) continue;
+    plan.push({ part, owner });
+  }
+  return plan;
+}
+
 async function readConfig(client, tenantId, channelId) {
   const r = await client.query(
     `select body from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject=$3 order by created_at desc, id desc limit 1`,
@@ -782,6 +813,19 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           if (r.author_kind === 'human') roundTurns = 0;
           else if (r.author_kind === 'agent') roundTurns += 1;
         }
+        // Maestro assignment marks in this window (fix programme
+        // bite M3): the ids of the human messages carrying a
+        // coordinator record (metadata.maestroAssignment, written
+        // by envoy-assignments.mjs) — the lookup the part-reply
+        // exclusion in the loop below reads. Row metadata arrives
+        // as jsonb (an object) or, on some roads, a string; the
+        // tolerant parse is messageOut's own discipline.
+        const markedIds = new Set();
+        for (const r of rows) {
+          let meta = r.metadata ?? null;
+          if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = null; } }
+          if (meta?.maestroAssignment) markedIds.add(String(r.id));
+        }
         // Only messages after the agent joined count.
         for (const row of rows) {
           const message = messageOut(row);
@@ -806,6 +850,21 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
     // metadata.librarianFact, set by the filing hook when it
     // posted the confirmation.
     if (message.authorKind === 'human' && message.metadata?.librarianFact) continue;
+    // Maestro assignment rows (fix programme bite M3, DESIGN
+    // 2.5): the assignment post and the part replies are work,
+    // not debate fodder. The post is Maestro-authored and is
+    // never a work source; a part reply is an owner's answer to
+    // a marked message, and routing it on would open the debate
+    // turns the 2.5 decision forbids. Both are skipped here,
+    // before any due computation, so neither is classified,
+    // screened, or handed out as a fresh ask. (In non-debate
+    // modes agent rows earn no turn anyway; this skip is what
+    // keeps Free-Willy from treating them as debate openings.
+    // The replies still count toward the round-turn tally
+    // above, exactly as any agent row does — the turn cap
+    // itself is unchanged.)
+    if (message.authorKind === 'agent' && message.metadata?.maestroAssignment) continue;
+    if (message.authorKind === 'agent' && String(row.idempotency_key ?? '').startsWith('reply:') && markedIds.has(String(row.idempotency_key).slice(6))) continue;
           const at = new Date(row.created_at).getTime();
           // Maestro always-on (Troy's ruling, 2026-11-09): desk-style
           // dispatch is how EVERY channel routes now — an unnamed
@@ -815,14 +874,37 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // maestroFollow:false must not restore the old silence.
           // A private agent room (kind 'agent') seats one agent, so
           // its crew is that agent either way.
-          let due = agentsToAnswer(message, config.agents, {
-            desk: true,
-            room: channel.kind === 'agent',
-            debateMode: config.debateMode ?? 'off',
-            roundTurns,
-            maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
-            customAgents: config.customAgents ?? [],
-          }).filter((p) => isWanted(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
+          //
+          // Maestro assignment dispatch (fix programme bite M3,
+          // DESIGN 2.3): a human message carrying the coordinator's
+          // mark is the one exception to the routing above — it is
+          // handed out per part, not per message, and its due set
+          // is the distinct owners of its parts, and nothing else:
+          // no roster fan-out, no mention routing, no debate entry.
+          // maestroPartPlan applies the roster, wanted, joined, and
+          // settled filters part by part; the claim gate below then
+          // binds the owners exactly as it binds any due set, and
+          // the surviving plan is cut to the surviving owners. A
+          // record with no usable parts is no mark at all, and the
+          // message takes the road it has always taken.
+          let partPlan = null;
+          let due;
+          const assignment = message.authorKind === 'human' && Array.isArray(message.metadata?.maestroAssignment?.parts) && message.metadata.maestroAssignment.parts.length
+            ? message.metadata.maestroAssignment
+            : null;
+          if (assignment) {
+            partPlan = maestroPartPlan(assignment, { members: config.agents, joined: config.joined ?? null, answered, messageId: message.id, at, isWanted });
+            due = [...new Set(partPlan.map(({ owner }) => owner))];
+          } else {
+            due = agentsToAnswer(message, config.agents, {
+              desk: true,
+              room: channel.kind === 'agent',
+              debateMode: config.debateMode ?? 'off',
+              roundTurns,
+              maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
+              customAgents: config.customAgents ?? [],
+            }).filter((p) => isWanted(p) && !answered.has(`agent:${p}|${message.id}`) && !(config.joined?.[p] && at < Date.parse(config.joined[p])));
+          }
           if (gate) {
             const gateAllows = (p) => {
               if (gate.has(p)) return true;
@@ -831,6 +913,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             };
             for (const p of due) if (!gateAllows(p)) withheld.set(p, state.reason ?? 'no-provider');
             due = due.filter(gateAllows);
+            if (partPlan) partPlan = partPlan.filter(({ owner }) => due.includes(owner));
           }
           if (!due.length) continue;
           // Guard spine, bites 1 + 2: the ask is classified as a typed
@@ -963,61 +1046,111 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // field, so its work item is exactly what it has always
           // been.
           const skillToggles = Array.isArray(message.metadata?.skills) ? message.metadata.skills : [];
-          let skills;
-          if (skillToggles.length) {
-            const records = await loadSkillRecords(skillToggles.map((t) => t.skillId));
-            if (records) skills = resolveDispatchSkills(skillToggles, records, due);
-          }
+          const channelFace = {
+            id: String(channel.id),
+            slug: channel.slug,
+            title: channel.title,
+            linkedToDiscord: Boolean(config.discord),
+            linkedToSlack: Boolean(config.slack),
+            linkedToGithub: Boolean(config.github),
+            debateMode: config.debateMode ?? 'off',
+            maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
+          };
+          // The rides one hand-out carries, resolved for a named
+          // seat set: the message's skills clamped to those seats,
+          // and the connector arming resolved for those seats.
           // Connector arming rides only on human asks: the
           // connections a turn may use are the AUTHOR's own, and
           // an agent-authored debate row names no person whose
           // connections they would be. The pair set is the
           // channel's standing armed set unioned with the
-          // message's own toggles, filtered to the seats due here
-          // (connector-arming-dispatch.mjs). On a channel set to
-          // keep-loaded (Mirror M3, bite G6) the author's other
-          // connected Helmian-brokered connections for the due
-          // seats join the set, armed or not; at the default
-          // (when-used, or no setting stored at all) the pair set
-          // is exactly what it has always been.
-          let armingRecords;
-          if (message.authorKind === 'human') {
-            let keepLoadedPairs = [];
-            if (config.toolAccess === 'keep-loaded') {
-              keepLoadedPairs = await loadKeepLoadedPairs(String(channel.id), message.authorSubject, due, config.customAgents ?? []);
+          // message's own toggles, filtered to the seats being
+          // handed work (connector-arming-dispatch.mjs). On a
+          // channel set to keep-loaded (Mirror M3, bite G6) the
+          // author's other connected Helmian-brokered connections
+          // for those seats join the set, armed or not; at the
+          // default (when-used, or no setting stored at all) the
+          // pair set is exactly what it has always been.
+          //
+          // An ordinary message resolves its rides once, for its
+          // whole due set, exactly as it always has. A marked
+          // message (bite M3) resolves per part, for the part's
+          // owner alone — the per-part arming DESIGN 2.5 rules:
+          // a connector armed for one seat must never be
+          // spendable by another seat's answer to a different
+          // part. The loaders behind this helper are cached per
+          // poll, so resolving per part adds no reads beyond the
+          // per-seat arming resolutions themselves.
+          const ridesFor = async (seats) => {
+            let skills;
+            if (skillToggles.length) {
+              const records = await loadSkillRecords(skillToggles.map((t) => t.skillId));
+              if (records) skills = resolveDispatchSkills(skillToggles, records, seats);
             }
-            const pairs = armingPairsForDispatch({
-              armedConnectors: config.armedConnectors,
-              messageConnectors: message.metadata?.connectors,
-              keepLoadedPairs,
-              dueProviders: due,
-              customAgents: config.customAgents ?? [],
+            let armingRecords;
+            if (message.authorKind === 'human') {
+              let keepLoadedPairs = [];
+              if (config.toolAccess === 'keep-loaded') {
+                keepLoadedPairs = await loadKeepLoadedPairs(String(channel.id), message.authorSubject, seats, config.customAgents ?? []);
+              }
+              const pairs = armingPairsForDispatch({
+                armedConnectors: config.armedConnectors,
+                messageConnectors: message.metadata?.connectors,
+                keepLoadedPairs,
+                dueProviders: seats,
+                customAgents: config.customAgents ?? [],
+              });
+              if (pairs.length) armingRecords = await loadArmingRecords(String(channel.id), message.authorSubject, pairs);
+            }
+            return { skills, armingRecords };
+          };
+          if (partPlan) {
+            // One work item per surviving part (bite M3): the
+            // item names only its owner, and its slice is only
+            // its part — the part's number, the part count, the
+            // part text, and the full job, which the prompt
+            // renders as context beside the part itself
+            // (envoy-agents.mjs agentPrompt). The message rides
+            // whole: its id is the reply's target, and its
+            // metadata carries the attachments and toggles the
+            // turn resolves. The findings and Librarian filing
+            // below still run once for the message, over the
+            // distinct owners in `due`.
+            for (const { part, owner } of partPlan) {
+              const { skills, armingRecords } = await ridesFor([owner]);
+              work.push({
+                channel: channelFace,
+                members: config.agents,
+                ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
+                ...(notebook ? { notebook } : {}),
+                ...(knowledgeBase ? { knowledgeBase } : {}),
+                ...(skills?.length ? { skills } : {}),
+                ...(armingRecords?.length ? { connectorConnections: armingRecords } : {}),
+                message,
+                slice: { n: part.n, total: assignment.parts.length, text: part.text, job: message.body },
+                action,
+                ...(evaluation ? { evaluation } : {}),
+                agents: [owner],
+                context,
+              });
+            }
+          } else {
+            const { skills, armingRecords } = await ridesFor(due);
+            work.push({
+              channel: channelFace,
+              members: config.agents,
+              ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
+              ...(notebook ? { notebook } : {}),
+              ...(knowledgeBase ? { knowledgeBase } : {}),
+              ...(skills?.length ? { skills } : {}),
+              ...(armingRecords?.length ? { connectorConnections: armingRecords } : {}),
+              message,
+              action,
+              ...(evaluation ? { evaluation } : {}),
+              agents: due,
+              context,
             });
-            if (pairs.length) armingRecords = await loadArmingRecords(String(channel.id), message.authorSubject, pairs);
           }
-          work.push({
-            channel: {
-              id: String(channel.id),
-              slug: channel.slug,
-              title: channel.title,
-              linkedToDiscord: Boolean(config.discord),
-              linkedToSlack: Boolean(config.slack),
-              linkedToGithub: Boolean(config.github),
-              debateMode: config.debateMode ?? 'off',
-              maxRoundTurns: config.maxRoundTurns ?? DEFAULT_DEBATE_TURNS,
-            },
-            members: config.agents,
-            ...(config.customAgents?.length ? { customAgents: config.customAgents } : {}),
-            ...(notebook ? { notebook } : {}),
-            ...(knowledgeBase ? { knowledgeBase } : {}),
-            ...(skills?.length ? { skills } : {}),
-            ...(armingRecords?.length ? { connectorConnections: armingRecords } : {}),
-            message,
-            action,
-            ...(evaluation ? { evaluation } : {}),
-            agents: due,
-            context,
-          });
           if (evaluation) {
             for (const p of due) {
               findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
