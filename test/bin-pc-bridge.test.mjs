@@ -9,7 +9,8 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runBridge } from '../bin/pc-bridge.mjs';
+import { runBridge, agentJobKey } from '../bin/pc-bridge.mjs';
+import { agentPrompt } from '../src/cloud/envoy-agents.mjs';
 
 function makeFakeChild() {
   const stdout = new EventEmitter();
@@ -696,6 +697,110 @@ test('agent work: an unresolvable slash command rides through unexpanded and is 
   // …and the report says NOT expanded, so the skill line cannot claim it was.
   assert.deepEqual(turn.slashExpansion, { name: 'nosuchcmd', expanded: false });
   await handle.stop();
+});
+
+// ---- Agent-work slices: forwarding + per-part job keys (bite M3b) ----
+// Bite M3 made the mesh hand a marked message out per part: one work
+// item per part, each carrying slice { n, total, text, job }. Two
+// bridge seams make that real on the PC: the slice must reach
+// agentPrompt (else the owner still reads the whole job as the message
+// it answers), and in-flight jobs must key per part (else two parts of
+// one owner on one message collide on provider|message and only the
+// first runs — after which the mesh counts the seat settled on the
+// whole message and never re-hands the second part).
+
+function serveWorkItems(cloud, itemsFor) {
+  const orig = cloud.fetchImpl;
+  const posted = [];
+  cloud.fetchImpl = async (url, opts = {}) => {
+    const u = new URL(url);
+    const json = (obj) => ({ ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) });
+    if (u.pathname === '/api/admin/envoy/channel-config') return json({ valid: true, configured: true, config: { agents: [] } });
+    if (u.pathname === '/api/admin/envoy/agent-work') return json({ valid: true, work: itemsFor(posted) });
+    if (u.pathname === '/api/admin/envoy/agent-messages') { posted.push(JSON.parse(opts.body)); return json({ valid: true, receipt: { replayed: false } }); }
+    return orig(url, opts);
+  };
+  return posted;
+}
+
+test('agent job key: an item with no slice keeps the historic key; a slice keys per part', () => {
+  const bare = { message: { id: 'm-1' } };
+  assert.equal(agentJobKey('claude', bare), 'claude|m-1');
+  assert.equal(agentJobKey('claude', { message: { id: 'm-1' }, slice: null }), 'claude|m-1');
+  assert.equal(agentJobKey('claude', { message: { id: 'm-1' }, slice: { n: 1, total: 2, text: 'a', job: 'j' } }), 'claude|m-1|part:1');
+  assert.equal(agentJobKey('claude', { message: { id: 'm-1' }, slice: { n: 2, total: 2, text: 'b', job: 'j' } }), 'claude|m-1|part:2');
+});
+
+test('agent work: a sliced item forwards its slice — the prompt answers the part, not the whole job', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-agent-slice-'));
+  const cloud = makeFakeCloud();
+  const job = 'Part one: check the weather connector. Part two: file the summary.';
+  const human = { id: '44444444-4444-4444-8444-444444444444', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', authorName: 'Troy', source: 'helmian', body: job, createdAt: 't' };
+  const slice = { n: 1, total: 2, text: 'check the weather connector', job };
+  const item = { channel: { id: 'ch-1', slug: 'team', title: 'Team' }, members: ['claude'], message: human, agents: ['claude'], context: [], slice };
+  const posted = serveWorkItems(cloud, (p) => (p.length ? [] : [item]));
+  const kids = [];
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { noAbly: true, agents: 'claude', spawnImpl: () => { const k = makeFakeChild(); kids.push(k); return k.child; } }));
+  t.after(() => handle.stop());
+  for (let i = 0; i < 50 && posted.length < 1; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].replyTo, human.id);
+  const turns = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'turn');
+  assert.equal(turns.length, 1);
+  const text = turns[0].text;
+  // The prompt is exactly agentPrompt composed WITH the slice…
+  assert.equal(text, agentPrompt({ provider: 'claude', channelTitle: 'Team', members: ['claude'], context: [], message: human, source: 'helmian', notebook: null, slice }));
+  // …which carries the slice sentence, the job as context only, and the
+  // part text as the message being answered.
+  assert.match(text, /Your slice is part 1 of 2; answer only it\./);
+  assert.match(text, /The full job this slice belongs to, for context only:/);
+  assert.ok(text.endsWith('check the weather connector'), 'the message answered is the part text');
+});
+
+test('agent work: two parts of one message for one owner are two jobs and both run', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-agent-parts-'));
+  const cloud = makeFakeCloud();
+  const job = 'Part one: alpha task. Part two: beta task.';
+  const human = { id: '55555555-5555-4555-8555-555555555555', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', authorName: 'Troy', source: 'helmian', body: job, createdAt: 't' };
+  const mk = (n, text) => ({ channel: { id: 'ch-1', slug: 'team', title: 'Team' }, members: ['claude'], message: human, agents: ['claude'], context: [], slice: { n, total: 2, text, job } });
+  // The mesh hands out every unanswered part in one response; once the
+  // owner has replied to the message at all, the seat counts as settled
+  // on it and nothing is re-handed. Both parts therefore have to run
+  // off the SAME poll — keyed per provider|message alone, the second
+  // item is skipped as a duplicate of the first and is lost for good.
+  const posted = serveWorkItems(cloud, (p) => (p.length ? [] : [mk(1, 'alpha task'), mk(2, 'beta task')]));
+  const kids = [];
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { noAbly: true, agents: 'claude', spawnImpl: () => { const k = makeFakeChild(); kids.push(k); return k.child; } }));
+  t.after(() => handle.stop());
+  for (let i = 0; i < 75 && posted.length < 2; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(posted.length, 2);
+  assert.ok(posted.every((p) => p.replyTo === human.id && p.provider === 'claude'));
+  const turns = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'turn');
+  assert.equal(turns.length, 2);
+  assert.match(turns[0].text, /Your slice is part 1 of 2; answer only it\./);
+  assert.ok(turns[0].text.endsWith('alpha task'));
+  assert.match(turns[1].text, /Your slice is part 2 of 2; answer only it\./);
+  assert.ok(turns[1].text.endsWith('beta task'));
+});
+
+test('agent work: an item with no slice composes the historic prompt, byte for byte', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-agent-noslice-'));
+  const cloud = makeFakeCloud();
+  const human = { id: '66666666-6666-4666-8666-666666666666', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', authorName: 'Troy', source: 'helmian', body: 'plain job, no parts', createdAt: 't' };
+  const item = { channel: { id: 'ch-1', slug: 'team', title: 'Team' }, members: ['claude'], message: human, agents: ['claude'], context: [] };
+  const posted = serveWorkItems(cloud, (p) => (p.length ? [] : [item]));
+  const kids = [];
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { noAbly: true, agents: 'claude', spawnImpl: () => { const k = makeFakeChild(); kids.push(k); return k.child; } }));
+  t.after(() => handle.stop());
+  for (let i = 0; i < 50 && posted.length < 1; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(posted.length, 1);
+  const turns = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'turn');
+  assert.equal(turns.length, 1);
+  // Exactly the prompt agentPrompt has always composed for this item:
+  // no slice sentence, the full body as the message answered. (The old
+  // in-flight key for this shape is pinned by the key test above.)
+  assert.equal(turns[0].text, agentPrompt({ provider: 'claude', channelTitle: 'Team', members: ['claude'], context: [], message: human, source: 'helmian', notebook: null }));
+  assert.doesNotMatch(turns[0].text, /Your slice is part/);
 });
 
 test('bridge presence claims only what this PC actually holds — never mistral/runway/ollama by default', async (t) => {
