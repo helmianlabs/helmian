@@ -316,7 +316,10 @@ test('catalog: the picks stock the seats the placement law names, as community H
   // connector-box-tenant-pair.test.mjs. The Salesforce bite adds
   // Salesforce to Source 4 the same way (+3): 134 in all. That
   // entry is pinned in connector-salesforce-tenant-pair.test.mjs.
-  assert.equal(CONNECTOR_CATALOG.length, 134);
+  // Universal stocking (Troy's order, 2026-11-15) then put every
+  // registry pick and every brokered server on all 14 seats and
+  // moved Cloudflare Docs from Source 1 to Source 4: 405 in all.
+  assert.equal(CONNECTOR_CATALOG.length, 405); // universal stocking (2026-11-15): 134 + registry picks on every seat (+49) + brokered servers on every seat (+209) + Cloudflare Docs Source 1 to Source 4 (+13 net)
   for (const seatId of LIVE_SEATS) {
     const defs = catalogEntriesForSeat(seatId);
     for (const pick of registryPicksForSeat(seatId)) {
@@ -333,15 +336,16 @@ test('catalog: the picks stock the seats the placement law names, as community H
     const ids = new Set(defs.map((d) => d.id));
     assert.equal(ids.size, defs.length, `${seatId}: no id collisions with mirrors or natives`);
   }
-  // Placement spot-pins: the weather pick rides every seat; service
-  // picks ride only the seats carrying that service's mirror today.
-  for (const seatId of LIVE_SEATS) assert.ok(catalogEntryById(seatId, 'registry-weather'), `${seatId}: weather stocked`);
-  assert.ok(catalogEntryById('claude', 'registry-atlassian'));
-  assert.equal(catalogEntryById('chatgpt', 'registry-atlassian'), null);
-  assert.ok(catalogEntryById('grok', 'registry-notion'));
-  assert.equal(catalogEntryById('gemini', 'registry-notion'), null);
-  assert.ok(catalogEntryById('claude', 'registry-stripe'));
-  assert.equal(catalogEntryById('grok', 'registry-stripe'), null);
+  // Placement spot-pins (universal stocking, Troy's order
+  // 2026-11-15): every pick rides every seat. The earlier
+  // placement law (service picks ride only the seats carrying
+  // that service's mirror) is superseded for Source 3 — the
+  // absence assertions this block used to carry are inverted.
+  for (const seatId of LIVE_SEATS) {
+    for (const entryId of ['registry-weather', 'registry-atlassian', 'registry-notion', 'registry-linear', 'registry-stripe']) {
+      assert.ok(catalogEntryById(seatId, entryId), `${seatId}: ${entryId} stocked`);
+    }
+  }
 });
 
 test('catalog: stocking the shelf changed no mirror and no native', () => {
@@ -371,5 +375,6 @@ test('refresh road: the seed/heal refresh carries the registry definitions like 
     assert.equal(def.trustLabel, 'community');
   }
   const mistral = await refresh.refreshSeat('tenant-a', 'mistral');
-  assert.deepEqual(mistral.applied, ['registry-weather', 'helmian-github'], 'a seat with no vendor directory seeds the shelf pick and the native');
+  assert.deepEqual(mistral.applied, catalogEntriesForSeat('mistral').map((d) => d.id), 'a seat with no vendor directory seeds the whole universal shelf: every registry pick, every brokered server, and the native');
+  assert.equal(mistral.applied.length, 26, 'mistral: 5 registry picks + 20 brokered servers + 1 native');
 });

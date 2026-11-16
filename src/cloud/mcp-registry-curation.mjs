@@ -23,12 +23,19 @@
 //     third-party re-hosts of the same service, and a Streamable
 //     HTTP remote over packages — a cloud shelf can only hand a
 //     person a server Helmian can actually reach.
-//   - Placement follows the shelf's own geography: a service pick
-//     rides the seats whose libraries already carry that service as
-//     a vendor mirror, so the Helmian-brokered road can later be
-//     offered next to the mirror (the mirrors themselves are not
-//     changed by this source). The weather pick is seat-agnostic
-//     shelf stock — like the Helmian natives, it rides every seat.
+//   - Placement is UNIVERSAL (Troy's order, 2026-11-15 —
+//     connectors across the board): every pick rides every seat.
+//     The earlier placement law (a service pick rides the seats
+//     whose libraries already carry that service as a vendor
+//     mirror, so the Helmian-brokered road can later be offered
+//     next to the mirror) is superseded for this source by that
+//     order: a registry server is the vendor's own published MCP
+//     server, identical for every seat, so stocking it everywhere
+//     invents nothing — the connection itself is still the
+//     person's own sign-in, per seat, at connect time. The Source
+//     1 law stands untouched: this source still never invents a
+//     vendor MIRROR for a seat (mirrors stay per-vendor data in
+//     connector-catalog.mjs).
 
 export const REGISTRY_PICKS_AS_OF = '2026-11-10';
 
@@ -85,7 +92,7 @@ export const REGISTRY_PICKS = Object.freeze([
       'search:rovo:agent-interface',
       'read:loom:agent-interface', 'write:loom:agent-interface',
     ]),
-    seats: Object.freeze(['claude']),
+    seats: 'all',
   }),
   Object.freeze({
     entryId: 'registry-notion',
@@ -100,7 +107,7 @@ export const REGISTRY_PICKS = Object.freeze([
     authMode: 'oauth',
     endpoint: 'https://mcp.notion.com/mcp',
     scopesSummary: 'Search and work with your Notion workspace',
-    seats: Object.freeze(['claude', 'chatgpt', 'grok']),
+    seats: 'all',
   }),
   Object.freeze({
     entryId: 'registry-linear',
@@ -115,7 +122,7 @@ export const REGISTRY_PICKS = Object.freeze([
     authMode: 'oauth',
     endpoint: 'https://mcp.linear.app/mcp',
     scopesSummary: 'Find and manage issues, projects, and documents',
-    seats: Object.freeze(['claude', 'grok']),
+    seats: 'all',
   }),
   Object.freeze({
     entryId: 'registry-stripe',
@@ -130,7 +137,7 @@ export const REGISTRY_PICKS = Object.freeze([
     authMode: 'oauth',
     endpoint: 'https://mcp.stripe.com',
     scopesSummary: 'Look up customers, products, and payments',
-    seats: Object.freeze(['claude']),
+    seats: 'all',
   }),
 ]);
 
