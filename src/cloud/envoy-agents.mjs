@@ -448,6 +448,61 @@ export function roleAddresseeIn(text) {
   return mention ? mention[1].toLowerCase() : null;
 }
 
+// ---------- Helm presence (fix programme bite H3, DESIGN 1.2 / 3.3) ----------
+
+// The three shapes of Helm being due, named for the answer's
+// metadata: 'alone' (@Helm named — Helm answers alone and no
+// vendor seat is handed the message), 'team' (@all — Helm
+// answers as one of the team, alongside the due seats), and
+// 'last-resort' (no vendor seat due — Helm catches the message
+// so it is not met with silence).
+export const HELM_DUE_CASES = Object.freeze(['alone', 'team', 'last-resort']);
+
+/**
+ * Whether Helm answers `message`, and how: one of HELM_DUE_CASES,
+ * or null when Helm stays silent. Pure — the caller supplies the
+ * two facts it alone knows: `vendorDue`, the vendor due set AFTER
+ * every filter and the claim gate have run (the mesh's due set at
+ * the decision point), and `answered`, whether the channel record
+ * already carries a response to this message of any answering
+ * kind (a seat's reply, a Helm answer, a guide answer, the
+ * empty-desk line). Helm is the answerer of last resort: a
+ * message somebody already answered is never answered again,
+ * whatever its due set computes to on a later poll.
+ *
+ * The law, in the order it is decided (DESIGN 1.2, 3.3):
+ *   - Only a human send can be Helm's. Agent rows are never
+ *     fresh asks for Helm, in debate mode or out of it.
+ *   - A message a role hook already owns is never Helm's: a
+ *     Maestro assignment (its parts and their settling are
+ *     Maestro's road, bites M3/M4), a guide answer, a filed fact.
+ *   - @Helm named — vocative or @mention, the roleAddresseeIn
+ *     shapes — Helm answers ALONE, whatever the vendor due set
+ *     holds: the address is the routing (precedence, 1.5).
+ *   - @all: Helm answers as one of the team, alongside whatever
+ *     seats are due — and still answers when none are, as the
+ *     one team member who is always present.
+ *   - An empty vendor due set: Helm answers as last resort.
+ *     This is where the cases the brief names land — no
+ *     connected or joined seat for the message, every due seat
+ *     withheld by the claim gate, a message naming only a role
+ *     (a lone @Maestro, an unparseable Maestro address, a
+ *     Librarian address that is not a file request: the role
+ *     hooks left them to dispatch, and dispatch found nobody).
+ *   - Vendor seats due: Helm stays silent unless named, which
+ *     the cases above have already decided.
+ */
+export function helmDue(message, { vendorDue = [], answered = false } = {}) {
+  if (String(message?.authorKind ?? '') !== 'human') return null;
+  const metadata = message?.metadata ?? null;
+  if (metadata?.maestroAssignment || metadata?.helmKb || metadata?.librarianFact) return null;
+  if (answered) return null;
+  if (roleAddresseeIn(message?.body) === 'helm') return 'alone';
+  if (mentionsIn(message?.body).all) return 'team';
+  if (!Array.isArray(vendorDue) || vendorDue.length === 0) return 'last-resort';
+  return null;
+}
+
 // The providers that can actually take an agent turn: every roster
 // provider except 'maestro'. Maestro is the human's seat; it never
 // answers, is never dispatched to, and never dispatches.
