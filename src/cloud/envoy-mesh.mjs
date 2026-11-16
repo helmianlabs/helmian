@@ -6,11 +6,19 @@
 //     POST /api/admin/envoy/channel-config               add-agent | remove-agent | link-discord | unlink-discord | link-slack | unlink-slack | set-armed-connectors | set-tool-access | (and the later actions below)
 //     GET  /api/admin/envoy/agent-work?providers=a,b     device token: messages waiting for an agent reply
 //     POST /api/admin/envoy/agent-messages               device token: post as an agent member
-//   Bridge services (Hetzner, bearer HELMIAN_ENVOY_BRIDGE_TOKEN):
+//   Bridge services (Hetzner, bearer token — see bridgeProviderTokenOk):
 //     GET  /api/admin/envoy/bridge/links
 //     POST /api/admin/envoy/bridge/confirm-link
 //     POST /api/admin/envoy/bridge/inbound
 //     GET  /api/admin/envoy/bridge/outbound?since=
+//   The same four routes also exist scoped per provider —
+//   /api/admin/envoy/bridge/discord/<route> and .../slack/<route> —
+//   where the route's own first segment names the provider whose
+//   token (HELMIAN_ENVOY_BRIDGE_TOKEN_DISCORD / _SLACK) the call
+//   must carry; the shared HELMIAN_ENVOY_BRIDGE_TOKEN stays
+//   accepted on both shapes as the rotation fallback. The unscoped
+//   routes above are the legacy shape the deployed bridges and the
+//   Discord MCP reader still use; they take the shared token only.
 //
 // Storage needs no new migration: a channel's config is an append-only
 // author_kind='system' row in helmion.envoy_messages (author CONFIG_SUBJECT,
@@ -29,7 +37,7 @@ import {
   emptyConfig, normalizeCustomHandle, normalizeProvider, parseConfig, publicConfig, sanitizeArmedConnectors, sanitizeChannelAvatar, sanitizeCustomAgent, sanitizeGithubLink, serializeConfig,
 } from './envoy-agents.mjs';
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
-import { classifySeatAsk } from './envoy-actions.mjs';
+import { classifySeatAskThread } from './envoy-actions.mjs';
 import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
@@ -92,6 +100,30 @@ export function newLinkCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = randomBytes(8);
   return [...bytes].map((b) => alphabet[b % alphabet.length]).join('');
+}
+
+// The thread tail for split-ask classification (FIX-A8, AT-4 T11
+// finding 3): the author's own messages earlier in this channel's
+// window, oldest first, as bodies. The rows are the ones this poll
+// already read for the channel — the tail costs no extra read on
+// the message path. Only the author's own rows count: no other
+// author's message can enter a tail, and the rows are one
+// channel's, so no other channel's can either. A Guard refusal row
+// is the Guard's own text, never ask material, and is skipped.
+// Exported so the shape can be pinned without a database; the
+// classifier (envoy-actions.mjs classifySeatAskThread) caps and
+// bounds what it takes from the tail — this collector only gathers.
+export function seatAskTail(rows, currentRow, message) {
+  const tail = [];
+  for (let i = rows.indexOf(currentRow) - 1; i >= 0; i -= 1) {
+    const r = rows[i];
+    if (String(r.author_subject) !== message.authorSubject || String(r.author_kind) !== message.authorKind) continue;
+    let meta = r.metadata ?? null;
+    if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = null; } }
+    if (meta?.guard) continue;
+    tail.unshift(String(r.body ?? ''));
+  }
+  return tail;
 }
 
 export function messageOut(row) {
@@ -1262,8 +1294,29 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // (null) action is never evaluated and carries no record.
           // Every typed outcome, allow or refuse, also becomes a
           // Guard finding after commit (bite 3, findingJobs below).
-          const action = classifySeatAsk(message.body);
-          const evaluation = evaluateSeatAction(action, { body: message.body, workspace: guardWorkspace });
+          // The author every finding filed from this site must
+          // name (fix-a10, closing audit AT-3b's T9 naming leg):
+          // the subject verbatim, and its source in the operator's
+          // vocabulary — describeAuthor's derivation, which
+          // messageOut already carries as message.source, with the
+          // first-party human road named as what it is: the desk.
+          // A finding carrying the pair needs no join back to the
+          // message row to tell a bridge-borne flag from a
+          // desk-typed one.
+          const authorSource = message.source === 'discord' || message.source === 'slack'
+            ? message.source
+            : (message.authorKind === 'human' ? 'desk' : message.source);
+          // Split asks (FIX-A8, AT-4 T11 finding 3): the ask is
+          // classified with its thread tail — the author's own
+          // immediately preceding messages in this channel, from
+          // the rows this poll already read. A message that types
+          // on its own is classified exactly as before; a message
+          // carrying only one half of an ask is typed by its
+          // combined meaning with the tail, and the evaluation
+          // judges the combined body, so the outcome is the one
+          // the ask would have had in a single message.
+          const { action, body: askBody } = classifySeatAskThread(message.body, seatAskTail(rows, row, message));
+          const evaluation = evaluateSeatAction(action, { body: askBody, workspace: guardWorkspace });
           if (evaluation?.verdict === 'refuse') {
             const text = guardRefusalText(evaluation);
             for (const p of due) {
@@ -1276,18 +1329,18 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
                 key: `reply:${message.id}`,
                 metadata: { guard: evaluation },
               });
-              findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
+              findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorSubject: message.authorSubject, authorSource });
             }
             // A refused ask was still dispatched — the librarian
             // files it with the Guard's decision riding along.
             if (message.authorKind === 'human') {
-              librarianJobs.push({ channelId: String(channel.id), channelSlug: channel.slug, channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, seats: due, guardDecision: evaluation?.verdict ?? null, excerpt: message.body, at: new Date(now()).toISOString() });
+              librarianJobs.push({ channelId: String(channel.id), channelSlug: channel.slug, channelTitle: channel.title, messageId: message.id, humanSubject: message.authorSubject, humanName: message.authorName ?? null, seats: due, guardDecision: evaluation?.verdict ?? null, excerpt: askBody, at: new Date(now()).toISOString() });
               // …and into the knowledge base as an open incident:
               // a refusal is a wall an ask hit; filed once per
               // refused message (the key makes replays no-ops),
               // categorized by the filing engine, awaiting the
               // review that solves or supersedes it.
-              incidentJobs.push({ key: `guard-ask:${message.id}`, title: `Guard refused an ask in ${channel.title}`, mistake: message.body, actor: message.authorSubject, source: 'guard', evidence: { channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, verdict: 'refuse' } });
+              incidentJobs.push({ key: `guard-ask:${message.id}`, title: `Guard refused an ask in ${channel.title}`, mistake: askBody, actor: message.authorSubject, source: 'guard', evidence: { channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, verdict: 'refuse' } });
             }
             continue;
           }
@@ -1333,7 +1386,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             senderKey: siteGuardSenderKey({ authorSubject: message.authorSubject, authorKind: message.authorKind }),
           });
           if (rateVerdict.tripped) {
-            siteGuardRateJobs.push({ verdict: rateVerdict, tenantId: actor.tenantId, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind });
+            siteGuardRateJobs.push({ verdict: rateVerdict, tenantId: actor.tenantId, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind, authorSubject: message.authorSubject, authorSource });
           }
           if (rateVerdict.stopped) {
             const text = siteGuardRateRefusalText(rateVerdict);
@@ -1352,7 +1405,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           }
           const screening = screenIntakeContent(message.body);
           if (screening.classes.length) {
-            siteGuardJobs.push({ screening, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind });
+            siteGuardJobs.push({ screening, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind, authorSubject: message.authorSubject, authorSource });
             if (screening.blocked) {
               const text = siteGuardRefusalText(screening);
               for (const p of due) {
@@ -1504,7 +1557,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           }
           if (evaluation) {
             for (const p of due) {
-              findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id });
+              findingJobs.push({ evaluation, seat: p, seatSubject: agentSubject(p, config.customAgents ?? []), channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorSubject: message.authorSubject, authorSource });
             }
           }
           // Librarian: file every dispatched human ask (the chat
@@ -1912,7 +1965,8 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         await setTenant(client, tenantId);
         const config = await readConfig(client, tenantId, envoyChannelId);
         if (!config?.discord || config.discord.channelId !== String(input?.discordChannelId ?? '')) throw fail(403, 'DISCORD_CHANNEL_NOT_LINKED');
-        const { row, replayed } = await insertMessage(client, { tenantId, channelId: envoyChannelId, subject, kind: 'human', body: body.slice(0, 4000), key: `discord:${messageId}` });
+        const metadata = { source: { provider: 'discord', guildId: config.discord.guildId, channelId: config.discord.channelId, channelName: config.discord.channelName } };
+        const { row, replayed } = await insertMessage(client, { tenantId, channelId: envoyChannelId, subject, kind: 'human', body: body.slice(0, 4000), key: `discord:${messageId}`, metadata });
         if (!replayed) out = row;
         return { receipt: { durable: true, replayed, message: row ? messageOut(row) : null } };
       });
@@ -1970,6 +2024,46 @@ export function bridgeTokenOk(request, expected = process.env.HELMIAN_ENVOY_BRID
   return timingSafeEqual(a, b);
 }
 
+// The providers a bridge route can be scoped to. A route's scope is
+// the first path segment under BRIDGE_PREFIX — the route itself
+// names the provider, never a claim inside the request body: a
+// bridged body's provider field is the caller's own say-so and
+// cannot be allowed to widen the credential it presented.
+export const BRIDGE_PROVIDERS = ['discord', 'slack'];
+
+export function bridgeProviderTokenEnv(provider) {
+  return provider === 'discord' ? 'HELMIAN_ENVOY_BRIDGE_TOKEN_DISCORD'
+    : provider === 'slack' ? 'HELMIAN_ENVOY_BRIDGE_TOKEN_SLACK' : null;
+}
+
+// Token gate for one bridge route. `provider` is the route's scope
+// ('discord' | 'slack'), or null on the legacy unscoped routes.
+// A scoped route accepts its provider's own token
+// (HELMIAN_ENVOY_BRIDGE_TOKEN_<PROVIDER>) and, as the rotation
+// fallback, the shared HELMIAN_ENVOY_BRIDGE_TOKEN; the other
+// provider's token is refused. An unscoped route accepts the shared
+// token only, exactly as before per-provider tokens existed. The
+// under-32-chars = not-configured rule applies to each token on
+// its own (bridgeTokenOk's null), so a scoped route whose only
+// per-provider value is short counts as not configured, and a
+// route with no usable token at all answers null -> 503 (fail
+// closed). Every candidate is compared in bridgeTokenOk's hashed
+// constant-time form, and all candidates are evaluated, so the
+// outcome does not reveal which one matched.
+export function bridgeProviderTokenOk(request, provider, env = process.env) {
+  const expected = [];
+  const own = bridgeProviderTokenEnv(provider);
+  if (own) expected.push(env[own]);
+  expected.push(env.HELMIAN_ENVOY_BRIDGE_TOKEN);
+  let configured = false;
+  let ok = false;
+  for (const value of expected) {
+    const result = bridgeTokenOk(request, value ?? '');
+    if (result !== null) { configured = true; if (result) ok = true; }
+  }
+  return configured ? ok : null;
+}
+
 // Clerk display names for Helmian humans mirrored to Discord. Cached, best effort.
 const nameCache = new Map();
 export async function clerkDisplayName(subject, { secret = process.env.CLERK_SECRET_KEY, fetchImpl = fetch } = {}) {
@@ -1999,10 +2093,16 @@ export async function handleEnvoyMeshRoute({ request, response, requestUrl, acti
   const body = async () => { try { return (await readJson(request)) ?? {}; } catch { throw fail(400, 'ENVOY_BODY_INVALID'); } };
 
   if (path.startsWith(BRIDGE_PREFIX)) {
-    const ok = bridgeTokenOk(request);
+    const rest = path.slice(BRIDGE_PREFIX.length);
+    const seg = rest.split('/');
+    // A provider-scoped route names its provider in the path itself
+    // (bridge/discord/inbound); anything else is a legacy unscoped
+    // route (bridge/inbound) and stays shared-token only.
+    const provider = seg.length > 1 && BRIDGE_PROVIDERS.includes(seg[0]) ? seg[0] : null;
+    const sub = provider ? seg.slice(1).join('/') : rest;
+    const ok = bridgeProviderTokenOk(request, provider);
     if (ok === null) { reply(503, { valid: false, code: 'ENVOY_BRIDGE_NOT_CONFIGURED' }); return true; }
     if (!ok) { reply(401, { valid: false, code: 'ENVOY_BRIDGE_UNAUTHORIZED' }); return true; }
-    const sub = path.slice(BRIDGE_PREFIX.length);
     try {
       if (request.method === 'GET' && sub === 'links') reply(200, { valid: true, ...await store.bridgeLinks() });
       else if (request.method === 'GET' && sub === 'outbound') reply(200, { valid: true, ...await store.bridgeOutbound(requestUrl.searchParams.get('since')) });
