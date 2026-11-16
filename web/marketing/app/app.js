@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry } from './app-model.mjs?v=eecf35f828d565e6';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=eecf35f828d565e6';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=eecf35f828d565e6';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=eecf35f828d565e6';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry, guardPaneApprovalsModel, approvalPopupModel } from './app-model.mjs?v=86f168ba470898d9';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=86f168ba470898d9';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=86f168ba470898d9';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=86f168ba470898d9';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -216,19 +216,95 @@ function openGuardPanel() { setPanelCollapsed('guard', false); if (narrow()) dra
 $('#mcp-find-btn').onclick = () => { $('#mcp-result').textContent = $('#mcp-find').value.trim() ? `No matches for “${$('#mcp-find').value.trim()}” — no audit has been run yet.` : 'No audit yet. Run one from the desktop app to see results here.'; };
 
 // Guard pane (Workspace): approvals waiting for a decision, newest first.
+// Both decision streams live on this shelf (Bite P13): the Envoy approvals
+// and the PC (hands) approvals the Executive Guard holds. Each waiting item
+// is a card with Approve and Disapprove buttons on it; deciding happens in
+// an in-place pop-up (openApprovalPopup below), never by leaving the
+// workspace for the full Approvals view.
+let guardPcApprovals = [];
 function renderGuardApprovals() {
   const list = document.getElementById('ew-approvals-list'); if (!list) return;
-  const pending = (state.approvals ?? []).filter((i) => !i.decision);
-  const count = document.getElementById('ew-approvals-count'); if (count) count.textContent = pending.length ? String(pending.length) : '';
+  const { cards, total } = guardPaneApprovalsModel({ cora: state.approvals ?? [], pc: guardPcApprovals });
+  const count = document.getElementById('ew-approvals-count'); if (count) count.textContent = total ? String(total) : '';
   const badge = document.getElementById('ew-guard-count');
   const crit = (state.findings ?? []).filter((f) => f.severity === 'critical' && !f.acked).length;
-  if (badge) { const n = pending.length + crit; badge.hidden = n === 0; badge.textContent = String(n); }
-  if (!pending.length) { list.replaceChildren(el('p', 'ew-note', 'Nothing waiting for a decision.')); return; }
-  list.replaceChildren(...pending.slice(0, 4).map((i) => {
-    const a = el('a', 'ew-approval'); a.href = '#approvals';
-    a.append(el('span', 'ew-approval-title', i.summary || humanAction(i.requestKind) || 'Approval needed'), el('span', 'ew-approval-time', formatTime(i.createdAt)));
-    return a;
+  if (badge) { const n = total + crit; badge.hidden = n === 0; badge.textContent = String(n); }
+  if (!cards.length) { list.replaceChildren(el('p', 'ew-note', 'Nothing waiting for a decision.')); return; }
+  list.replaceChildren(...cards.map((c) => {
+    const card = el('div', 'ew-approval-card');
+    const main = el('div', 'ew-approval-main');
+    main.append(el('span', 'ew-approval-title', c.title), el('span', 'ew-approval-time', formatTime(c.at)));
+    card.append(main);
+    if (c.kind === 'pc') {
+      const who = [c.item.tool, c.item.site, c.item.deviceId ? `asked by ${c.item.deviceId}` : ''].filter(Boolean).join(' · ');
+      if (who) card.append(el('div', 'ew-approval-meta', who));
+    }
+    if (c.canDecide) {
+      const btns = el('div', 'ew-approval-btns');
+      const ok = el('button', 'ew-btn primary sm', 'Approve'); ok.type = 'button';
+      ok.onclick = () => openApprovalPopup(c.kind, c.item);
+      const no = el('button', 'ew-btn ghost sm', 'Disapprove'); no.type = 'button';
+      no.onclick = () => openApprovalPopup(c.kind, c.item, 'disapprove');
+      btns.append(ok, no);
+      card.append(btns);
+    }
+    return card;
   }));
+}
+
+// The decision pop-up: an overlay over the current screen, in the same
+// shape as the app's other dialogs. It shows what the action is, who
+// asked, and the risk wording the server provides. Approve is two-step
+// (the card's button opens this pop-up; Confirm approve inside it is the
+// deciding tap), Disapprove decides on its one tap inside the pop-up,
+// matching the Guard extension pop-up's settled shape. Nothing here
+// navigates: the decision posts, the pop-up closes, the shelf re-reads.
+function openApprovalPopup(kind, item, intent = 'approve') {
+  const m = approvalPopupModel({ kind, item });
+  const overlay = el('div', 'dialog-overlay');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  const dialog = el('div', 'card');
+  dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true');
+  dialog.style.cssText = 'min-width:340px;max-width:92vw;padding:20px;';
+  dialog.append(el('h3', null, m.heading), el('div', null, m.what));
+  if (m.who) dialog.append(el('div', 'muted sm', m.who));
+  if (m.risk) dialog.append(el('div', 'sm', m.risk));
+  if (m.expiresAt) dialog.append(el('div', 'muted sm', `Expires ${formatTime(m.expiresAt)}`));
+  const row = el('div', 'row-btns');
+  row.style.cssText = 'display:flex;gap:8px;margin-top:16px;';
+  const no = el('button', 'btn danger sm', 'Disapprove'); no.type = 'button';
+  const cancel = el('button', 'btn ghost sm', 'Cancel'); cancel.type = 'button';
+  const yes = el('button', 'btn primary sm', 'Confirm approve'); yes.type = 'button';
+  const settle = (fn) => async () => {
+    no.disabled = true; cancel.disabled = true; yes.disabled = true;
+    await fn();
+    overlay.remove();
+  };
+  no.onclick = settle(() => popupDecision(kind, item, false));
+  yes.onclick = settle(() => popupDecision(kind, item, true));
+  cancel.onclick = () => overlay.remove();
+  row.append(no, cancel, yes);
+  dialog.append(row);
+  overlay.append(dialog);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.append(overlay);
+  (intent === 'disapprove' ? no : yes).focus();
+}
+
+// One decision from the pop-up, per stream. Envoy approvals reuse decide()
+// (it toasts and re-reads); PC approvals post to the same Executive Guard
+// decide route the extension pop-up uses, through Helmian's proxy, then
+// re-read so the card clears from the server's answer, not from hope.
+async function popupDecision(kind, item, approve) {
+  if (kind === 'pc') {
+    const out = await pcDecide(item, approve);
+    if (out.ok) toast(approve ? 'Approved. The AI can run it once.' : 'Denied. Nothing ran.', 'ok');
+    else toast(out.error || 'Could not record the decision');
+    await loadFeedData({ force: true });
+    loadPcApprovals();
+    return;
+  }
+  await decide(item, approve ? 'approve' : 'reject');
 }
 
 // ---- views ----
@@ -2004,6 +2080,17 @@ async function loadFeedData({ force = false } = {}) {
     if (ev.status === 'fulfilled') state.events = Array.isArray(ev.value.events) ? ev.value.events : [];
     if (ap.status === 'fulfilled') state.approvals = approvalsModel(ap.value, state.actor?.role).items;
     state.findings = gf.status === 'fulfilled' && Array.isArray(gf.value.findings) ? gf.value.findings : [];
+    // The Guard pane's shelf carries the PC (hands) approvals too (Bite
+    // P13), so the feed load reads that queue as well. The read is
+    // classified by the same model as the Approvals panel: only an ok
+    // answer replaces the list, so a Guard hiccup or a non-approver's 403
+    // never wipes cards the last good read put there, and a member who
+    // may not see the queue simply keeps an empty one.
+    try {
+      const pcRes = await fetch('/api/admin/guard/pc-approvals', { credentials: 'same-origin' });
+      const read = guardQueueReadModel(pcRes.status, await pcRes.text());
+      if (read.state === 'ok') guardPcApprovals = Array.isArray(read.body.approvals) ? read.body.approvals : [];
+    } catch { /* keep the last good list */ }
     const pending = state.approvals.filter((a) => !a.decision).length;
     $('#approvals-badge').hidden = pending === 0; $('#approvals-badge').textContent = String(pending);
     refreshUpcomingBadge();
@@ -2165,14 +2252,17 @@ function renderFeed() {
         }
         card.append(head, el('div', 'guard-card-title', c.title));
         if (c.body) card.append(el('div', 'muted sm', String(c.body).slice(0, 200)));
-        // Panel parity with the main feed: a critical that is a decidable
-        // approval carries its action buttons here too (owner's ask,
-        // 2026-11-08) — deciding is what takes care of those reds.
-        if (c.severity === 'critical' && c.approval?.canDecide) {
+        // A decidable approval carries its action buttons here whatever
+        // its colour: reds, and yellows too (an acknowledged approval card
+        // is remapped to warning by the feed model and used to lose its
+        // buttons here; owner's ask, 2026-11-08, extended by Bite P13).
+        // The buttons open the in-place decision pop-up; deciding is what
+        // takes care of those cards.
+        if ((c.severity === 'critical' || c.severity === 'warning') && c.approval?.canDecide) {
           const acts = el('div', 'actions');
-          const ok = el('button', 'btn primary sm', 'Approve'); const no = el('button', 'btn ghost sm', 'Reject');
-          ok.onclick = (e) => { e.stopPropagation(); decide(c.approval, 'approve'); };
-          no.onclick = (e) => { e.stopPropagation(); if (card.querySelector('.confirm')) return; const cf = el('div', 'confirm'); cf.append(el('div', null, 'Reject this request?')); const r = el('div', 'actions'); const y = el('button', 'btn danger sm', 'Yes, reject'); const n = el('button', 'btn ghost sm', 'Cancel'); y.onclick = () => decide(c.approval, 'reject'); n.onclick = () => cf.remove(); r.append(y, n); cf.append(r); card.append(cf); };
+          const ok = el('button', 'btn primary sm', 'Approve'); const no = el('button', 'btn ghost sm', 'Disapprove');
+          ok.onclick = (e) => { e.stopPropagation(); openApprovalPopup('cora', c.approval); };
+          no.onclick = (e) => { e.stopPropagation(); openApprovalPopup('cora', c.approval, 'disapprove'); };
           acts.append(ok, no);
           card.append(acts);
         }
@@ -2343,6 +2433,18 @@ function renderApprovals() {
   }));
 }
 async function loadApprovals() { await loadFeedData(); renderApprovals(); loadPcApprovals(); }
+// The one PC-approval decision call, shared by every surface that decides:
+// POST to the Executive Guard decide route through Helmian's proxy (the
+// same route the Guard extension pop-up decides through). Returns the
+// outcome instead of toasting, so each surface words it its own way.
+async function pcDecide(a, approve) {
+  try {
+    const r = await fetch('/api/admin/guard/pc-approvals/decide', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvalId: a.approvalId, approve }) });
+    const out = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(out.error || `HTTP ${r.status}`);
+    return { ok: true };
+  } catch (error) { return { ok: false, error: error.message || 'Could not record the decision' }; }
+}
 // Approve/Deny buttons for one Guard PC approval, wired to the shared decide
 // route. Used by both the Approvals panel and the Upcoming queue.
 function pcDecideButtons(a, refresh) {
@@ -2353,12 +2455,9 @@ function pcDecideButtons(a, refresh) {
     b.onclick = async () => {
       if (approve && !confirm(`Approve on your PC: ${a.summary || a.tool}?`)) return;
       b.disabled = true;
-      try {
-        const r = await fetch('/api/admin/guard/pc-approvals/decide', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvalId: a.approvalId, approve }) });
-        const out = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(out.error || `HTTP ${r.status}`);
-        toast(approve ? 'Approved. The AI can run it once.' : 'Denied. Nothing ran.', 'ok');
-      } catch (error) { toast(error.message || 'Could not record the decision'); }
+      const out = await pcDecide(a, approve);
+      if (out.ok) toast(approve ? 'Approved. The AI can run it once.' : 'Denied. Nothing ran.', 'ok');
+      else toast(out.error);
       refresh();
     };
     row.append(b);
@@ -2517,7 +2616,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=eecf35f828d565e6'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=86f168ba470898d9'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2531,9 +2630,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  integrationsMod ??= await import('./integrations-view.mjs?v=eecf35f828d565e6');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=eecf35f828d565e6');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=eecf35f828d565e6');
+  integrationsMod ??= await import('./integrations-view.mjs?v=86f168ba470898d9');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=86f168ba470898d9');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=86f168ba470898d9');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2730,7 +2829,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=eecf35f828d565e6')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=86f168ba470898d9')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3606,7 +3705,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=eecf35f828d565e6');
+  workspaceModule ??= await import('./envoy-workspace.js?v=86f168ba470898d9');
   // The feed load rides along unawaited (boot-load fix, 2026-11-11):
   // it used to be awaited here, so the whole workspace mount — the
   // Desktop view's first paint — waited on the slowest of the events,
@@ -4164,7 +4263,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=eecf35f828d565e6');
+    const mod = await import('./maestro-activation.mjs?v=86f168ba470898d9');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }
