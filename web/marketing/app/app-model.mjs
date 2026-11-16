@@ -141,6 +141,56 @@ export function guardQueueReadModel(status, text) {
   return { state: 'unreadable', message: GUARD_QUEUE_UNREADABLE };
 }
 
+// ---- Guard pane approvals: both decision streams on one shelf (Bite P13) ----
+// The workspace Guard pane used to list only the Envoy (Cora) approvals, as
+// bare links to the full Approvals view, and the PC (hands) approvals that
+// the Executive Guard holds never appeared there at all. This model merges
+// the two pending streams into the pane's card list: newest first, capped
+// for the shelf (the section's total still counts every waiting item, so
+// the badge and the count never hide a decision). A card is a descriptor;
+// the view formats times and wires the buttons. Cora cards can be decided
+// only when the item itself says so (canDecide from approvalsModel); PC
+// cards come from the approver-only queue, so reaching the list at all is
+// the permission, and every PC card carries its buttons.
+export function guardPaneApprovalsModel({ cora = [], pc = [] } = {}) {
+  const cards = [];
+  for (const i of Array.isArray(cora) ? cora : []) {
+    if (!i || i.decision) continue;
+    cards.push({ key: `cora:${i.requestReceiptId ?? ''}`, kind: 'cora', title: i.summary || humanAction(i.requestKind) || 'Approval needed', at: i.createdAt || null, canDecide: Boolean(i.canDecide), item: i });
+  }
+  for (const a of Array.isArray(pc) ? pc : []) {
+    if (!a || (a.status && a.status !== 'pending')) continue;
+    cards.push({ key: `pc:${a.approvalId ?? ''}`, kind: 'pc', title: a.summary || a.tool || 'PC action', at: a.createdAt || null, canDecide: true, item: a });
+  }
+  cards.sort((x, y) => new Date(y.at || 0) - new Date(x.at || 0));
+  return { cards: cards.slice(0, 4), total: cards.length };
+}
+
+// The in-place decision pop-up's words, from the server's own fields. What
+// the action is, who asked, and the risk wording the server provides: for a
+// PC approval that is the Guard's reason line; for an Envoy approval the
+// standing words are that the decision is recorded with the decider's name
+// (the same sentence the Approvals view's confirm step has always shown).
+export function approvalPopupModel({ kind, item } = {}) {
+  const it = item ?? {};
+  if (kind === 'pc') {
+    return {
+      heading: 'Decide this PC action',
+      what: it.summary || it.tool || 'PC action',
+      who: [it.tool, it.site, it.deviceId ? `asked by ${it.deviceId}` : ''].filter(Boolean).join(' · '),
+      risk: it.reason || '',
+      expiresAt: it.expiresAt || null,
+    };
+  }
+  return {
+    heading: 'Decide this request',
+    what: it.summary || humanAction(it.requestKind) || 'Approval needed',
+    who: humanAction(it.requestKind),
+    risk: 'This decision is recorded with your name.',
+    expiresAt: null,
+  };
+}
+
 export function formatTime(value, opts = { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) { const d = new Date(value); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString([], opts); }
 export function clockTime(value) { return formatTime(value, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); }
 
