@@ -636,3 +636,55 @@ test('helm identity: configs drop it, teams never carry it, due sets never conta
   // Free-Willy: a Helm-authored message routes no peers.
   assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:helm', body: '@all go' }, roster, { debateMode: 'free-willy' }), []);
 });
+
+test('librarian identity: a reserved role handle, never a vendor provider (bite L1)', () => {
+  // The handle resolves, so @librarian parses to the librarian
+  // addressee and the 'agent:librarian' subject the filing
+  // confirmations post under can be built and described...
+  assert.equal(normalizeProvider('librarian'), 'librarian');
+  assert.equal(normalizeProvider('@Librarian'), 'librarian');
+  assert.equal(AGENT_NAMES.librarian, 'Librarian');
+  assert.equal(agentSubject('librarian'), 'agent:librarian');
+  assert.deepEqual(describeAuthor('agent:librarian', 'agent'), { name: 'Librarian', source: 'helmian', provider: 'librarian' });
+  assert.deepEqual(mentionsIn('hey @librarian, file this').providers, ['librarian']);
+  assert.deepEqual(mentionsIn('Librarian: file this fact').providers, [], 'a bare vocative is not an @mention in this bite');
+  // ...but the Librarian is not a provider: not in the provider
+  // list, not among the answering providers, not an engine a
+  // custom agent may run on, and no prompt is ever composed for
+  // it — the pen writes through the store, never a runner turn.
+  assert.ok(!AGENT_PROVIDERS.includes('librarian'));
+  assert.ok(!ANSWERING_PROVIDERS.includes('librarian'));
+  assert.equal(normalizeEngine('librarian'), null);
+  assert.throws(
+    () => agentPrompt({ provider: 'librarian', channelTitle: 'x', members: ['librarian'], message: { body: 'q' } }),
+    /librarian is not an agent provider/);
+  // The handle is reserved: no custom agent may take it.
+  assert.equal(normalizeCustomHandle('librarian'), null);
+  assert.equal(normalizeCustomHandle('@Librarian'), null);
+  assert.equal(sanitizeCustomAgent({ handle: 'librarian', name: 'Librarian', provider: 'claude' }), null);
+});
+
+test('librarian identity: configs drop it, teams never carry it, due sets never contain it', () => {
+  const c = emptyConfig();
+  c.agents = ['claude', 'librarian'];
+  const back = parseConfig(serializeConfig(c));
+  assert.deepEqual(back.agents, ['claude'], 'a config naming librarian reads back without it');
+  assert.deepEqual(publicConfig(back).agents.map((a) => a.provider), ['claude']);
+  const roster = ['claude', 'librarian', 'gemini'];
+  // Ordinary channel: naming the Librarian alone earns nobody a
+  // vendor turn (the filing hook owns the address); naming a seat
+  // beside the Librarian routes only the seat.
+  assert.deepEqual(agentsToAnswer(human('@librarian file this fact'), roster), []);
+  assert.deepEqual(agentsToAnswer(human('@claude and @librarian: go'), roster), ['claude']);
+  // Desk: an unnamed dispatch reaches the team, and the team
+  // never contains the Librarian; a Librarian-only dispatch
+  // reaches no vendor seat.
+  assert.deepEqual(agentsToAnswer(human('build the page'), roster, { desk: true }), ['claude', 'gemini']);
+  assert.deepEqual(agentsToAnswer(human('@librarian file this fact'), roster, { desk: true }), []);
+  assert.deepEqual(agentsToAnswer(human('@all status'), roster, { desk: true }), ['claude', 'gemini']);
+  // A room seats nobody when its only member would be the Librarian.
+  assert.deepEqual(agentsToAnswer(human('hello'), ['librarian'], { room: true }), []);
+  // Free-Willy: a Librarian-authored message (a filing
+  // confirmation) routes no peers — the desk never debates it.
+  assert.deepEqual(agentsToAnswer({ authorKind: 'agent', authorSubject: 'agent:librarian', body: '@all go' }, roster, { debateMode: 'free-willy' }), []);
+});
