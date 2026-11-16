@@ -34,10 +34,10 @@ import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
 import { screenIntakeContent, siteGuardRefusalText, siteGuardStopRecord, ingestSiteGuardFindings, createSiteGuardRateLimiter, siteGuardSenderKey, siteGuardRateRefusalText, siteGuardRateStopRecord, ingestSiteGuardRateFinding } from './site-guard.mjs';
-import { readNotebookBlock } from './envoy-notebook.mjs';
+import { readNotebookBlock, readNotebookEntries } from './envoy-notebook.mjs';
 import { createLibrarianStore, deriveChannelName, fileAssignmentCompletion, fileDispatchAsk, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
 import { settleMaestroAssignmentsIfNeeded } from './envoy-assignments.mjs';
-import { fileHelmUnansweredQuestion, helmAnswerSpec, markHelmOnlyMessage } from './envoy-helm.mjs';
+import { composeHelmStateAnswer, fileHelmUnansweredQuestion, helmAnswerSpec, helmFactAnswer, helmPendingGuideStep, isHelmStateAsk, markHelmOnlyMessage, notebookBlockers, oldestUnsettledAssignmentPart, readHelmConnectorStates } from './envoy-helm.mjs';
 import { createSkillLibraryStore } from './skill-library.mjs';
 import { armingPairsForDispatch, resolveDispatchArming, resolveKeepLoadedPairs } from './connector-arming-dispatch.mjs';
 import { createRunnerPresenceStore } from './runner-presence.mjs';
@@ -304,7 +304,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, keepLoadedReadImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null, helmLogImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, keepLoadedReadImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null, helmLogImpl = null, helmEntriesReadImpl = null, helmConnectorReadImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -718,6 +718,73 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           return [];
         }
       };
+      // Helm's grounded records (fix programme bite H4, DESIGN
+      // 3.3): the reads the composer (envoy-helm.mjs) answers
+      // from, loaded lazily in the notebook's discipline — at
+      // most once per poll, on the pool outside the dispatch
+      // transaction, fail-soft in both layers — and ONLY when a
+      // Helm answer is actually composed in this poll: a poll
+      // that answers nothing through Helm, or answers only a
+      // general question (whose body is the static availability
+      // line), touches none of them, so the poll's round trips
+      // are exactly what they were before this bite. The filed
+      // entries and the open incidents are per-poll (tenant
+      // records); the connector states are per (channel, asker),
+      // because connections are the asker's own, the arming
+      // rule. A failed entries read returns null, not an empty
+      // list: Helm must not claim "nothing filed" on a read
+      // that never happened (envoy-notebook.mjs's distinction).
+      let helmIncidentsPromise = null;
+      const loadHelmOpenIncidents = () => {
+        if (!helmIncidentsPromise) {
+          helmIncidentsPromise = (async () => {
+            const log = helmLogImpl ?? ((...args) => console.error(...args));
+            try {
+              const store = librarianImpl ?? createLibrarianStore(pool);
+              if (typeof store?.lookupIncidents !== 'function') return [];
+              const all = await store.lookupIncidents(actor, { limit: 100 });
+              return (Array.isArray(all) ? all : []).filter((incident) => incident?.status === 'open');
+            } catch (error) {
+              log(`[envoy-helm] open-incident read FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — Helm's state answers name no incidents this poll; dispatch is unchanged.`);
+              return [];
+            }
+          })();
+        }
+        return helmIncidentsPromise;
+      };
+      let helmEntriesPromise = null;
+      const loadHelmEntries = () => {
+        if (!helmEntriesPromise) {
+          helmEntriesPromise = (async () => {
+            const log = helmLogImpl ?? ((...args) => console.error(...args));
+            try {
+              return await (helmEntriesReadImpl ?? ((p, t) => readNotebookEntries(p, t, { log })))(pool, actor.tenantId);
+            } catch (error) {
+              log(`[envoy-helm] filed-entries read FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — Helm answers without the filed entries this poll; dispatch is unchanged.`);
+              return null;
+            }
+          })();
+        }
+        return helmEntriesPromise;
+      };
+      const helmConnectorCache = new Map();
+      let helmConnectorReadFailed = false;
+      const loadHelmConnectorStates = async (channelId, personId, pairs) => {
+        if (helmConnectorReadFailed || !pairs?.length) return [];
+        const cacheKey = `${channelId}|${personId}`;
+        if (helmConnectorCache.has(cacheKey)) return helmConnectorCache.get(cacheKey);
+        const log = helmLogImpl ?? ((...args) => console.error(...args));
+        try {
+          const records = await (helmConnectorReadImpl ?? ((input) => readHelmConnectorStates({ pool, ...input })))({ tenantId: actor.tenantId, personId, pairs });
+          const out = Array.isArray(records) ? records : [];
+          helmConnectorCache.set(cacheKey, out);
+          return out;
+        } catch (error) {
+          helmConnectorReadFailed = true;
+          log(`[envoy-helm] connector state read FAILED for tenant ${actor.tenantId}: ${error?.message ?? error} — Helm's state answers name no connectors this poll; dispatch is unchanged.`);
+          return [];
+        }
+      };
       // Envoy 504 fix, bite C: the poll's reads ride ONE short
       // transaction, and no transaction is held open across the
       // dispatch computation. The read below fetches the claim-gate
@@ -820,6 +887,59 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         return { state, seating };
       });
       const gate = claimGateFor(state);
+      // Helm's grounded answer (fix programme bite H4, DESIGN
+      // 3.3): compose the body for one message helmDue gave to
+      // Helm, from the records the loaders above read. A state
+      // ask composes the three lines from the poll's own facts —
+      // the claim-gate state from the read transaction, the
+      // notebook block and the open incidents through their lazy
+      // loaders, the channel's armed connectors through the
+      // connector library read, and the channel window's own
+      // open work (the oldest unsettled assignment part, the
+      // asker's pending guide step) — and files no miss: the
+      // question was answered. Any other question takes the fact
+      // road (envoy-helm.mjs's helmFactAnswer): a filed entry
+      // quoted verbatim, the nothing-filed line, or the
+      // availability line, with the miss filing the composer
+      // decides. Returns { body, fileMiss }.
+      const helmAnswerFor = async ({ channel, config, customByHandle, rows, answered, message }) => {
+        const question = String(message.body ?? '');
+        if (!isHelmStateAsk(question)) {
+          return helmFactAnswer(await loadHelmEntries(), question);
+        }
+        const nameOf = (p) => customByHandle?.get(p)?.name || AGENT_NAMES[p] || p;
+        let withheldNames = [];
+        if (gate) {
+          const gateAllows = (p) => {
+            if (gate.has(p)) return true;
+            const c = customByHandle?.get(p);
+            return Boolean(c && gate.has(c.provider));
+          };
+          withheldNames = (config.agents ?? [])
+            .filter((p) => p !== 'maestro' && p !== 'helm' && p !== 'librarian' && !gateAllows(p))
+            .map(nameOf);
+        }
+        const [notebook, openIncidents, connectors] = await Promise.all([
+          loadNotebook(),
+          loadHelmOpenIncidents(),
+          config.armedConnectors?.length
+            ? loadHelmConnectorStates(String(channel.id), message.authorSubject, config.armedConnectors)
+            : Promise.resolve([]),
+        ]);
+        return {
+          body: composeHelmStateAnswer({
+            runningNames: (state.connectedProviders ?? []).map((p) => AGENT_NAMES[p] || p),
+            runnerPresent: state.hasRunner === true,
+            connectors,
+            blockers: notebookBlockers(notebook),
+            openIncidents,
+            withheldNames,
+            unsettledPart: oldestUnsettledAssignmentPart(rows, answered),
+            pendingGuideStep: helmPendingGuideStep(rows, { senderSubject: message.authorSubject, beforeId: message.id }),
+          }),
+          fileMiss: false,
+        };
+      };
       for (const entry of seating) {
         const { config, customByHandle, isWanted } = entry;
         // The old per-channel read's discipline, in its order and
@@ -918,11 +1038,14 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
     // stands beside the mark; should it ever be missing from
     // this window (an answer older than the window's edge),
     // Helm answers here rather than leaving the mark as
-    // silence, and the question files to the miss queue with it.
+    // silence, composing the grounded answer (bite H4) and
+    // filing to the miss queue when the composer says the
+    // question went unanswered.
     if (message.authorKind === 'human' && message.metadata?.helmOnly) {
       if (!respondedTo.has(String(message.id))) {
-        insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: 'alone' }));
-        helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
+        const helmAnswer = await helmAnswerFor({ channel, config, customByHandle, rows, answered, message });
+        insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: 'alone', body: helmAnswer.body }));
+        if (helmAnswer.fileMiss) helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
       }
       continue;
     }
@@ -1000,25 +1123,29 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // not in silence. 'alone' (@Helm named) ends the
           // vendor road here, whatever the due set computed to:
           // no work item, no Guard evaluation, no screening —
-          // the deterministic line is the message's only answer,
+          // the composed answer is the message's only answer,
           // and the human message is marked helmOnly in the same
           // write. 'last-resort' (no vendor seat due) is Helm
           // catching a message every other road left unanswered.
           // Both post Helm's answer as an insert spec (it rides
           // the refusal-writes transaction below and publishes
-          // with it) and file the question to the miss queue in
-          // the tail. 'team' (@all) is remembered in `helm` and
-          // posts beside the work items further down, once the
-          // ask has passed the same screens a seat's turn
-          // passes — a refused or stopped ask gets the refusal
-          // in the seats' names and nothing from Helm.
+          // with it); the question files to the miss queue in
+          // the tail only when the composer (bite H4) left it
+          // unanswered — a state ask answered from records and a
+          // fact quoted from the notebook file nothing. 'team'
+          // (@all) is remembered in `helm` and posts beside the
+          // work items further down, once the ask has passed the
+          // same screens a seat's turn passes — a refused or
+          // stopped ask gets the refusal in the seats' names and
+          // nothing from Helm.
           const helm = message.authorKind === 'human'
             ? helmDue(message, { vendorDue: due, answered: respondedTo.has(String(message.id)) })
             : null;
           if (helm === 'alone' || helm === 'last-resort') {
-            insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: helm }));
+            const helmAnswer = await helmAnswerFor({ channel, config, customByHandle, rows, answered, message });
+            insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: helm, body: helmAnswer.body }));
             if (helm === 'alone') helmMarkSpecs.push({ channelId: String(channel.id), messageId: message.id, senderSubject: message.authorSubject });
-            helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
+            if (helmAnswer.fileMiss) helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
             continue;
           }
           if (!due.length) continue;
@@ -1265,12 +1392,13 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // line. Helm's answer posts from this same computation
           // (the channel record will show it ahead of the seats'
           // replies, which arrive later through their runners;
-          // DESIGN 3.5 accepts that ordering), and the question
-          // files to the miss queue beside it, like every Helm
-          // answer until the composer (bite H4) lands.
+          // DESIGN 3.5 accepts that ordering), composed from
+          // records (bite H4) and filed to the miss queue only
+          // when the composer left the question unanswered.
           if (helm === 'team') {
-            insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: 'team' }));
-            helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
+            const helmAnswer = await helmAnswerFor({ channel, config, customByHandle, rows, answered, message });
+            insertSpecs.push(helmAnswerSpec({ tenantId: actor.tenantId, channelId: String(channel.id), message, due: 'team', body: helmAnswer.body }));
+            if (helmAnswer.fileMiss) helmMissJobs.push({ channelId: String(channel.id), messageId: message.id, humanSubject: message.authorSubject, question: message.body });
           }
           if (evaluation) {
             for (const p of due) {
