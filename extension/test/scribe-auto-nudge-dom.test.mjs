@@ -206,3 +206,26 @@ test('0.6.8 waits for a Send button that enables a moment after the text lands',
   const r = await N.tryNudge(doc, msg({ sendWaitMs: 1000 }));
   assert.equal(r.reason, 'sent', JSON.stringify(r)); assert.ok(clicked, 'clicked once enabled');
 });
+
+// 2026-11-12, live (signed out, Chromium 156): grok.com's composer form is now
+// form[data-composer=""] with Send = button[data-testid=chat-submit][aria-label=Send];
+// chatgpt.com (signed out) uses textarea[name=prompt]#mobile-composer-prompt. The old
+// adapters refused Grok ("lacks the real chat composer signature") and could not find
+// ChatGPT's composer ("composer not found", site paused 6 h), so neither was nudged.
+test('2026-11 live DOM: Grok form[data-composer=""] + chat-submit, and ChatGPT textarea[name=prompt], both nudge', async () => {
+  for (const pathname of ['/', '/c/0b1c2d3e-aaaa-bbbb-cccc-1234567890ab']) {
+    const c = element('div', { class: 'tiptap ProseMirror', contenteditable: 'true', role: 'textbox', 'aria-label': 'Message Grok' });
+    const b = element('button', { type: 'submit', 'aria-label': 'Send', 'data-testid': 'chat-submit' });
+    let clicked = false; b.click = () => { clicked = true; c.textContent = ''; };
+    const page = [element('form', { 'data-composer': '', 'data-composer-surface': 'true' }, [element('div', {}, [element('div', { 'data-testid': 'chat-input' }, [element('div', {}, [c])])]), b])];
+    const { doc, N } = await loadNudge('grok.com', page, { pathname });
+    const r = await N.tryNudge(doc, msg());
+    assert.equal(r.reason, 'sent', JSON.stringify(r)); assert.ok(clicked, 'Grok Send clicked');
+  }
+  const t = element('textarea', { id: 'mobile-composer-prompt', name: 'prompt', 'aria-label': 'Chat with ChatGPT' }); t.value = '';
+  const s = element('button', { type: 'submit', 'aria-label': 'Send message' });
+  let sent = false; s.click = () => { sent = true; t.value = ''; };
+  const { doc, N } = await loadNudge('chatgpt.com', [element('form', { action: '/unauth-mweb/conversation' }, [element('div', { 'data-composer-editor-host': '' }, [t]), s])]);
+  const r = await N.tryNudge(doc, msg());
+  assert.equal(r.reason, 'sent', JSON.stringify(r)); assert.ok(sent, 'ChatGPT Send clicked');
+});
