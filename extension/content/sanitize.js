@@ -139,9 +139,31 @@
     }).join(', ');
   }
 
+  // Type and count only, in plain words, for the approval box ("Email
+  // address (2)"). Never the values: this goes on screen.
+  var LABELS = {
+    private_key: 'Private key', bearer_token: 'Access token', api_key: 'API key',
+    secret_assignment: 'Password or secret', jwt: 'Signed token (JWT)',
+    connection_string: 'Database password', credit_card: 'Card number', email: 'Email address',
+    ssn: 'Social Security number', phone: 'Phone number', ipv4: 'IP address',
+  };
+
+  function summarize(result) {
+    var counts = (result && result.counts) || {};
+    var merged = {};
+    var order = [];
+    Object.keys(counts).forEach(function each(type) {
+      var label = LABELS[type] || type;
+      if (!merged[label]) { merged[label] = 0; order.push(label); }
+      merged[label] += counts[type];
+    });
+    return order.map(function line(label) { return label + ' (' + merged[label] + ')'; });
+  }
+
   root.HelmionSanitize = {
     scan: scan,
     describe: describe,
+    summarize: summarize,
     TYPES: RULES.map(function t(rule) { return rule.type; }).filter(function u(t, i, a) { return a.indexOf(t) === i; }),
   };
 }(typeof globalThis !== 'undefined' ? globalThis : this));
