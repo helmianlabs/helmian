@@ -26,16 +26,22 @@
   // NOT yet verified against the live sites' current DOM.
   var ADAPTERS = {
     'chatgpt.com': {
-      composer: ['#prompt-textarea[contenteditable="true"]', 'div#prompt-textarea', 'textarea#prompt-textarea', 'form textarea'],
+      composer: ['#prompt-textarea[contenteditable="true"]', 'div#prompt-textarea', 'textarea#prompt-textarea'],
       send: ['button[data-testid="send-button"]', '#composer-submit-button', 'button[aria-label="Send prompt"]', 'button[aria-label*="Send" i]'],
     },
     'claude.ai': {
       composer: ['div.ProseMirror[contenteditable="true"]', '[data-testid="chat-input"][contenteditable="true"]', 'fieldset [contenteditable="true"]'],
       send: ['button[aria-label="Send message"]', 'button[aria-label*="Send" i]'],
     },
+    // Grok (verified 2026-10-29 on grok.com/, signed out, Chromium 141): the real chat
+    // composer is a TipTap/ProseMirror div inside div[data-testid="chat-input"] inside
+    // form[data-composer="true"]; Submit is button[type=submit][aria-label="Submit"] in
+    // that form. 0.6.8: this exact signature is REQUIRED. The old 'form textarea'
+    // fallback matched any app on grok.com (the Grok Bot app false positive).
     'grok.com': {
-      composer: ['form textarea', 'div.ProseMirror[contenteditable="true"]', 'form [contenteditable="true"]'],
-      send: ['form button[type="submit"]', 'button[aria-label="Submit"]', 'button[aria-label*="Send" i]'],
+      signature: 'form[data-composer="true"] [data-testid="chat-input"] [contenteditable="true"]',
+      composer: ['form[data-composer="true"] [data-testid="chat-input"] div.ProseMirror[contenteditable="true"]', 'form[data-composer="true"] [data-testid="chat-input"] [contenteditable="true"]'],
+      send: ['form[data-composer="true"] button[type="submit"][aria-label="Submit"]', 'form[data-composer="true"] button[type="submit"]'],
     },
     // Mistral Le Chat (verified 2026-10-29 on chat.mistral.ai/chat, signed out, Chromium 141):
     // ProseMirror div[contenteditable] (placeholder "Ask anything"); button[type=submit][aria-label="Send"].
@@ -58,11 +64,28 @@
 
   var state = { lastUserInputAt: Date.now(), pending: null, busy: false };
 
-  function siteKey(host) {
+  // 0.6.7: exact host + real chat path only; never substring/subdomain matching.
+  // Keep in sync with CHAT_PAGES in background/defaults.js (a test checks).
+  var CHAT_PAGES = {
+    'chatgpt.com': { hosts: ['chatgpt.com'], paths: ['^/$', '^/c/[A-Za-z0-9-]+/?$', '^/g/[A-Za-z0-9-]+(/c/[A-Za-z0-9-]+)?/?$'] },
+    'claude.ai': { hosts: ['claude.ai'], paths: ['^/$', '^/new/?$', '^/chat/[A-Za-z0-9-]+/?$'] },
+    'grok.com': { hosts: ['grok.com'], paths: ['^/$', '^/c/[A-Za-z0-9-]+/?$', '^/chat/[A-Za-z0-9-]+/?$'] },
+    'gemini.google.com': { hosts: ['gemini.google.com'], paths: ['^(/u/[0-9]+)?/app(/[A-Za-z0-9]+)?/?$', '^(/u/[0-9]+)?/gem/[A-Za-z0-9-]+(/[A-Za-z0-9]+)?/?$'] },
+    'perplexity.ai': { hosts: ['www.perplexity.ai', 'perplexity.ai'], paths: ['^/$', '^/search/[A-Za-z0-9._-]+/?$'] },
+    'chat.mistral.ai': { hosts: ['chat.mistral.ai'], paths: ['^/chat(/[A-Za-z0-9-]+)?/?$'] },
+  };
+  function siteKey(host, pathname) {
     var h = String(host || '').toLowerCase();
-    for (var k in ADAPTERS) if (h === k || h.slice(-(k.length + 1)) === '.' + k) return k;
+    for (var k in CHAT_PAGES) {
+      if (CHAT_PAGES[k].hosts.indexOf(h) === -1) continue;
+      if (pathname == null) return null; // no path known: refuse
+      var p = String(pathname);
+      for (var i = 0; i < CHAT_PAGES[k].paths.length; i += 1) if (new RegExp(CHAT_PAGES[k].paths[i]).test(p)) return ADAPTERS[k] ? k : null;
+      return null;
+    }
     return null;
   }
+  function locOf(doc) { return (doc && doc.location) || root.location || {}; }
 
   function visible(el) {
     if (!el) return false;
@@ -91,9 +114,10 @@
   }
 
   function probe(doc, opts) {
-    var site = siteKey((doc.location && doc.location.hostname) || (root.location && root.location.hostname));
+    var loc = locOf(doc); var site = siteKey(loc.hostname, loc.pathname);
     var adapter = site && ADAPTERS[site];
-    if (!adapter) return { ok: false, reason: 'dom-mismatch', detail: 'no adapter for this site' };
+    if (!adapter) return { ok: false, reason: 'refused', detail: 'not a supported AI chat page' };
+    if (adapter.signature && !doc.querySelector(adapter.signature)) return { ok: false, reason: 'refused', detail: 'page lacks the real chat composer signature' };
     var composer = first(doc, adapter.composer);
     if (!composer) return { ok: false, reason: 'dom-mismatch', detail: 'composer not found' };
     if (norm(text(composer))) return { ok: false, reason: 'busy', detail: 'composer not empty' };
@@ -165,8 +189,16 @@
       state.pending = { text: value, at: Date.now(), blocked: false };
       insert(doc, p.composer, value);
       await wait(Number(msg && msg.settleMs) >= 0 ? Number(msg.settleMs) : 150);
+      // 0.6.8: Lexical (Perplexity) and some editors render the text asynchronously
+      // (seen live: empty right after insertText, filled ~400 ms later). Wait up to 1.5 s.
+      var acceptBy = Date.now() + (Number(msg && msg.acceptWaitMs) >= 0 ? Number(msg.acceptWaitMs) : 1500);
+      while (norm(text(p.composer)) !== norm(value) && Date.now() < acceptBy) await wait(100);
       if (norm(text(p.composer)) !== norm(value)) { clear(doc, p.composer); return { ok: false, reason: 'dom-mismatch', detail: 'editor did not accept the text' }; }
+      // 0.6.8: React apps enable Send a moment after the text lands; wait up to 2 s
+      // instead of falling straight to a synthetic Enter (which most apps ignore).
       var button = first(doc, p.adapter.send);
+      var sendBy = Date.now() + (Number(msg && msg.sendWaitMs) >= 0 ? Number(msg.sendWaitMs) : 2000);
+      while (button && (button.disabled || button.getAttribute('aria-disabled') === 'true') && Date.now() < sendBy) { await wait(100); button = first(doc, p.adapter.send); }
       if (button && !button.disabled && button.getAttribute('aria-disabled') !== 'true') {
         button.click();
       } else {
@@ -209,12 +241,16 @@
       return true;
     });
     var hello = function () {
-      try { rt.sendMessage({ type: 'helmion:nudge-hello', site: siteKey(win.location.hostname) }, function () { void rt.lastError; }); } catch (e) { /* worker asleep */ }
+      try { rt.sendMessage({ type: 'helmion:nudge-hello', site: siteKey(win.location.hostname, win.location.pathname) }, function () { void rt.lastError; }); } catch (e) { /* worker asleep */ }
     };
     hello();
     setInterval(hello, 4 * 60000); // re-register after a service-worker restart
+    // 0.6.8: single-page apps change the URL without reloading (e.g. claude.ai/new ->
+    // /chat/<id>). Re-register as soon as the address changes.
+    var lastHref = String(win.location.href);
+    setInterval(function () { var h = String(win.location.href); if (h !== lastHref) { lastHref = h; hello(); } }, 5000);
   }
 
-  root.HelmionNudge = { ADAPTERS: ADAPTERS, PREFIX: PREFIX, siteKey: siteKey, probe: probe, tryNudge: tryNudge, pendingFor: pendingFor, markBlocked: markBlocked, install: install, _state: state };
+  root.HelmionNudge = { ADAPTERS: ADAPTERS, PREFIX: PREFIX, siteKey: siteKey, CHAT_PAGES: CHAT_PAGES, probe: probe, tryNudge: tryNudge, pendingFor: pendingFor, markBlocked: markBlocked, install: install, _state: state };
   if (typeof window !== 'undefined' && root === window && !root.__helmionNudgeNoAutoInstall) install(window);
 })(typeof globalThis !== 'undefined' ? globalThis : this);
