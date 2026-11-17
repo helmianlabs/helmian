@@ -11,13 +11,13 @@ test('Chromium and Firefox packages keep the minimal permission boundary', () =>
   // The permission boundary as shipped in the 0.7.0 landing (39fbd8c):
   // alarms + idle serve the auto-nudge, and the Firefox build also
   // carries identity. The sets stay pinned exactly, per browser.
-  assert.deepEqual(chromium.permissions, ['storage', 'alarms', 'idle']);
+  assert.deepEqual(chromium.permissions, ['storage', 'alarms', 'idle', 'scripting']); // PR 182 port: scripting re-injects into AI tabs left open across an update
   assert.deepEqual(firefox.permissions, ['storage', 'alarms', 'idle', 'identity']);
   // Host and optional permissions as shipped in the 0.7.0 landing
   // (39fbd8c): the Chromium build talks to helmian.cloud and the Scribe
   // door at connect.helmian.cloud; the Firefox build asks for its host
   // access optionally instead. Both sets stay pinned exactly.
-  assert.deepEqual(chromium.host_permissions, ['https://helmian.cloud/*', 'https://connect.helmian.cloud/*']);
+  assert.deepEqual(chromium.host_permissions, ['https://helmian.cloud/*', 'https://connect.helmian.cloud/*', ...chromium.content_scripts[0].matches]);
   assert.deepEqual(chromium.optional_permissions, ['notifications', 'identity']);
   assert.equal(firefox.host_permissions, undefined);
   assert.deepEqual(firefox.optional_permissions, ['notifications', 'https://*/*', 'http://localhost/*', 'http://127.0.0.1/*']);

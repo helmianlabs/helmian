@@ -263,10 +263,10 @@ test('without notifications permission, no notification is shown', async () => {
 test('manifests: alarms + idle required, notifications optional, no new install-time hosts', () => {
   for (const f of ['manifest.json', 'manifest.firefox.json']) {
     const m = JSON.parse(readFileSync(new URL(`../${f}`, import.meta.url)));
-    assert.deepEqual(m.permissions, f === 'manifest.json' ? ['storage', 'alarms', 'idle'] : ['storage', 'alarms', 'idle', 'identity']);
+    assert.deepEqual(m.permissions, f === 'manifest.json' ? ['storage', 'alarms', 'idle', 'scripting'] : ['storage', 'alarms', 'idle', 'identity']);
     assert.ok(m.optional_permissions.includes('notifications'));
     // 0.7.0: the approvals door (connect.helmian.cloud) joined helmian.cloud.
-    assert.deepEqual(m.host_permissions || [], f === 'manifest.json' ? ['https://helmian.cloud/*', 'https://connect.helmian.cloud/*'] : []);
+    assert.deepEqual(m.host_permissions || [], f === 'manifest.json' ? ['https://helmian.cloud/*', 'https://connect.helmian.cloud/*', ...m.content_scripts[0].matches] : []);
   }
 });
 
