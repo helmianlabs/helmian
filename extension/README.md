@@ -1,11 +1,10 @@
 # Helmion Guard — browser extension, phase 1
 
-> **Status, November 14, 2026: ON HOLD.** Helmian Guard as a standalone
-> product is paused. The current focus is the Helmian platform itself.
-> The extension still works, and the Guard page at helmian.cloud still
-> serves this build. The approval checks built into Helmian itself are
-> part of the platform and keep running. No new Guard features are
-> being built right now.
+> **Status, November 17, 2026: active again.** Troy took Helmian Guard
+> off hold on November 17, 2026. 0.7.0 on main is the Guard line. The
+> 0.6.3–0.6.8 work and fixes 179/180/182/183 are being ported to it in
+> draft PRs #188, #189, #184, #185, #186 and #187. The plan for separating
+> Guard from Helmian is in [docs/GUARD_SPLIT_PLAN.md](../docs/GUARD_SPLIT_PLAN.md).
 
 It watches the AI's reply as it types, and it reads that reply twice.
 
