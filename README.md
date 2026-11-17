@@ -358,12 +358,12 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   remaining browser seats join as their sign-ins are approved.
 - **Auth**: Clerk sign-in with GitHub social login.
 
-**On hold as standalone products (November 2026).** **Herald** is
-paused as a product push (the surface itself is built and live at
-helmian.cloud/herald — see above). **Helmian Guard** (the browser
-extension) and **Helmian Site Guard** are also paused as standalone
-product pushes — no new work is being built on them right now — but
-both are already built and in this repo, and what is live stays live.
+**Helmian Guard is active again (November 17, 2026).** Troy took the
+browser extension off hold. Its plan for separating from Helmian is in
+[docs/GUARD_SPLIT_PLAN.md](docs/GUARD_SPLIT_PLAN.md). **Herald** and
+**Helmian Site Guard** stay on hold as product pushes. Herald is built and
+live at helmian.cloud/herald (see above). Site Guard is built and in this
+repo, and what is live stays live.
 
 - **Helmian Guard**: the extension source is in `extension/`, version
   0.7.0, with Chromium (`manifest.json`) and Firefox
@@ -381,8 +381,8 @@ both are already built and in this repo, and what is live stays live.
   There is no self-serve download for use on other sites.
 
 The approval checks built into Helmian are part of the platform and
-keep running; the hold is on the standalone product pushes, not on
-the platform's own governance.
+keep running; the hold on Herald and Site Guard is on the standalone
+product pushes, not on the platform's own governance.
 
 ## Quick start (this repo)
 
