@@ -9,9 +9,10 @@
 Helmian is a multi-agent desk with a governor. You connect each AI once,
 talk to them together in channels the way you would talk to a team, and
 every seat works under the same rules: a write lease allows one writer
-per project at a time on the machine where the work runs, a signed
-record of what happened, and the **Executive Guard** standing over
-actions on your own machine.
+per project at a time on the machine where the work runs, **Scribe**
+keeps the shared memory the crew works from, a signed record of what
+happened, and the **Executive Guard** standing over actions on your
+own machine.
 
 **Try the web app:** [helmian.cloud](https://helmian.cloud) — free account, no card.
 
@@ -184,15 +185,20 @@ first.
   GitHub, Google, Gemini, Stripe, Slack, Hugging Face), AWS access
   key IDs, bearer tokens, JSON Web Tokens, and private keys all
   come back as `[REDACTED]`.
-- **Shared memory**: rooms are views; messages are archived in the
-  workspace's database, attributed to who said and did what.
-- **The Librarian**: the workspace's memory keeper. It files a short
-  record of every ask the desk is given (who asked, which seats were
-  called, the Guard's decision, and a brief excerpt) into the shared
-  notebook, and files an ask the Guard refused as an open incident.
-  The seats recall the notebook automatically when they answer, so
-  what was asked, and what was refused, stays in front of the whole
-  desk.
+- **Scribe**: the shared-memory layer. Rooms are views; messages are
+  archived in the workspace's database, attributed to who said and
+  did what. Connected AIs can also read and write that memory through
+  the Scribe door (`door/` in this repo), under Guard. The original
+  Scribe MCP server and Librarian rules engine live in a separate
+  private repository; this public repo holds the desk's notebook,
+  The Librarian on the desk, and the door.
+- **The Librarian**: Scribe's memory keeper on the desk. It files a
+  short record of every ask the desk is given (who asked, which seats
+  were called, the Guard's decision, and a brief excerpt) into the
+  shared notebook, and files an ask the Guard refused as an open
+  incident. The seats recall the notebook automatically when they
+  answer, so what was asked, and what was refused, stays in front of
+  the whole desk.
 - **Voice**: press the Voice button in a channel and talk — replies
   are spoken aloud, each seat in its own voice. The voices are made
   by Kokoro, a speech model that runs in your own browser tab; no
@@ -273,10 +279,12 @@ Phone / Browser ──→ Cloud (Vercel + Neon) ──→ Bridge ──→ Your 
 
 - **Cloud**: Vercel (web app + API) + Neon Postgres. Chat history,
   audit trail, leases, agent sessions — all tenant-scoped.
-- **Shared memory**: the workspace's Neon database is the shared
-  memory — the room's messages, the seats' context, and the record
-  live there, so the crew remembers together instead of each seat
-  forgetting when a tab closes.
+- **Scribe (shared memory)**: the workspace's Neon database is the
+  shared memory — the room's messages, the seats' context, and the
+  record live there, so the crew remembers together instead of each
+  seat forgetting when a tab closes. The Librarian files each ask
+  into that notebook. The Scribe door is the MCP entrance to the
+  same memory.
 - **Integrations, entered once**: the seats' sign-ins and API keys are
   entered once on the Integrations page and stored in the tenant's
   encrypted credential store; the seats work off those connections from
@@ -318,13 +326,15 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   the gated edges above still stop for the owner.
 - **Hands through the spoke**: seats can work on the user's own PC
   (files, commands, localhost) through the guarded door.
-- **Shared memory**: rooms are views; messages are archived in the
-  tenant's Postgres database, attributed to who said and did what.
-- **The Librarian**: live on the desk. Every ask is filed into the
-  shared notebook, and the notebook rides in the seats' prompts when
-  they answer. Its solve and re-file operations exist in the library
-  and are tested, but no shipped surface calls them yet, so
-  solutions are not filed automatically today.
+- **Scribe**: live on the desk. Shared memory is the tenant's
+  Postgres database — rooms are views; messages are archived and
+  attributed to who said and did what. Connected AIs reach that
+  memory through the Scribe door in this repo.
+- **The Librarian**: live on the desk as part of Scribe. Every ask
+  is filed into the shared notebook, and the notebook rides in the
+  seats' prompts when they answer. Its solve and re-file operations
+  exist in the library and are tested, but no shipped surface calls
+  them yet, so solutions are not filed automatically today.
 - **Voice**: Kokoro runs in the tab and the seats speak in their own
   voices; the owner's ear test passed 2026-11-09.
 - **Plugins**: the catalog is live on the Integrations page's Plugins
@@ -348,14 +358,31 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   remaining browser seats join as their sign-ins are approved.
 - **Auth**: Clerk sign-in with GitHub social login.
 
-**On hold (November 2026).** Three pieces are paused as standalone
-products: **Helmian Guard** (the browser extension), **Helmian Site
-Guard**, and **Herald**. The code stays in the tree and what is live
-stays live, but no new work is being built on them right now. The
-current focus is the Helmian platform itself. The approval checks
-built into Helmian are part of the platform and keep running; the
-hold is on the standalone products, not on the platform's own
-governance.
+**On hold as standalone products (November 2026).** **Herald** is
+paused as a product push (the surface itself is built and live at
+helmian.cloud/herald — see above). **Helmian Guard** (the browser
+extension) and **Helmian Site Guard** are also paused as standalone
+product pushes — no new work is being built on them right now — but
+both are already built and in this repo, and what is live stays live.
+
+- **Helmian Guard**: the extension source is in `extension/`, version
+  0.7.0, with Chromium (`manifest.json`) and Firefox
+  (`manifest.firefox.json`) builds. Packages are served from
+  [helmian.cloud/guard](https://helmian.cloud/guard) for a manual
+  developer-mode load on Chrome, Edge, and other Chromium browsers,
+  and a temporary session load on Firefox. There is no Chrome Web
+  Store or Firefox AMO listing yet, and the Firefox package is not
+  AMO-signed. It watches claude.ai, ChatGPT, Gemini, and Grok.
+- **Helmian Site Guard**: the server-side screen is in
+  `src/cloud/site-guard.mjs` and is wired into the desk's message
+  path, so every message on its way to a seat is screened, and a
+  sender who floods the door is flagged and then stopped. A public
+  page is at [helmian.cloud/site-guard](https://helmian.cloud/site-guard).
+  There is no self-serve download for use on other sites.
+
+The approval checks built into Helmian are part of the platform and
+keep running; the hold is on the standalone product pushes, not on
+the platform's own governance.
 
 ## Quick start (this repo)
 
