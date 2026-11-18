@@ -20,7 +20,7 @@ Each has a script (.md), voiceover (.mp3), and platform post copy (.md).
 - **Visual:** EXE 4-panel view, sliding panels, Guard finding cards. Use Troy's 15 EXE screenshots from 2026-10-18 as B-roll (helmian.cloud/app is behind login).
 
 ### Video 2: "Free Account in Under Two Minutes" (~40 sec)
-- **Script:** [video2-script-free-trial.md](sandbox://workspace/your_files/helmian-social-content/video2-script-free-trial.md)
+- **Script:** [video2-script-free-account.md](sandbox://workspace/your_files/helmian-social-content/video2-script-free-account.md)
 - **Voiceover:** [video2-voiceover.mp3](sandbox://workspace/your_files/helmian-social-content/video2-voiceover.mp3)
 - **Post copy:** [video2-post-copy.md](sandbox://workspace/your_files/helmian-social-content/video2-post-copy.md)
 - **Visual:** Record helmian.cloud/get-started signup (public page). For in-app shots, use EXE screenshots.
