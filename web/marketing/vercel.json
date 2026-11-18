@@ -190,6 +190,16 @@
       "source": "/app/remote",
       "destination": "/herald/",
       "permanent": false
+    },
+    {
+      "source": "/signup",
+      "destination": "/get-started",
+      "permanent": true
+    },
+    {
+      "source": "/sign-up",
+      "destination": "/get-started",
+      "permanent": true
     }
   ]
 }
