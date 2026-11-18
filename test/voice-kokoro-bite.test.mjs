@@ -9,6 +9,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createVoiceController, voiceForSeat, SEAT_VOICES } from '../web/shared/voice-dictation.mjs';
 
+// These tests pin the legacy in-tab road (Kokoro warmup, load failure,
+// the retry window, per-seat voices). The served-TTS road is available
+// by default wherever fetch exists (voice-dictation.mjs
+// servedAvailable()), and left ambient it hijacks warmup and speak
+// routing away from the fakes injected here — including real calls to
+// the production voice endpoint. Remove the ambient fetch for this
+// file's process so the controller runs in its documented
+// undeployed-build world (no served road, legacy road only); the
+// served road has its own seam-controlled tests in
+// test/voice-served-tts.test.mjs. Same disease as the voice entries in
+// test/exclusions.json.
+const ambientFetch = globalThis.fetch;
+delete globalThis.fetch;
+test.after(() => { if (ambientFetch !== undefined) globalThis.fetch = ambientFetch; });
+
 function makeFakes() {
   const instances = [];
   class FakeRecognition {
