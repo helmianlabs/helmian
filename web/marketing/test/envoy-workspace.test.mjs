@@ -738,23 +738,25 @@ test('link slack: control, dialog wiring and state plumbing exist in the app', a
   const html = await readFile(new URL('../app/index.html', import.meta.url), 'utf8');
   const js = await readFile(new URL('../app/envoy-workspace.js', import.meta.url), 'utf8');
   const css = await readFile(new URL('../app/envoy.css', import.meta.url), 'utf8');
-  for (const id of ['ew-link-slack', 'ew-slack-badge', 'ew-slack-status', 'ew-slack-status-text']) {
+  for (const id of ['ew-slack-badge', 'ew-slack-status', 'ew-slack-status-text']) {
     assert.match(html, new RegExp(`id="${id}"`), `index.html has #${id}`);
   }
-  assert.ok(html.indexOf('id="ew-link-slack"') > html.indexOf('id="ew-link-discord"'), 'the Slack control sits beside the Discord one in the chat head');
+  // The link control itself is no longer a static chat-head button: it
+  // renders per channel in the channel list (renderChannels), as a
+  // section-head button and a "+ Link Slack" row.
+  assert.ok(js.includes("h('span', { class: 'name' }, '+ Link Slack')"), 'the Slack link control renders as a channel-list row');
+  assert.ok(js.includes("title: 'Link a Slack channel to this channel'"), 'the Slack section head carries the link button');
   for (const needle of [
     'async function linkSlack()',
     "{ action: 'link-slack', channelId: ws.channelId }",
     "{ action: 'unlink-slack', channelId: ws.channelId }",
     'res.linkCommand',
     'ws.slackBot = body.slackBot ?? null',
-    "$('ew-link-slack').addEventListener('click', linkSlack)",
     'Linked to Slack #',
     'The code itself is the key',
   ]) assert.ok(js.includes(needle), `envoy-workspace.js has ${needle}`);
   assert.match(css, /\.ew-badge\.slack \{/, 'envoy.css styles the Slack badge');
   assert.match(css, /\.ew-mini\.slack \{/, 'envoy.css styles the Slack channel tag');
-  assert.match(css, /#ew-link-discord, #ew-link-slack \{ display:none; \}/, 'the phone head hides both link controls');
 });
 
 // Bite 2 (2026-10-26, from the forensic sweep): the Discord panel lied
@@ -868,17 +870,19 @@ test('monday launch: custom agent creator, free-willy debate, github link, phone
     // channels footer button below, the rail '+' above, and #ew-crew-add.
     'ew-foot-create-agent',
     'ew-crew-add',
-    'ew-link-github',
     'ew-github-badge',
     'ew-debate-toggle',
     'ew-debate-badge',
     'ew-debate-stop',
-    'ew-phone-qr',
     'ew-foot-phone-qr',
     'ew-mobile-nav',
   ]) {
     assert.match(html, new RegExp(`id="${id}"`), `index.html has #${id}`);
   }
+  // Like Slack, the GitHub link control renders per channel in the
+  // channel list (renderChannels), not as a static header button.
+  assert.ok(js.includes("'+ Link GitHub repo'"), 'the GitHub link control renders as a channel-list row');
+  assert.ok(js.includes("title: 'Link a GitHub repository to this channel'"), 'the GitHub section head carries the link button');
 });
 
 // Maestro always-on (Troy's ruling, 2026-11-09, superseding the
@@ -1268,7 +1272,7 @@ test('bite 5 wiring: faces route, member face, channel face, custom pill art', a
   }
   assert.ok(js.includes("'/api/admin/profile'"), 'the member face rides the profile route');
   assert.ok(!js.includes("h('span', {}, ca.emoji || '🤖')"), 'custom-agent mention pills render bite-1 art, never a raw glyph');
-  for (const needle of ['.ew-agent-btns', '.ew-me-face']) {
+  for (const needle of ['.ew-me-face']) {
     assert.ok(css.includes(needle), `envoy.css has ${needle}`);
   }
 });

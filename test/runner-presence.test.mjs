@@ -297,6 +297,7 @@ function makeActivityFakePool({ missingActivity = false } = {}) {
         }
         throw new Error(`unexpected activity query: ${text}`);
       }
+      if (text.includes('helmion.watch_offers')) return { rows: [] };
       if (text.startsWith('select provider_name')) {
         return { rows: [...providers.entries()].map(([provider_name, v]) => ({ provider_name, ...v })) };
       }
