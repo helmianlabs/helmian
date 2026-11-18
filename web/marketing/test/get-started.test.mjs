@@ -66,3 +66,12 @@ test('planDownloads: exe is ready only with a real published release', () => {
   assert.deepEqual(planDownloads({ items: ['exe'], release: { available: true, url: 'https://github.com/x/e', name: 'Helmian-Setup.exe', version: 'v1' }, guard: null }), [{ kind: 'exe', ready: true, name: 'Helmian-Setup.exe', url: 'https://github.com/x/e', version: 'v1' }]);
   assert.deepEqual(planDownloads({ items: ['guard'], release: null, guard: { name: 'g.zip', url: '/downloads/g.zip' } }), [{ kind: 'guard', ready: true, name: 'g.zip', url: '/downloads/g.zip' }]);
 });
+
+test('vercel permanently redirects /signup and /sign-up to /get-started', () => {
+  const vercel = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
+  const r = (src) => vercel.redirects.find((x) => x.source === src);
+  for (const src of ['/signup', '/sign-up']) {
+    assert.equal(r(src)?.destination, '/get-started');
+    assert.equal(r(src)?.permanent, true);
+  }
+});
