@@ -41,7 +41,7 @@ test('Envoy listChannels returns only the caller tenant channels', async () => {
   const pool = rlsBypassedPool({ envoy_channels: [
     { tenant_id: A, id: 'a1', slug: 'team', title: 'Team', kind: 'team', created_by_subject: 'u', created_at: '2026-10-01' },
     { tenant_id: B, id: 'b1', slug: 'envoy', title: 'Envoy', kind: 'team', created_by_subject: 'v', created_at: '2026-10-02' },
-  ] });
+  ], envoy_messages: [] });
   const { channels } = await createEnvoyStore(pool).listChannels(actor(A));
   assert.deepEqual(channels.map((c) => c.id), ['a1']);
 });

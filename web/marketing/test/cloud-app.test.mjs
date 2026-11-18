@@ -38,7 +38,7 @@ test('no technical disclaimers and no framework', () => {
 
 test('only known admin + remote APIs are used', () => {
   const paths = [...new Set([...js.matchAll(/'(\/api\/[^'?`$]+)/g)].map((m) => m[1]))].sort();
-  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/browser/navigate', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/agents/sessions', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/envoy/runner/presence', '/api/admin/events', '/api/admin/guard/acks', '/api/admin/guard/findings', '/api/admin/guard/pc-approvals', '/api/admin/guard/pc-approvals/decide', '/api/admin/guard/pc-upcoming', '/api/admin/maestro/checkpoints', '/api/admin/maestro/handoffs', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/plugins', '/api/admin/profile', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/runs/ledger', '/api/admin/session', '/api/admin/signup', '/api/admin/spoke/download', '/api/admin/spoke/pair-code', '/api/admin/tool-connections', '/api/admin/workspace/active-project', '/api/admin/workspace/agent-icons', '/api/admin/workspace/canvas', '/api/admin/workspace/canvas/decisions', '/api/admin/workspace/layout-preferences', '/api/admin/workspace/projects', '/api/herald-config', '/api/latest-release', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
+  assert.deepEqual(paths, ['/api/admin/app/sessions', '/api/admin/app/sessions/archive', '/api/admin/app/sessions/steps', '/api/admin/app/sessions/steps/update', '/api/admin/browser/navigate', '/api/admin/cora/approvals', '/api/admin/cora/artifacts', '/api/admin/cora/connectors', '/api/admin/cora/usage', '/api/admin/desktop/link/start', '/api/admin/envoy/agents/sessions', '/api/admin/envoy/channels', '/api/admin/envoy/messages', '/api/admin/envoy/profile-sync', '/api/admin/envoy/runner/presence', '/api/admin/events', '/api/admin/guard/acks', '/api/admin/guard/findings', '/api/admin/guard/pc-approvals', '/api/admin/guard/pc-approvals/decide', '/api/admin/guard/pc-upcoming', '/api/admin/maestro/checkpoints', '/api/admin/maestro/handoffs', '/api/admin/organization/invites', '/api/admin/organization/invites/revoke', '/api/admin/overview', '/api/admin/plugins', '/api/admin/profile', '/api/admin/provider-connections', '/api/admin/release', '/api/admin/runs/ledger', '/api/admin/session', '/api/admin/signup', '/api/admin/spoke/download', '/api/admin/spoke/pair-code', '/api/admin/tool-connections', '/api/admin/workspace/active-project', '/api/admin/workspace/agent-icons', '/api/admin/workspace/canvas', '/api/admin/workspace/canvas/decisions', '/api/admin/workspace/layout-preferences', '/api/admin/workspace/memberships', '/api/admin/workspace/projects', '/api/admin/workspace/select', '/api/herald-config', '/api/latest-release', '/api/remote/v1/desktops', '/api/remote/v1/enrollment']);
 });
 
 test('models', () => {
@@ -143,9 +143,11 @@ test('Guard Feed: approvals critical, denials warn, acknowledge turns amber, fil
 test('Guard Feed ack-all: ack clears the pile for good, newer events still show', () => {
   const data = { approvals: [{ requestReceiptId: 'r1', summary: 'Deploy', decision: null }], events: [{ id: '1', actionType: 'cora.session.started', status: 'ALLOW' }, { id: '2', actionType: 'tool.call', status: 'DENY' }] };
   const findings = [{ fingerprint: 'f1', severity: 'warning' }, { fingerprint: 'f2', severity: 'critical' }, { fingerprint: 'f3', severity: 'info' }];
-  // Every event card clears; findings clear except criticals (never hidden
-  // by an ack); pending approvals are decisions and never clear.
-  assert.deepEqual(feedAckClearIds({ events: data.events, findings }).sort(), ['evt:1', 'evt:2', 'finding:f1', 'finding:f3']);
+  // Every event card clears; findings clear too, criticals included (an
+  // acknowledged finding leaves the pile for good — owner's call,
+  // 2026-11-08: the reds clear on ack like everything else); pending
+  // approvals are decisions and never clear.
+  assert.deepEqual(feedAckClearIds({ events: data.events, findings }).sort(), ['evt:1', 'evt:2', 'finding:f1', 'finding:f2', 'finding:f3']);
   assert.deepEqual(feedAckClearIds({}), []);
   const cleared = new Set(feedAckClearIds({ events: data.events, findings }));
   // Re-reading the same source with the persisted cleared set (what a
