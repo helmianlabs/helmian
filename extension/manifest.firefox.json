@@ -21,7 +21,10 @@
         "https://claude.ai/*",
         "https://chatgpt.com/*",
         "https://gemini.google.com/*",
-        "https://grok.com/*"
+        "https://grok.com/*",
+        "https://chat.mistral.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://perplexity.ai/*"
       ],
       "js": [
         "content/prompt-risk.js",
@@ -56,5 +59,9 @@
     "https://*/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
-  ]
+  ],
+  "options_ui": {
+    "page": "popup/popup.html",
+    "open_in_tab": true
+  }
 }
