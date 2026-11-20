@@ -1,11 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import { requireActiveTenantMembership, withTenantTransaction } from '../core/tenant-context.mjs';
+import { requireActiveTenantMembership, TenantAuthorizationError, withTenantTransaction } from '../core/tenant-context.mjs';
+import { evaluateAttributePolicy } from './attribute-policy.mjs';
 
 const DECISIONS = new Set(['AUTO_RUN', 'ALLOW', 'PAUSE_FOR_OWNER', 'BLOCK', 'DENY']);
 const MAX_FILTER = 120;
 const EXPORT_MAX_ROWS = 100;
 const EXPORT_MAX_DAYS = 31;
 export const AUDIT_EXPORT_COLUMNS = Object.freeze(['id', 'created_at', 'action_type', 'decision', 'actor_subject', 'actor_role', 'privacy_summary']);
+export const DEFAULT_AUDIT_ATTRIBUTE_RULES = Object.freeze([
+  Object.freeze({
+    id: 'verified-tenant-audit-read',
+    effect: 'ALLOW',
+    actions: Object.freeze(['audit.read']),
+    conditions: Object.freeze({ 'request.tenantScope': 'verified', 'resource.kind': 'audit_events' }),
+  }),
+]);
 
 function text(value, field) {
   const result = String(value ?? '').trim();
@@ -74,13 +83,49 @@ export function normalizeAuditQuery(input = {}) {
   });
 }
 
-export function createAuditEventRepository(pool) {
+export async function appendAuditEvent(client, context, input) {
+  const receipt = await client.query(
+    `insert into helmion.audit_events
+       (tenant_id, actor_subject, actor_role, session_id, request_id, action_type,
+        canonical_target, policy_version, decision, privacy_summary, result)
+     values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb)
+     returning id`,
+    [context.tenantId, context.actorSubject, context.actorRole, context.sessionId, context.requestId,
+      input.actionType, JSON.stringify(input.canonicalTarget), input.policyVersion, input.decision,
+      input.privacySummary, JSON.stringify(input.result)],
+  );
+  if (receipt.rowCount !== 1 || receipt.rows[0]?.id == null) throw new Error('audit event receipt was not durable');
+  return String(receipt.rows[0].id);
+}
+
+export function createAuditEventRepository(pool, { attributeRules = DEFAULT_AUDIT_ATTRIBUTE_RULES } = {}) {
+  const policyRules = attributeRules == null ? null : attributeRules;
+  function authorizeAuditRead(actor, context, query) {
+    if (policyRules == null) return null;
+    const result = evaluateAttributePolicy({
+      action: 'audit.read',
+      context: { ...context, attributes: actor?.attributes ?? {} },
+      resource: { tenantId: context.tenantId, kind: 'audit_events' },
+      request: { tenantScope: 'verified', action: query.action, actor: query.actor, status: query.status, from: query.from, to: query.to },
+      rules: policyRules,
+    });
+    if (result.decision !== 'ALLOW') {
+      throw Object.assign(new TenantAuthorizationError(`Attribute policy denied audit read: ${result.reason}`), {
+        status: 403,
+        code: 'AUDIT_ATTRIBUTE_POLICY_DENIED',
+        policyVersion: result.policyVersion,
+        matchedRuleIds: result.matchedRuleIds,
+      });
+    }
+    return result;
+  }
   return Object.freeze({
     async list(actor, input = {}) {
       const query = normalizeAuditQuery(input);
       const context = { tenantId: actor?.tenantId, actorSubject: actor?.subject, actorRole: actor?.role, sessionId: randomUUID(), requestId: randomUUID() };
       return withTenantTransaction(pool, context, async (client, scoped) => {
         await requireActiveTenantMembership(client, scoped);
+        const attributePolicy = authorizeAuditRead(actor, scoped, query);
         const values = [scoped.tenantId];
         const where = ['tenant_id=$1'];
         const add = (sql, value) => { values.push(value); where.push(sql.replace('$N', `$${values.length}`)); };
@@ -102,6 +147,7 @@ export function createAuditEventRepository(pool) {
           empty: rows.length === 0,
           source: 'helmion.audit_events',
           mutation: 'not_performed',
+          attributePolicy,
         };
       });
     },
@@ -110,6 +156,7 @@ export function createAuditEventRepository(pool) {
       const context = { tenantId: actor?.tenantId, actorSubject: actor?.subject, actorRole: actor?.role, sessionId: actor?.sessionId ?? randomUUID(), requestId: actor?.requestId ?? randomUUID() };
       return withTenantTransaction(pool, context, async (client, scoped) => {
         await requireActiveTenantMembership(client, scoped);
+        const attributePolicy = authorizeAuditRead(actor, scoped, query);
         const values = [scoped.tenantId];
         const where = ['tenant_id=$1'];
         const add = (sql, value) => { values.push(value); where.push(sql.replace('$N', `$${values.length}`)); };
@@ -134,7 +181,7 @@ export function createAuditEventRepository(pool) {
             'Bounded Organization audit export; sensitive payload columns omitted',
             JSON.stringify({ rows: rows.length, hasMore, columns: AUDIT_EXPORT_COLUMNS, redacted: true })],
         );
-        return { csv: csv(rows), empty: rows.length === 0, hasMore, rowCount: rows.length, receiptId: receipt.rows[0]?.id == null ? null : String(receipt.rows[0].id), columns: AUDIT_EXPORT_COLUMNS, source: 'helmion.audit_events', mutation: 'export_receipt_only' };
+        return { csv: csv(rows), empty: rows.length === 0, hasMore, rowCount: rows.length, receiptId: receipt.rows[0]?.id == null ? null : String(receipt.rows[0].id), columns: AUDIT_EXPORT_COLUMNS, source: 'helmion.audit_events', mutation: 'export_receipt_only', attributePolicy };
       });
     },
   });

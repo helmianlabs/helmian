@@ -97,6 +97,7 @@ export const LIVE_ADMIN_WORKSPACE_LAYOUT_RESET_PATH = '/api/admin/workspace/layo
 export const LIVE_ADMIN_WORKSPACE_ROLE_DEFAULTS_PATH = '/api/admin/workspace/role-defaults';
 export const LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH = '/api/admin/organization/memberships';
 export const LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH = '/api/admin/organization/membership-role-plan';
+export const LIVE_ADMIN_ORGANIZATION_ROLE_PATH = '/api/admin/organization/membership-role';
 export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/readiness';
 export const LIVE_ADMIN_CORA_CAPABILITIES_PATH = '/api/admin/cora/capabilities';
 export const LIVE_ADMIN_DESKTOP_PARITY_PATH = '/api/admin/desktop-parity';
@@ -878,6 +879,11 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['idempotencyKey', 'jobTitle', 'reason', 'subject']); send(response, 200, JSON.stringify({ valid: true, ...await organizationRoles.prepareRolePlan(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 409 ? 409 : error?.status === 404 ? 404 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_ROLE_ADMIN_REQUIRED' : error?.status === 409 ? 'ORGANIZATION_SELF_LOCKOUT' : error?.status === 404 ? 'ORGANIZATION_MEMBER_NOT_FOUND' : 'ORGANIZATION_ROLE_PLAN_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ROLE_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['idempotencyKey', 'jobTitle', 'reason', 'subject']); send(response, 200, JSON.stringify({ valid: true, ...await organizationRoles.applyRoleChange(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 409 ? 409 : error?.status === 404 ? 404 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_ROLE_ADMIN_REQUIRED' : error?.status === 409 ? 'ORGANIZATION_SELF_LOCKOUT' : error?.status === 404 ? 'ORGANIZATION_MEMBER_NOT_FOUND' : 'ORGANIZATION_ROLE_CHANGE_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_PATH) {

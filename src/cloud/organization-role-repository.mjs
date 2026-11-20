@@ -26,8 +26,8 @@ function catalogForServerRole(role) {
 
 function membershipView(row) {
   const roles = catalogForServerRole(row.role);
-  const primary = roles.find((item) => item.jobTitle === row.role) ?? roles[0];
-  return { subject: String(row.subject), serverRole: String(row.role), active: row.active === true, jobTitle: ['owner', 'admin'].includes(String(row.role)) ? primary?.jobTitle ?? null : null, capabilities: primary?.capabilities ?? [] };
+  const primary = roles.find((item) => item.jobTitle === row.job_title) ?? roles.find((item) => item.jobTitle === row.role) ?? roles[0];
+  return { subject: String(row.subject), serverRole: String(row.role), active: row.active === true, jobTitle: primary?.jobTitle ?? null, capabilities: primary?.capabilities ?? [] };
 }
 
 function requireCatalogTitle(value) {
@@ -45,8 +45,8 @@ export function createOrganizationRoleRepository(pool) {
         await requireActiveTenantMembership(client, scoped);
         const admin = ['owner', 'admin'].includes(String(actor.role).toLowerCase());
         const result = await client.query(admin
-          ? 'select subject, role, active from helmion.tenant_memberships where tenant_id=$1 order by subject'
-          : 'select subject, role, active from helmion.tenant_memberships where tenant_id=$1 and subject=$2',
+          ? 'select subject, role, active, job_title from helmion.tenant_memberships where tenant_id=$1 order by subject'
+          : 'select subject, role, active, job_title from helmion.tenant_memberships where tenant_id=$1 and subject=$2',
         admin ? [scoped.tenantId] : [scoped.tenantId, scoped.actorSubject]);
         return { memberships: result.rows.map(membershipView), roles: ORGANIZATION_ROLE_CATALOG, pending: [], source: 'helmion.tenant_memberships', externalIdentityMutation: 'not_performed' };
       });
@@ -65,12 +65,36 @@ export function createOrganizationRoleRepository(pool) {
       if (subject === active.actorSubject && !['owner', 'admin'].includes(desired.serverRole)) throw Object.assign(new Error('self-lockout is not permitted'), { status: 409 });
       return withTenantTransaction(pool, active, async (client, scoped) => {
         await requireActiveTenantMembership(client, scoped);
-        const target = await client.query('select subject, role, active from helmion.tenant_memberships where tenant_id=$1 and subject=$2', [scoped.tenantId, subject]);
+        const target = await client.query('select subject, role, active, job_title from helmion.tenant_memberships where tenant_id=$1 and subject=$2', [scoped.tenantId, subject]);
         if (target.rowCount !== 1 || target.rows[0].active !== true) throw Object.assign(new Error('target must be one active Organization member'), { status: 404 });
         const existing = await client.query(`select id, result, created_at from helmion.audit_events where tenant_id=$1 and actor_subject=$2 and action_type='organization.membership_role_plan' and result->>'idempotencyKey'=$3 order by id desc limit 1`, [scoped.tenantId, scoped.actorSubject, idempotencyKey]);
         if (existing.rowCount === 1) return { durable: true, replayed: true, receiptId: String(existing.rows[0].id), status: 'prepared', membershipChanged: false, externalIdentityMutation: 'not_performed', plan: { subject, currentServerRole: target.rows[0].role, requestedJobTitle: jobTitle, requestedServerRole: desired.serverRole } };
         const result = await client.query(`insert into helmion.audit_events (tenant_id, actor_subject, actor_role, session_id, request_id, action_type, canonical_target, policy_version, decision, privacy_summary, result) values ($1,$2,$3,$4,$5,'organization.membership_role_plan',$6::jsonb,'organization-role-plan.v1','PAUSE_FOR_OWNER',$7,$8::jsonb) returning id`, [scoped.tenantId, scoped.actorSubject, scoped.actorRole, scoped.sessionId, scoped.requestId, JSON.stringify({ subject, requestedJobTitle: jobTitle, requestedServerRole: desired.serverRole }), 'Role assignment prepared for external identity/admin review; membership unchanged', JSON.stringify({ idempotencyKey, status: 'prepared', membershipChanged: false, externalIdentityMutation: 'not_performed' })]);
         return { durable: true, replayed: false, receiptId: String(result.rows[0]?.id ?? ''), status: 'prepared', membershipChanged: false, externalIdentityMutation: 'not_performed', plan: { subject, currentServerRole: target.rows[0].role, requestedJobTitle: jobTitle, requestedServerRole: desired.serverRole }, approval: 'external_identity_or_admin_action_required' };
+      });
+    },
+    async applyRoleChange(actor, input = {}) {
+      const active = context(actor);
+      if (!['owner', 'admin'].includes(String(actor.role).toLowerCase())) throw Object.assign(new Error('owner or admin membership is required'), { status: 403 });
+      const subject = String(input.subject ?? '').trim();
+      if (!subject || subject.length > 200) throw Object.assign(new Error('membership subject is required'), { status: 400 });
+      const jobTitle = requireCatalogTitle(input.jobTitle);
+      const reason = String(input.reason ?? '').trim();
+      if (!reason || reason.length > 1000) throw Object.assign(new Error('role change reason is required'), { status: 400 });
+      const idempotencyKey = String(input.idempotencyKey ?? '').trim();
+      if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$/u.test(idempotencyKey)) throw Object.assign(new Error('role change idempotency key is invalid'), { status: 400 });
+      const desired = CATALOG.get(jobTitle);
+      if (subject === active.actorSubject && !['owner', 'admin'].includes(desired.serverRole)) throw Object.assign(new Error('self-lockout is not permitted'), { status: 409 });
+      return withTenantTransaction(pool, active, async (client, scoped) => {
+        await requireActiveTenantMembership(client, scoped);
+        const target = await client.query('select subject, role, active, job_title from helmion.tenant_memberships where tenant_id=$1 and subject=$2 for update', [scoped.tenantId, subject]);
+        if (target.rowCount !== 1 || target.rows[0].active !== true) throw Object.assign(new Error('target must be one active Organization member'), { status: 404 });
+        const existing = await client.query(`select id, result, created_at from helmion.audit_events where tenant_id=$1 and actor_subject=$2 and action_type='organization.membership_role_change' and result->>'idempotencyKey'=$3 order by id desc limit 1`, [scoped.tenantId, scoped.actorSubject, idempotencyKey]);
+        if (existing.rowCount === 1) return { durable: true, replayed: true, receiptId: String(existing.rows[0].id), status: 'applied', membershipChanged: false, externalIdentityMutation: 'not_performed', role: desired.serverRole, jobTitle };
+        const beforeRole = String(target.rows[0].role);
+        await client.query('update helmion.tenant_memberships set role=$3, job_title=$4 where tenant_id=$1 and subject=$2', [scoped.tenantId, subject, desired.serverRole, jobTitle]);
+        const result = await client.query(`insert into helmion.audit_events (tenant_id, actor_subject, actor_role, session_id, request_id, action_type, canonical_target, policy_version, decision, before_ref, after_ref, privacy_summary, result) values ($1,$2,$3,$4,$5,'organization.membership_role_change',$6::jsonb,'organization-role-change.v1','ALLOW',$7::jsonb,$8::jsonb,$9,$10::jsonb) returning id`, [scoped.tenantId, scoped.actorSubject, scoped.actorRole, scoped.sessionId, scoped.requestId, JSON.stringify({ subject, requestedJobTitle: jobTitle, requestedServerRole: desired.serverRole }), JSON.stringify({ role: beforeRole, jobTitle: target.rows[0].job_title ?? null }), JSON.stringify({ role: desired.serverRole, jobTitle }), `Membership role changed for ${subject}`, JSON.stringify({ idempotencyKey, status: 'applied', membershipChanged: beforeRole !== desired.serverRole || target.rows[0].job_title !== jobTitle, externalIdentityMutation: 'not_performed', jobTitle })]);
+        return { durable: true, replayed: false, receiptId: String(result.rows[0]?.id ?? ''), status: 'applied', membershipChanged: beforeRole !== desired.serverRole || target.rows[0].job_title !== jobTitle, externalIdentityMutation: 'not_performed', role: desired.serverRole, jobTitle };
       });
     },
   });
