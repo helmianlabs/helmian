@@ -373,6 +373,9 @@ test('THE BRIDGE EMITS A provenance EVENT AND THE ROW IS ON DISK IN THE WORKSPAC
     },
   });
 
+  // A write to the bridge's stdin after it has died answers with EPIPE;
+  // that is teardown noise, never a test result.
+  child.stdin.on('error', () => {});
   const customProviders = [{
     name: 'prov-stub',
     baseUrl: `http://127.0.0.1:${port}/v1`,
@@ -427,7 +430,17 @@ test('THE BRIDGE EMITS A provenance EVENT AND THE ROW IS ON DISK IN THE WORKSPAC
       'the event and the file disagree about who answered',
     );
   } finally {
+    // Deterministic teardown: close the bridge's stdin, stop it, and
+    // wait for it to actually exit before the test ends. Killing
+    // without waiting left the child writing into a closing pipe after
+    // the test was over, and the runner failed the whole file on the
+    // late EPIPE (seen twice under full-suite load, never standalone).
+    child.stdin.end();
     child.kill();
+    await new Promise((resolve) => {
+      const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 5000);
+      child.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
     server.close();
     cleanProvenanceWorkspace(workspace);
   }
