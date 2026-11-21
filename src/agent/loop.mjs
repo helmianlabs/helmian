@@ -9,6 +9,7 @@ import { redactSecrets } from './redact.mjs';
 import { readEnvTier, resolveTurnModel } from './model-router.mjs';
 import { withLocalBrevity } from './local-provider.mjs';
 import { processSessionId } from '../core/provenance-log.mjs';
+import { runPreResponseVerification } from '../core/provenance-verification.mjs';
 
 /** Default cap for tool↔model rounds per user message (was 12; too low for real coding). */
 export const MAX_TOOL_ROUNDS_DEFAULT = 48;
@@ -175,6 +176,15 @@ async function runAgentTurnInner({
   // callers: the bridge is one process per app run (bridge.mjs) and the CLI REPL
   // is one process per sitting. Passed explicitly by anything that knows better.
   sessionId = processSessionId(),
+  // Provenance verification (Scribe 1154, Milestone 1): structured claim
+  // evidence for THIS turn, as { claims, profile?, registry? }. Default null
+  // is byte-for-byte today's behaviour — no hook runs and no reply changes.
+  // When a caller supplies it, the final reply runs the pre-response hooks
+  // in src/core/provenance-verification.mjs before it is delivered: an
+  // annotated reply carries its annotations, a quarantined or blocked reply
+  // is replaced by the guardrail notice, and a `provenance_verification`
+  // event reports the action either way.
+  provenanceVerification = null,
   // A REAL kill switch for this turn. Default `null` is byte-for-byte today's
   // behaviour: no signal reaches fetch, no abort check ever fires true, and the
   // loop runs exactly as it did before. When a caller does pass one, aborting it
@@ -323,6 +333,26 @@ async function runAgentTurnInner({
     });
   };
 
+  const applyProvenanceVerification = async (text) => {
+    if (!provenanceVerification) return text;
+    const verdict = await runPreResponseVerification(
+      {
+        text,
+        claims: provenanceVerification.claims ?? [],
+        profile: provenanceVerification.profile ?? null,
+      },
+      { registry: provenanceVerification.registry ?? null },
+    );
+    onEvent({
+      type: 'provenance_verification',
+      action: verdict.action,
+      annotations: verdict.annotations,
+      reasons: verdict.reasons,
+      evaluations: verdict.evaluations,
+    });
+    return verdict.text;
+  };
+
   const announce = (choice, round) => {
     const active = choice.provider || provider;
     onEvent({
@@ -383,7 +413,8 @@ async function runAgentTurnInner({
 
     if (!reply.toolCalls?.length) {
       // Redact secrets from final assistant response before showing to user
-      const text = redactSecrets((reply.content || '').trim()) || '(empty response)';
+      const redacted = redactSecrets((reply.content || '').trim()) || '(empty response)';
+      const text = await applyProvenanceVerification(redacted);
       messages.push({ role: 'assistant', content: text });
       onEvent({ type: 'assistant', text });
       onEvent({ type: 'done' });
@@ -502,8 +533,9 @@ async function runAgentTurnInner({
       signal: combineSignals(signal, null),
     });
     announceProvenance(wrap, limit);
-    // Redact secrets from wrap-up response
-    wrapText = redactSecrets((wrap.content || '').trim());
+    // Redact secrets from wrap-up response, then the same pre-response
+    // provenance verification the normal final reply runs.
+    wrapText = await applyProvenanceVerification(redactSecrets((wrap.content || '').trim()));
     if (wrapText) {
       messages.push({ role: 'assistant', content: wrapText });
       onEvent({ type: 'assistant', text: wrapText });
