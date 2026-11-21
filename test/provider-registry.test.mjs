@@ -125,6 +125,12 @@ function makeFakePool() {
       if (['begin', 'commit', 'rollback'].includes(text)) return { rowCount: 0, rows: [] };
       if (text.includes('set_config')) return { rowCount: 1, rows: [] };
       if (text.includes('from helmion.tenant_memberships')) return { rowCount: 1, rows: [{ role: 'owner' }] };
+      if (text.includes('from helmion.provider_connections')) {
+        // recordApiKey reads the existing row first (an
+        // oauth_subscription record is never displaced); these tests
+        // connect fresh, so there is never an existing row.
+        return { rowCount: 0, rows: [] };
+      }
       if (text.includes('insert into helmion.provider_connections')) {
         inserts.push(params);
         return { rowCount: 1, rows: [{ provider_id: params[1], auth_mode: 'api_key', credential_reference: params[2], lifecycle: 'pending', adapter: 'credential_service', updated_at: new Date().toISOString() }] };

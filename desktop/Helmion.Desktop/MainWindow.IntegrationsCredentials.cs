@@ -99,7 +99,9 @@ public partial class MainWindow
         saveKey.Click += async (_, _) => await SaveCredentialAsync(status, feedback, saveKey,
             (client, token) => client.StoreApiKeyAsync(token, card.ProviderId, apiKey.Password),
             () => apiKey.Clear());
-        panel.Children.Add(FieldLabel(card.HasPasswordRoad ? "API key (backup)" : "API key"));
+        // Since 2026-11-17 (letter 935) the key is the road on every
+        // card, never a backup beside a password road.
+        panel.Children.Add(FieldLabel("API key"));
         panel.Children.Add(apiKey);
         panel.Children.Add(saveKey);
         panel.Children.Add(feedback);

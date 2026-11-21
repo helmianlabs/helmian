@@ -196,12 +196,20 @@ export async function handleEnvoyAblyRoute({
     if (requestUrl?.pathname === GITHUB_WEBHOOK_PATH
       && await handleGithubWebhookRoute({ request, response, requestUrl, send })) return true;
   }
-  // Provider OAuth connect roads: RETIRED (one-road removal pass,
-  // Bite 12, 2026-11-02). /api/provider-oauth/* used to start the
-  // Gemini and ChatGPT OAuth flows and the Grok device-code flow.
-  // Under the owner's one-road law an AI connects with its account
-  // email and password on its Integrations card; these paths answer
-  // 410 so no shadow connect road stays reachable.
+  // Provider OAuth connect roads: retired by the one-road removal
+  // pass (Bite 12, 2026-11-02) — /api/provider-oauth/* used to start
+  // the Gemini and ChatGPT OAuth flows and the Grok device-code
+  // flow, and the whole prefix answered 410 so no shadow connect
+  // road stayed reachable. GEMINI EXCEPTION (Troy's order,
+  // 2026-11-17, Scribe letter 935): the password law is reversed and
+  // Gemini's documented Google OAuth is a live connect road again —
+  // its two paths delegate to user-oauth.mjs below. Every other path
+  // under the prefix keeps the 410 (ChatGPT OAuth is partner-gated,
+  // Grok OAuth is first-party only; verified 2026-11-18).
+  if (requestUrl?.pathname === '/api/provider-oauth/gemini/start' || requestUrl?.pathname === '/api/provider-oauth/gemini/callback') {
+    const { handleUserOAuthRoute } = await import('./user-oauth.mjs');
+    if (await handleUserOAuthRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
+  }
   if (requestUrl?.pathname?.startsWith('/api/provider-oauth/')) {
     send(response, 410, JSON.stringify({ error: 'provider_oauth_retired', code: 'PROVIDER_OAUTH_RETIRED' }));
     return true;
@@ -274,6 +282,10 @@ export async function handleEnvoyAblyRoute({
   if (await handleBridgePluginReportRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleProfileSyncRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleCredentialConnectRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
+  if (requestUrl?.pathname === '/api/admin/envoy/credential/oauth-roads') {
+    const { handleUserOAuthRoadsRoute } = await import('./user-oauth.mjs');
+    if (await handleUserOAuthRoadsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
+  }
   if (await handleToolConnectionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleConnectorLibraryRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleConnectorLibraryWriteRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;

@@ -4,10 +4,11 @@ using Helmion.Desktop.Core;
 
 /// <summary>
 /// Source-level checks for the desktop Integrations credential cards: the
-/// catalog matches the web cards' providers, names, and sign-in lines
-/// (web/marketing/app/integrations-view.mjs), seats carry the password
-/// road, tool cards carry only the API-key slot, and the status words
-/// never claim more than a vault write earned.
+/// catalog matches the web cards' providers, names, and lines
+/// (web/marketing/app/integrations-view.mjs), no card carries the
+/// password road since 2026-11-17 (letter 935) — every card carries
+/// only the API-key slot — and the status words never claim more than
+/// a vault write earned.
 /// </summary>
 internal static class ProviderCredentialCardsChecks
 {
@@ -17,20 +18,20 @@ internal static class ProviderCredentialCardsChecks
         Equal(5, seats.Count, "five seat cards");
         Equal("claude,openai,gemini,grok,mistral", string.Join(",", seats.Select(card => card.ProviderId)), "seat order matches the web");
         Equal("Claude", seats[0].Name, "claude name");
-        Equal("Sign in with your Claude account.", seats[0].Blurb, "claude blurb is the web card's line");
+        Equal("Connect with a key from your Claude Console account.", seats[0].Blurb, "claude blurb is the web card's line");
         Equal("ChatGPT", seats[1].Name, "openai name");
-        Equal("Sign in with your ChatGPT account.", seats[1].Blurb, "openai blurb");
+        Equal("Connect with a key from your OpenAI account.", seats[1].Blurb, "openai blurb");
         Equal("Gemini", seats[2].Name, "gemini name");
-        Equal("Sign in with your Google account.", seats[2].Blurb, "gemini blurb");
+        Equal("Connect with a key from your Google AI Studio account.", seats[2].Blurb, "gemini blurb");
         Equal("Grok", seats[3].Name, "grok name");
-        Equal("Sign in with your Grok account.", seats[3].Blurb, "grok blurb");
+        Equal("Connect with a key from your xAI account.", seats[3].Blurb, "grok blurb");
         Equal("Mistral Le Chat", seats[4].Name, "mistral name");
-        Equal("Sign in with your Mistral account.", seats[4].Blurb, "mistral blurb");
-        Check(seats.All(card => card.HasPasswordRoad), "every seat card carries Email + Password + Connect");
+        Equal("Connect with a key from your Mistral account.", seats[4].Blurb, "mistral blurb");
+        Check(seats.All(card => !card.HasPasswordRoad), "no seat card carries Email + Password + Connect since 2026-11-17");
 
         var tools = ProviderCredentialCards.Tools;
         Equal("runway,heygen,higgsfield", string.Join(",", tools.Select(card => card.ProviderId)), "tool cards: runway + the API-key services");
-        Equal("Use your Runway account for video and image generation.", tools[0].Blurb, "runway blurb is the web card's line");
+        Equal("Connect with a key from your Runway developer account — for video and image generation.", tools[0].Blurb, "runway blurb is the web card's line");
         Check(tools.All(card => !card.HasPasswordRoad), "tool cards carry the API-key slot only, no password fields");
 
         Equal("Not connected", ProviderCredentialCards.StatusText(null), "no row reads Not connected");

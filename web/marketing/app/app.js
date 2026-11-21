@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry, guardPaneApprovalsModel, approvalPopupModel } from './app-model.mjs?v=fa5a68b2c64929ce';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=fa5a68b2c64929ce';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=fa5a68b2c64929ce';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=fa5a68b2c64929ce';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry, guardPaneApprovalsModel, approvalPopupModel } from './app-model.mjs?v=bbe1a3d44ce04ad8';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=bbe1a3d44ce04ad8';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=bbe1a3d44ce04ad8';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=bbe1a3d44ce04ad8';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -2631,7 +2631,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=fa5a68b2c64929ce'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=bbe1a3d44ce04ad8'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2645,9 +2645,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  integrationsMod ??= await import('./integrations-view.mjs?v=fa5a68b2c64929ce');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=fa5a68b2c64929ce');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=fa5a68b2c64929ce');
+  integrationsMod ??= await import('./integrations-view.mjs?v=bbe1a3d44ce04ad8');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=bbe1a3d44ce04ad8');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=bbe1a3d44ce04ad8');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2666,13 +2666,17 @@ async function loadIntegrations() {
     // missed sync read degrades this one card to 'Ready' for a paint,
     // like usage and overview.
     profileSync: () => api('/api/admin/envoy/profile-sync'),
+    // Which OAuth roads this deployment is configured for (today:
+    // Gemini's Google road) — the Gemini card offers "Connect with
+    // Google" only when this read says the road is live.
+    oauthRoads: () => api('/api/admin/envoy/credential/oauth-roads'),
   }, { stateKeys: ['providers', 'presence'] });
-  const c = settledReads.connectors; const p = settledReads.providers; const pr = settledReads.presence; const u = settledReads.usage; const o = settledReads.overview; const tc = settledReads.tools; const ps = settledReads.profileSync;
+  const c = settledReads.connectors; const p = settledReads.providers; const pr = settledReads.presence; const u = settledReads.usage; const o = settledReads.overview; const tc = settledReads.tools; const ps = settledReads.profileSync; const oar = settledReads.oauthRoads;
   // A newer landing started while this pass read: its reads are
   // the fresher ones, so this pass never paints (the newer pass
   // paints its own).
   if (myLoad !== integrationsLoadSeq) return p.value;
-  const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null, profileSyncJob: ps.status === 'fulfilled' ? ps.value?.job ?? null : null });
+  const sections = integrationsMod.integrationSections({ connectors: c.value ?? {}, providers: p.value ?? {}, presence: pr.status === 'fulfilled' ? pr.value?.presence ?? [] : null, toolConnections: tc.status === 'fulfilled' ? tc.value?.connections ?? [] : null, usage: u.value ?? null, overview: o.value ?? null, profileSyncJob: ps.status === 'fulfilled' ? ps.value?.job ?? null : null, oauthRoads: oar.status === 'fulfilled' ? oar.value?.oauth ?? null : null });
   const box = $('#integrations');
   box.replaceChildren(...sections.map((sec) => {
     const wrap = el('section', 'int-section'); wrap.dataset.intSection = sec.id; wrap.append(el('h3', 'int-head', sec.title));
@@ -2729,7 +2733,7 @@ function integrationCard(card) {
   state.append(el('span', 'int-dot'), el('span', 'int-state-words', card.statusText));
   line1.append(state);
   text.append(line1);
-  const expandable = Boolean(card.connect || card.apiKeyConnect || card.changeConnect || card.changeApiKey);
+  const expandable = Boolean(card.connect || card.apiKeyConnect || card.oauthConnect || card.changeConnect || card.changeApiKey);
   if (card.accountEmail) text.append(el('div', 'int-sub', `${card.accountEmail}${card.accountCount > 1 ? ` · ${card.accountCount} accounts` : ''}`));
   else if (!expandable) text.append(el('div', 'int-sub', card.blurb));
   const top = el('div', 'int-top'); top.append(icon, text); a.append(top);
@@ -2757,6 +2761,18 @@ function integrationCard(card) {
     if (card.apiKeyConnect && apiKeyFieldsMod) {
       const fields = apiKeyFieldsMod.createApiKeyFields({ provider: card.apiKeyConnect.provider, fields: card.apiKeyConnect.fields, post, onStored: () => loadIntegrations() });
       if (fields) open.append(fields);
+    }
+    // Gemini's Google road (restored 2026-11-17): a plain link into
+    // the OAuth start route, present only when the deployment's
+    // roads read says the road is configured. The flow leaves the
+    // page for Google and lands back in the app; the re-read on
+    // landing paints the card from the connections store as usual.
+    if (card.oauthConnect) {
+      const row = el('div', 'int-actions');
+      const link = el('a', 'btn sm', card.oauthConnect.label);
+      link.href = card.oauthConnect.href;
+      row.append(link);
+      open.append(row);
     }
     // The change road (owner's order, 2026-11-06): a connected card
     // carries a plain button — "New username and password" on a sign-in
@@ -2844,7 +2860,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=fa5a68b2c64929ce')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=bbe1a3d44ce04ad8')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3736,7 +3752,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=fa5a68b2c64929ce');
+  workspaceModule ??= await import('./envoy-workspace.js?v=bbe1a3d44ce04ad8');
   // The feed load rides along unawaited (boot-load fix, 2026-11-11):
   // it used to be awaited here, so the whole workspace mount — the
   // Desktop view's first paint — waited on the slowest of the events,
@@ -4294,7 +4310,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=fa5a68b2c64929ce');
+    const mod = await import('./maestro-activation.mjs?v=bbe1a3d44ce04ad8');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }
