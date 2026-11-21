@@ -164,6 +164,7 @@ export function createVoiceController({
   let listening = false; // a recognition turn is currently active
   let voiceMode = false; // the toggle
   let voiceKind = 'dictate'; // 'dictate' (text only) or 'voice' (two-way)
+  let agentVoices = true; // the agent-voices toggle: when off, no agent speaks (see speak)
   let handlers = {};
   let restartTimer = null; // held mic restart while a reply is speaking (see restartTurn)
   let autoSubmitTimer = null; // two-way voice: the pending end-of-utterance submit (see scheduleAutoSubmit)
@@ -1012,6 +1013,7 @@ export function createVoiceController({
   };
 
   function speak(text, seat, ref) {
+    if (!agentVoices) return false; // agent voices off: the maestro keeps the room silent
     if (!voiceMode || voiceKind !== 'voice') return false; // dictate mode never speaks
     return tts.speak(text, seat, ref);
   }
@@ -1020,10 +1022,24 @@ export function createVoiceController({
     tts.cancel();
   }
 
+  // The agent-voices toggle (2026-11-18, Troy's order): a user-facing
+  // on/off for agent speech, separate from voice chat. Every spoken
+  // road in the room (the reply scanner, the voice-on catch-up, the
+  // console poll) funnels through speak() above, so this one gate is
+  // the whole law: off means no agent speaks, whatever else is on.
+  // Turning it off also stops whatever is playing or queued right
+  // now. Default on — the room behaves exactly as it did before.
+  function setAgentVoices(on) {
+    agentVoices = !!on;
+    if (!agentVoices) cancelSpeech();
+    return agentVoices;
+  }
+
   return {
     get supported() { return supported; },
     get canSpeak() { return canSpeak; },
     get voiceMode() { return voiceMode; },
+    get agentVoices() { return agentVoices; },
     get mode() { return voiceKind; },
     get listening() { return listening; },
     get engineState() { return kokoroState; },
@@ -1031,6 +1047,7 @@ export function createVoiceController({
     get speakingNow() { return speakingNow; },
     setSpeakingListener,
     setVoiceMode,
+    setAgentVoices,
     speak,
     cancelSpeech,
     warmup,
