@@ -1,13 +1,13 @@
 // Pure functions for the Helmian Cloud app (no DOM) so they can be unit tested.
-export const VIEWS = Object.freeze(['home', 'console', 'chats', 'desktop', 'overview', 'settings', 'workspace', 'devices', 'activity', 'evidence', 'approvals', 'upcoming', 'integrations', 'agents', 'create', 'browser', 'canvas', 'preview', 'release']);
-export const VIEW_TITLES_PLAYFUL = Object.freeze({ home: '🏠 Home', console: '💬 Session console', chats: '💬 Chats', desktop: '🖥️ Workspace', overview: '📊 Overview', settings: '⚙️ Settings', workspace: '🗂️ Projects', devices: '📱 Devices', activity: '📡 Live activity', evidence: '📦 Evidence', approvals: '✅ Approvals', upcoming: '⏳ Upcoming', integrations: '🔌 Integrations', agents: '🤖 Agents', create: '✨ Create', browser: '🌐 Browser', canvas: '🎨 Canvas', preview: '👁 Preview', release: '🚀 Release roadmap' });
-export const VIEW_TITLES_PLAIN = Object.freeze({ home: 'Home', console: 'Session console', chats: 'Chats', desktop: 'Workspace', overview: 'Overview', settings: 'Settings', workspace: 'Projects', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', approvals: 'Approvals', upcoming: 'Upcoming', integrations: 'Integrations', agents: 'Agents', create: 'Create', browser: 'Browser', canvas: 'Canvas', preview: 'Preview', release: 'Release roadmap' });
+export const VIEWS = Object.freeze(['home', 'console', 'chats', 'desktop', 'overview', 'settings', 'workspace', 'devices', 'activity', 'evidence', 'organization', 'approvals', 'upcoming', 'integrations', 'agents', 'create', 'browser', 'canvas', 'preview', 'release']);
+export const VIEW_TITLES_PLAYFUL = Object.freeze({ home: '🏠 Home', console: '💬 Session console', chats: '💬 Chats', desktop: '🖥️ Workspace', overview: '📊 Overview', settings: '⚙️ Settings', workspace: '🗂️ Projects', devices: '📱 Devices', activity: '📡 Live activity', evidence: '📦 Evidence', organization: '🏢 Organization', approvals: '✅ Approvals', upcoming: '⏳ Upcoming', integrations: '🔌 Integrations', agents: '🤖 Agents', create: '✨ Create', browser: '🌐 Browser', canvas: '🎨 Canvas', preview: '👁 Preview', release: '🚀 Release roadmap' });
+export const VIEW_TITLES_PLAIN = Object.freeze({ home: 'Home', console: 'Session console', chats: 'Chats', desktop: 'Workspace', overview: 'Overview', settings: 'Settings', workspace: 'Projects', devices: 'Devices', activity: 'Live activity', evidence: 'Evidence', organization: 'Organization', approvals: 'Approvals', upcoming: 'Upcoming', integrations: 'Integrations', agents: 'Agents', create: 'Create', browser: 'Browser', canvas: 'Canvas', preview: 'Preview', release: 'Release roadmap' });
 // VIEW_TITLES stays as the playful alias for existing importers; viewTitles() picks per preference.
 export const VIEW_TITLES = VIEW_TITLES_PLAYFUL;
 export function viewTitles(emojiMode) { return emojiMode === 'plain' ? VIEW_TITLES_PLAIN : VIEW_TITLES_PLAYFUL; }
 export function isPlainEmojiMode(emojiMode) { return emojiMode === 'plain'; }
 export const PRIMARY_VIEWS = Object.freeze(['desktop', 'home', 'workspace', 'approvals', 'chats']);
-export const ADVANCED_VIEWS = Object.freeze(['console', 'devices', 'overview', 'settings', 'activity', 'evidence', 'integrations', 'agents', 'release']);
+export const ADVANCED_VIEWS = Object.freeze(['console', 'devices', 'overview', 'settings', 'activity', 'evidence', 'organization', 'integrations', 'agents', 'release']);
 // Browser, Canvas, Preview, Create live in the right workbench panel now
 // (BROWSE-001), not the Advanced accordion. They stay in VIEWS/VIEW_TITLES so
 // old #hash links resolve, and show() redirects them to the panel tab.
@@ -44,6 +44,22 @@ export const PROVIDER_REGISTRY = Object.freeze([
 
 // Phones open on Home; wider screens keep the desktop-style Console default.
 export function viewFromHash(hash = '', { phone = false } = {}) { const v = String(hash).replace(/^#\/?/, '').toLowerCase(); return VIEWS.includes(v) ? v : 'desktop'; }
+export function organizationModel(body = {}) {
+  const members = (Array.isArray(body.memberships) ? body.memberships : []).map((m) => ({
+    subject: String(m?.subject ?? ''),
+    serverRole: String(m?.serverRole ?? m?.role ?? ''),
+    jobTitle: m?.jobTitle ? String(m.jobTitle) : 'job title not assigned',
+    capabilities: Array.isArray(m?.capabilities) ? m.capabilities.map(String) : [],
+    active: m?.active === true,
+  }));
+  const roles = (Array.isArray(body.roles) ? body.roles : []).map((r) => ({
+    jobTitle: String(r?.jobTitle ?? ''),
+    serverRole: String(r?.serverRole ?? ''),
+    capabilities: Array.isArray(r?.capabilities) ? r.capabilities.map(String) : [],
+  })).filter((r) => r.jobTitle);
+  return { members, roles };
+}
+
 export function isAdminRole(role) { return ['owner', 'admin'].includes(String(role ?? '').toLowerCase()); }
 
 export function sessionModel(status, body = {}) {

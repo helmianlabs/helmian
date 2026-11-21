@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry, guardPaneApprovalsModel, approvalPopupModel } from './app-model.mjs?v=bbe1a3d44ce04ad8';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=bbe1a3d44ce04ad8';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=bbe1a3d44ce04ad8';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=bbe1a3d44ce04ad8';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry, guardPaneApprovalsModel, approvalPopupModel, organizationModel } from './app-model.mjs?v=a0ad2e58682a4aad';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=a0ad2e58682a4aad';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=a0ad2e58682a4aad';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=a0ad2e58682a4aad';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -2608,6 +2608,40 @@ async function loadActivity() {
   if (!state.events.length) { box.replaceChildren(empty('No activity yet.', 'Actions from your team and agents will stream here.')); return; }
   box.replaceChildren(...state.events.slice(0, 50).map((e) => { const r = el('div', 'tl'); const w = el('div', 'what'); const pe = plainEvent(e); w.append(el('div', null, pe.title), el('div', 'meta', [pe.body, e.actorRole].filter(Boolean).join(' · '))); r.append(el('div', 'when', formatTime(e.createdAt)), el('div', 'rail'), w); return r; }));
 }
+async function loadOrganization() {
+  const status = $('#org-status');
+  try {
+    const body = await api('/api/admin/organization/memberships');
+    const model = organizationModel(body);
+    const tb = $('#org-members');
+    if (tb) tb.replaceChildren(...(model.members.length ? model.members.map((m) => { const tr = el('tr'); tr.append(el('td', null, m.subject), el('td', null, m.serverRole), el('td', null, m.jobTitle), el('td', null, m.capabilities.join(', ') || '—'), el('td', null, m.active ? 'active' : 'inactive')); return tr; }) : [(() => { const tr = el('tr'); const td = el('td', 'muted', 'No members found for this workspace.'); td.colSpan = 5; tr.append(td); return tr; })()]));
+    const cat = $('#org-catalog');
+    if (cat) cat.replaceChildren(...model.roles.map((r) => row(`${r.jobTitle} · ${r.serverRole} authority`, r.capabilities.join(', '))));
+    const sel = $('#org-title');
+    if (sel && !sel.options.length) sel.replaceChildren(...model.roles.map((r) => new Option(r.jobTitle, r.jobTitle)));
+    if (status && !model.members.length) status.textContent = 'No members found for this workspace.';
+  } catch (e) { if (status) status.textContent = `Organization not loaded: ${e.message}`; }
+}
+
+async function submitRoleChange(apply) {
+  const status = $('#org-status');
+  const subject = $('#org-subject').value.trim();
+  const jobTitle = $('#org-title').value;
+  const reason = $('#org-reason').value.trim();
+  if (!subject || !jobTitle || !reason) { status.textContent = 'Member subject, job title and reason are all required.'; return; }
+  const path = apply ? '/api/admin/organization/membership-role' : '/api/admin/organization/membership-role-plan';
+  try {
+    const result = await post(path, { subject, jobTitle, reason, idempotencyKey: `${apply ? 'role-change' : 'role-plan'}-${crypto.randomUUID()}` });
+    status.textContent = apply
+      ? `Role change ${result.status || 'applied'} for ${subject}: ${result.jobTitle || jobTitle} (receipt ${result.receiptId || 'recorded'}).`
+      : `Role plan ${result.receiptId || 'prepared'} recorded for ${subject}: ${result.plan?.requestedJobTitle || jobTitle}. Membership unchanged until the change is applied.`;
+    if (apply) { $('#org-reason').value = ''; loadOrganization(); }
+  } catch (e) { status.textContent = `Role ${apply ? 'change' : 'plan'} refused: ${e.message}`; }
+}
+
+const orgPlanBtn = $('#org-plan-btn'); if (orgPlanBtn) orgPlanBtn.onclick = () => submitRoleChange(false);
+const orgApplyBtn = $('#org-apply-btn'); if (orgApplyBtn) orgApplyBtn.onclick = () => submitRoleChange(true);
+
 async function loadEvidence() {
   await loadFeedData();
   const tb = $('#evidence');
@@ -2648,7 +2682,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=bbe1a3d44ce04ad8'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=a0ad2e58682a4aad'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2662,9 +2696,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  integrationsMod ??= await import('./integrations-view.mjs?v=bbe1a3d44ce04ad8');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=bbe1a3d44ce04ad8');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=bbe1a3d44ce04ad8');
+  integrationsMod ??= await import('./integrations-view.mjs?v=a0ad2e58682a4aad');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=a0ad2e58682a4aad');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=a0ad2e58682a4aad');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2877,7 +2911,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=bbe1a3d44ce04ad8')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=a0ad2e58682a4aad')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3769,7 +3803,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=bbe1a3d44ce04ad8');
+  workspaceModule ??= await import('./envoy-workspace.js?v=a0ad2e58682a4aad');
   // The feed load rides along unawaited (boot-load fix, 2026-11-11):
   // it used to be awaited here, so the whole workspace mount — the
   // Desktop view's first paint — waited on the slowest of the events,
@@ -4080,7 +4114,7 @@ async function loadGuardCreateList() {
   } catch { if (!list.children.length) status.textContent = 'Could not load.'; }
 }
 
-const loaders = { home: loadHome, desktop: loadDesktop, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, approvals: loadApprovals, upcoming: loadUpcoming, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
+const loaders = { home: loadHome, desktop: loadDesktop, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, organization: loadOrganization, approvals: loadApprovals, upcoming: loadUpcoming, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
 const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
 
 // ---- empty states: a new account sees what to do next, never a bare title ----
@@ -4349,7 +4383,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=bbe1a3d44ce04ad8');
+    const mod = await import('./maestro-activation.mjs?v=a0ad2e58682a4aad');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }

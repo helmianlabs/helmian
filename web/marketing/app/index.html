@@ -8,15 +8,15 @@
        the stylesheets land so a light-theme user never gets a dark
        flash. It is an external file because the /app CSP allows
        external scripts only; an inline block here cannot run. -->
-  <script src="/app/theme-init.js?v=bbe1a3d44ce04ad8"></script>
+  <script src="/app/theme-init.js?v=a0ad2e58682a4aad"></script>
   <title>Helmian</title>
   <link rel="icon" type="image/png" href="/assets/helmian-logo.png">
   <link rel="manifest" href="/app/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/assets/helmian-logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="/app/app.css?v=bbe1a3d44ce04ad8">
-  <link rel="stylesheet" href="/app/envoy.css?v=bbe1a3d44ce04ad8">
-  <script type="module" src="/app/app.js?v=bbe1a3d44ce04ad8"></script>
+  <link rel="stylesheet" href="/app/app.css?v=a0ad2e58682a4aad">
+  <link rel="stylesheet" href="/app/envoy.css?v=a0ad2e58682a4aad">
+  <script type="module" src="/app/app.js?v=a0ad2e58682a4aad"></script>
 </head>
 <body>
 <div id="shell" class="shell" data-view="desktop">
@@ -44,6 +44,7 @@
           <button class="nav-item" type="button" data-view="settings" data-tip="Settings"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> <span class="label">Settings</span></button>
           <button class="nav-item" type="button" data-view="activity" data-tip="Live activity"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> <span class="label">Live activity</span></button>
           <button class="nav-item" type="button" data-view="evidence" data-tip="Evidence"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> <span class="label">Evidence</span></button>
+          <button class="nav-item" type="button" data-view="organization" data-tip="Organization"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> <span class="label">Organization</span></button>
           <button class="nav-item" type="button" data-view="integrations" data-tip="Integrations"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8" rx="2"/><rect x="14" y="2" width="8" height="8" rx="2"/><rect x="2" y="14" width="8" height="8" rx="2"/><rect x="14" y="14" width="8" height="8" rx="2"/></svg> <span class="label">Integrations</span></button>
           <button class="nav-item" type="button" data-view="agents" data-tip="Agents"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> <span class="label">Agents</span></button>
           <button class="nav-item" type="button" data-view="release" data-tip="Release roadmap"><svg class="nav-svg" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg> <span class="label">Release roadmap</span></button>
@@ -543,6 +544,25 @@
       <div id="evidence-checkpoints" class="cards"></div>
       <p id="evidence-note" class="muted sm"></p>
       <div class="empty empty-hint" data-empty-for="evidence" hidden><p class="t">No evidence yet</p><p class="sm">Evidence is the signed record of what agents did: actions, handoffs and checkpoints. It builds up as agents work.</p></div>
+    </section>
+
+    <section id="view-organization" class="view" data-view-panel="organization" hidden>
+      <h2>Organization</h2>
+      <h3>Members and roles</h3>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Member</th><th>Role</th><th>Job title</th><th>Capabilities</th><th>Status</th></tr></thead><tbody id="org-members"></tbody></table></div>
+      <h3>Role catalog</h3>
+      <div id="org-catalog" class="cards"></div>
+      <h3>Set a member's role</h3>
+      <div class="card">
+        <label class="fld"><span>Member subject</span><input id="org-subject" type="text" autocomplete="off" placeholder="member subject"></label>
+        <label class="fld"><span>Job title</span><select id="org-title"></select></label>
+        <label class="fld"><span>Reason</span><input id="org-reason" type="text" autocomplete="off" placeholder="why this change"></label>
+        <div class="row-actions">
+          <button id="org-plan-btn" class="btn ghost" type="button">Prepare role plan</button>
+          <button id="org-apply-btn" class="btn" type="button">Apply role change</button>
+        </div>
+        <p id="org-status" class="muted sm"></p>
+      </div>
     </section>
 
     <section id="view-approvals" class="view" data-view-panel="approvals" hidden>
