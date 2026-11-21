@@ -79,11 +79,11 @@ same way as the rest and lights the moment an owner brings its key.
 
 | Seat | How it connects | What it runs |
 |---|---|---|
-| Claude | Account sign-in, entered once on its Integrations card | Your Claude account |
-| ChatGPT | Account sign-in, entered once on its Integrations card | Your ChatGPT account |
-| Grok | Account sign-in, entered once on its Integrations card | Your Grok account |
-| Gemini | Account sign-in, entered once on its Integrations card | Your Google / Gemini account |
-| Mistral | Account sign-in, entered once on its Integrations card | Your Mistral Le Chat account |
+| Claude | API key, entered once on its Integrations card | Your Claude account |
+| ChatGPT | API key, entered once on its Integrations card | Your ChatGPT account |
+| Grok | API key, entered once on its Integrations card | Your Grok account |
+| Gemini | API key or Google OAuth, entered once on its Integrations card | Your Google / Gemini account |
+| Mistral | API key, entered once on its Integrations card | Your Mistral Le Chat account |
 | Qwen | Local model on your own PC | Ollama, `qwen3.5:4b`, shown only as Qwen |
 | Groq | API key, entered once on its Integrations card | `openai/gpt-oss-120b` — free plan, no card |
 | NVIDIA | API key, entered once on its Integrations card | `nvidia/nemotron-3-ultra-550b-a55b` — free developer account |
@@ -106,11 +106,13 @@ are reported by the exact account that hit them — never as a vague
    You land in your own workspace in the app. No credit card, no manual setup.
 2. **Open the Integrations page.** Every seat has its own card there.
 3. **Connect each seat once.**
-   - Account seats (Claude, ChatGPT, Grok, Gemini, Mistral): type that
-     account's email and password into its card, once.
-   - API seats (Groq, NVIDIA, Cloudflare, OpenRouter, Muse): paste that
-     provider's API key into its card, once. Cloudflare's card takes two
-     pieces — your Account ID and an API token with the Workers AI
+   - API seats (Claude, ChatGPT, Grok, Gemini, Mistral, Groq, NVIDIA,
+     Cloudflare, OpenRouter, Muse): paste that provider's API key
+     into its card, once. Gemini's card also offers a Google OAuth
+     road. Helmian does not store your AI account passwords: the
+     password connect road was retired on November 20, 2026, and a
+     connect attempt carrying a password is refused. Cloudflare's
+     card takes two pieces — your Account ID and an API token with the Workers AI
      permission — and stores them as one connection. Muse's key comes
      from a Meta Model API account and bills per use; it has no free
      tier.
@@ -285,10 +287,10 @@ Phone / Browser ──→ Cloud (Vercel + Neon) ──→ Bridge ──→ Your 
   seat forgetting when a tab closes. The Librarian files each ask
   into that notebook. The Scribe door is the MCP entrance to the
   same memory.
-- **Integrations, entered once**: the seats' sign-ins and API keys are
+- **Integrations, entered once**: the seats' API keys are
   entered once on the Integrations page and stored in the tenant's
   encrypted credential store; the seats work off those connections from
-  then on. Keys and passwords are never typed into a chat.
+  then on. Keys are never typed into a chat.
 - **Signup**: creating an account creates a workspace and an owner
   membership, then lands you in `/app`. No manual provisioning.
 
@@ -311,6 +313,12 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   runner answers with an honest "no key stored" refusal until an
   owner pastes a Meta Model API key on its card. Nothing is charged
   before that key exists.
+- **Connect road**: seats connect with an API key, and Gemini also
+  offers a Google OAuth road. The stored password road was retired
+  and shipped on November 20, 2026, and every stored password and
+  session record was revoked the same day. On the owner's desk the
+  five seats that had connected by password stay off until an API
+  key is connected for each of them.
 - **Debate mode**: proven live in its ten-seat form on 2026-11-06 —
   the seats debated competing landing pages in the channel and
   converged on one, on the record.
