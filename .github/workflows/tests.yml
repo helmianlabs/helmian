@@ -1,0 +1,113 @@
+# Helmian test suite — runs on every push and every pull request.
+#
+# Mirrors the proper harness the fix programme's gate uses, plus the two
+# setup steps the gate was missing (found 2026-11-17, lane B):
+#   1. web/marketing is its own package: its tests import @clerk/backend,
+#      which only its own install provides.
+#   2. web/marketing/helmian-admin/ is a gitignored bundle produced by
+#      scripts/bundle-admin.mjs; helmian-admin-function.test.mjs cannot
+#      load without it.
+# The two .pg suites self-migrate and only need a connection string, so
+# CI gives them a throwaway Postgres and they run instead of skipping.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  root-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: helmian
+          POSTGRES_PASSWORD: helmian
+          POSTGRES_DB: helmian_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U helmian -d helmian_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      HELMION_ADMIN_CONFIG_TEST_DATABASE_URL: postgres://helmian:helmian@localhost:5432/helmian_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/marketing/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install marketing dependencies
+        run: npm --prefix web/marketing ci --no-audit --no-fund
+
+      - name: Bundle the admin backend the marketing tests import
+        run: node web/marketing/scripts/bundle-admin.mjs
+
+      - name: Syntax gate
+        run: npm run check
+
+      - name: Root test suite
+        run: npm test
+
+  # Informational until the standing-grant client fix lands: the suite
+  # runs 99 of 99 by hand with that fix in the tree, but on main today
+  # the standing-grant e2e leg still fails in the hands client. Kept
+  # visible on every push so the state is never a surprise; flip
+  # continue-on-error off when the suite runs green on main.
+  executive-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install root dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Directory targets fail at load on current Node; run file by file,
+      # the same way the suite is run by hand.
+      - name: Executive Guard suite
+        run: node --test executive-guard/test/*.test.mjs
+
+  # Informational for now: the suite runs green by hand (105/105), but
+  # one scope-reporting test has flaked intermittently under heavy CPU
+  # contention and is not yet characterized. The package's own test
+  # script targets the test/ directory, which fails at load on current
+  # Node, so CI runs the files by glob, the same way the suite is run
+  # by hand.
+  hands:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install hands dependencies
+        run: npm --prefix hands-mcp ci --no-audit --no-fund
+
+      - name: Hands suite
+        working-directory: hands-mcp
+        run: node --test test/*.test.mjs
