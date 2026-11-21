@@ -65,6 +65,7 @@ import { createConsoleCommandRepository } from './console-command-repository.mjs
 import { createConsoleCommandWorker, CONSOLE_EXECUTORS } from './console-command-worker.mjs';
 import { claimFirstOwner } from './owner-claim.mjs';
 import { verifyClerkSessionBearer } from './signup.mjs';
+import { authorizeTenantAction, persistTenantActionDecision } from './tenant-action-authorization.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pagePath = join(here, '..', '..', 'web', 'cloud-admin', 'index.html');
@@ -151,6 +152,7 @@ export const LIVE_ADMIN_WORKSPACE_ROLE_DEFAULTS_PATH = '/api/admin/workspace/rol
 const WORKSPACE_LAYOUT_KEYS = ['defaultEnvoyChannelId', 'density', 'panelOrder', 'visibleShelves'];
 export const LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH = '/api/admin/organization/memberships';
 export const LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH = '/api/admin/organization/membership-role-plan';
+export const LIVE_ADMIN_ORGANIZATION_ROLE_PATH = '/api/admin/organization/membership-role';
 export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/readiness';
 export const LIVE_ADMIN_CORA_CAPABILITIES_PATH = '/api/admin/cora/capabilities';
 export const LIVE_ADMIN_DESKTOP_PARITY_PATH = '/api/admin/desktop-parity';
@@ -1412,6 +1414,11 @@ export async function createLiveHelmianCloudAdminHandler({
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 409 ? 409 : error?.status === 404 ? 404 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_ROLE_ADMIN_REQUIRED' : error?.status === 409 ? 'ORGANIZATION_SELF_LOCKOUT' : error?.status === 404 ? 'ORGANIZATION_MEMBER_NOT_FOUND' : 'ORGANIZATION_ROLE_PLAN_INVALID' })); }
       return true;
     }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ROLE_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['idempotencyKey', 'jobTitle', 'reason', 'subject']); send(response, 200, JSON.stringify({ valid: true, ...await organizationRoles.applyRoleChange(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 409 ? 409 : error?.status === 404 ? 404 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_ROLE_ADMIN_REQUIRED' : error?.status === 409 ? 'ORGANIZATION_SELF_LOCKOUT' : error?.status === 404 ? 'ORGANIZATION_MEMBER_NOT_FOUND' : 'ORGANIZATION_ROLE_CHANGE_INVALID' })); }
+      return true;
+    }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await workspaceLayout.read(actor) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_LAYOUT_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'WORKSPACE_LAYOUT_SELECTOR_INVALID' : 'WORKSPACE_LAYOUT_READ_FAILED' })); }
@@ -1429,12 +1436,29 @@ export async function createLiveHelmianCloudAdminHandler({
     }
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_PROJECTS_PATH) {
       try {
-        const actor = await activeActor(request);
+        let actor;
+        try { actor = await activeActor(request); } catch (error) {
+          // A subject whose memberships carry no owner/admin role never
+          // derives an admin actor; let the tenant deriver name their
+          // workspace so the policy gate below refuses them with a
+          // persisted DENY receipt instead of a bare deriver refusal.
+          // The workspace-selection refusal (an admin of two workspaces
+          // who presented no selection) is not this case and stands.
+          if (error?.status !== 403 || !/Admin tenant membership required/u.test(error?.message ?? '')) throw error;
+          actor = await activeTenantActor(request);
+        }
+        const authorization = authorizeTenantAction(actor, { action: 'workspace.project.write', tenantId: actor.tenantId });
+        if (!authorization.allowed) {
+          const receipt = await persistTenantActionDecision(pool, actor, authorization);
+          send(response, 403, JSON.stringify({ valid: false, code: 'WORKSPACE_PROJECTS_ACTION_DENIED', receiptId: receipt.receiptId, authorization }));
+          return true;
+        }
         const body = await readJsonObject(request);
         exactKeys(body, ['defaultBranch', 'displayName', 'lifecycle', 'projectKey', 'sourceKind']);
-        send(response, 200, JSON.stringify({ valid: true, ...await workspaceProjects.save(actor, body) }));
+        send(response, 200, JSON.stringify({ valid: true, authorization, ...await workspaceProjects.save(actor, body) }));
       } catch (error) {
-        send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'WORKSPACE_PROJECTS_ADMIN_REQUIRED' : 'WORKSPACE_PROJECTS_INVALID' }));
+        const status = error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 503 ? 503 : 400;
+        send(response, status, JSON.stringify({ valid: false, code: status === 403 ? 'WORKSPACE_PROJECTS_ADMIN_REQUIRED' : status === 503 ? 'WORKSPACE_PROJECTS_AUTHORIZATION_RECEIPT_FAILED' : 'WORKSPACE_PROJECTS_INVALID' }));
       }
       return true;
     }

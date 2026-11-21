@@ -7,6 +7,7 @@ const adminEnv = {
   HELMION_ADMIN_ISSUER: 'https://identity.example.com',
   HELMION_ADMIN_CLIENT_ID: 'helmian-cloud-admin',
   HELMION_ADMIN_REDIRECT_URI: 'https://helmian.example.com/admin/auth/callback',
+  HELMION_ADMIN_SESSION_SECRET: 's'.repeat(32),
 };
 
 test('cloud deployment preflight accepts a dedicated Neon deployment contract', () => {
@@ -46,6 +47,7 @@ test('cloud deployment preflight fails closed without every secret and Neon boun
   assert.ok(result.missing.includes('HELMION_ADMIN_ISSUER'));
   assert.ok(result.missing.includes('HELMION_ADMIN_CLIENT_ID'));
   assert.ok(result.missing.includes('HELMION_ADMIN_REDIRECT_URI'));
+  assert.ok(result.missing.includes('HELMION_ADMIN_SESSION_SECRET'));
 });
 
 test('cloud deployment preflight refuses a wrong-site API origin', () => {

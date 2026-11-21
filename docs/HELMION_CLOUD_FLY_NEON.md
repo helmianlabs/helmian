@@ -34,8 +34,10 @@ It verifies environment names, token presence/length, the provider key presence,
 and that the Neon URL points at the asserted endpoint. It never prints secrets.
 
 The same preflight now requires the live admin OIDC names
-`HELMION_ADMIN_ISSUER`, `HELMION_ADMIN_CLIENT_ID`, and
-`HELMION_ADMIN_REDIRECT_URI`. The redirect must be the deployed HTTPS Helmian
+`HELMION_ADMIN_ISSUER`, `HELMION_ADMIN_CLIENT_ID`,
+`HELMION_ADMIN_REDIRECT_URI`, and the HMAC session secret
+`HELMION_ADMIN_SESSION_SECRET`. The secret must be at least 32 characters and
+must never be committed or printed. The redirect must be the deployed HTTPS Helmian
 origin plus `/admin/auth/callback`; for the current canonical deployment that is
 `https://helmian.cloud/admin/auth/callback`. The Fly app is already mounted
 behind the canonical Vercel `/admin` and `/api/admin` rewrites, but external

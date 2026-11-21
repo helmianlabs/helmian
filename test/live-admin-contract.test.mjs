@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import test from 'node:test';
 import { createLiveHelmianCloudAdminHandler, shouldMountLiveAdmin } from '../src/cloud/live-admin.mjs';
 import { createIdentityGateway } from '../src/cloud/identity-gateway.mjs';
@@ -73,3 +74,4 @@ test('identity discovery refuses redirects and oversized JSON with a timeout sig
   }) });
   await assert.rejects(() => oversized.beginLogin(), /too large/u);
 });
+
