@@ -45,6 +45,7 @@ export function inspectHelmianCloudDeployment(env = process.env) {
   if (!validHttpsUrl(env.HELMION_ADMIN_REDIRECT_URI, { callback: true })) {
     missing.push('HELMION_ADMIN_REDIRECT_URI');
   }
+  if (text(env.HELMION_ADMIN_SESSION_SECRET).length < 32) missing.push('HELMION_ADMIN_SESSION_SECRET');
   const providerKey = PROVIDER_KEY_BY_NAME[provider];
   if (providerKey && !text(env[providerKey])) missing.push(providerKey);
 

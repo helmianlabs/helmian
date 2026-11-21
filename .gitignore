@@ -89,3 +89,8 @@ fuck-claude/
 # sweep would have published them.
 .team-oauth-provisioning/
 
+.vercel
+.env*
+
+.vercel
+.env*
