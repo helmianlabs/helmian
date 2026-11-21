@@ -628,6 +628,7 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   let listening = false;
   let voiceMode = false;
   let voiceKind = 'dictate'; // 'dictate' (text only) or 'voice' (two-way)
+  let agentVoices = true; // the agent-voices toggle: when off, no agent speaks (see speak)
   let handlers = {};
   let restartTimer = null; // held mic restart while a reply is speaking (see restartTurn)
   let autoSubmitTimer = null; // two-way voice: the pending end-of-utterance submit (see scheduleAutoSubmit)
@@ -1475,13 +1476,26 @@ function createVoiceController({ Recognition = globalThis.SpeechRecognition ?? g
   };
 
   function speak(text, seat, ref) {
+    if (!agentVoices) return false; // agent voices off: the maestro keeps the room silent
     if (!voiceMode || voiceKind !== 'voice') return false; // dictate mode never speaks
     return tts.speak(text, seat, ref);
   }
   function cancelSpeech() {
     tts.cancel();
   }
-  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get mode() { return voiceKind; }, get listening() { return listening; }, get engineState() { return kokoroState; }, get servedBroken() { return servedBroken; }, get speakingNow() { return speakingNow; }, setSpeakingListener, setVoiceMode, speak, cancelSpeech, warmup };
+  // The agent-voices toggle (2026-11-18, Troy's order): a user-facing
+  // on/off for agent speech, separate from voice chat. Every spoken
+  // road in the room (the reply scanner, the voice-on catch-up, the
+  // console poll) funnels through speak() above, so this one gate is
+  // the whole law: off means no agent speaks, whatever else is on.
+  // Turning it off also stops whatever is playing or queued right
+  // now. Default on — the room behaves exactly as it did before.
+  function setAgentVoices(on) {
+    agentVoices = !!on;
+    if (!agentVoices) cancelSpeech();
+    return agentVoices;
+  }
+  return { get supported() { return supported; }, get canSpeak() { return canSpeak; }, get voiceMode() { return voiceMode; }, get agentVoices() { return agentVoices; }, get mode() { return voiceKind; }, get listening() { return listening; }, get engineState() { return kokoroState; }, get servedBroken() { return servedBroken; }, get speakingNow() { return speakingNow; }, setSpeakingListener, setVoiceMode, setAgentVoices, speak, cancelSpeech, warmup };
 }
 // Spoken mentions (mention-buttons bite, 2026-11-08) — inline copy of
 // mapSpokenMentions + SPOKEN_MENTION_TAGS in web/shared/voice-dictation.mjs
@@ -1545,6 +1559,9 @@ function openAgentsTab() { selectIntegrationsTab('agents'); if (location.hash !=
 const dictateChip = document.querySelector('.tool[data-tool="dictate"]');
 const voiceChatChip = document.querySelector('.tool[data-tool="voice"]');
 const voice = createVoiceController();
+// Agent voices (2026-11-18): the user's stored toggle choice applies
+// from boot, before any surface wires its chip. Default on.
+voice.setAgentVoices(store.get('agentVoices', true) !== false);
 // Speaking proof (speaker-proof bite): forward the controller's
 // per-seat speaking signal to the Envoy room, which draws the speaker
 // icon on the message being spoken. workspaceModule is the lazily
@@ -3881,6 +3898,17 @@ function updateMaestroVoiceChips() {
   if (toggle) toggle.textContent = voice.voiceMode ? 'voice: on' : 'voice: off';
 }
 
+// Agent voices chip (2026-11-18): the room composer's on/off for agent
+// speech. It reflects the controller's one gate and nothing else — the
+// choice persists per user and applies from boot (see the controller
+// creation above), so the chip only ever reports or flips that state.
+function updateAgentVoicesChip() {
+  const chip = document.getElementById('maestro-voices');
+  if (!chip) return;
+  chip.setAttribute('aria-pressed', voice.agentVoices ? 'true' : 'false');
+  chip.textContent = voice.agentVoices ? 'Voices: On' : 'Voices: Off';
+}
+
 function toggleMaestroVoice(mode) {
   clearInterim(document.getElementById('maestro-input'));
   if (voice.voiceMode && voice.mode === mode) {
@@ -3928,6 +3956,17 @@ function wireMaestroVoiceChips() {
     toggle.dataset.wired = '1';
     toggle.title = 'Toggle voice mode';
     toggle.onclick = () => toggleMaestroVoice(voice.voiceMode ? 'dictate' : 'voice');
+  }
+  const voicesChip = document.getElementById('maestro-voices');
+  if (voicesChip && !voicesChip.dataset.wired) {
+    voicesChip.dataset.wired = '1';
+    voicesChip.onclick = () => {
+      const on = !voice.agentVoices;
+      voice.setAgentVoices(on);
+      store.set('agentVoices', on);
+      updateAgentVoicesChip();
+    };
+    updateAgentVoicesChip();
   }
   const slash2 = document.getElementById('maestro-slash2');
   if (slash2 && !slash2.dataset.wired) {
