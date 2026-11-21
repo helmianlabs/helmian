@@ -63,35 +63,30 @@ async function callUserOAuth(path, { cookie = '' } = {}) {
   return { handled, calls };
 }
 
-test('Gemini user OAuth start is retired: 410, no redirect, no state cookies (Bite 12 fence)', async () => {
-  process.env.HELMION_GEMINI_OAUTH_CLIENT_ID = 'client.apps.googleusercontent.com';
-  try {
-    const { handled, calls } = await callUserOAuth(USER_GEMINI_OAUTH_START);
-    assert.equal(handled, true);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].status, 410);
-    assert.equal(JSON.parse(calls[0].body).code, 'PROVIDER_OAUTH_RETIRED');
-  } finally {
-    delete process.env.HELMION_GEMINI_OAUTH_CLIENT_ID;
-  }
+test('Gemini user OAuth start without a verified actor fails closed: no redirect, no state cookies', async () => {
+  // The flow was restored on 2026-11-17 (letter 935); the full flow
+  // is pinned in user-oauth-start.test.mjs. Here, called the way this
+  // file calls it — no activeTenantActor — it must fail closed.
+  const { handled, calls } = await callUserOAuth(USER_GEMINI_OAUTH_START);
+  assert.equal(handled, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].status, 503);
+  assert.equal(JSON.parse(calls[0].body).code, 'GEMINI_OAUTH_UNAVAILABLE');
+  assert.equal(calls[0].headers?.location, undefined);
+  assert.equal(calls[0].headers?.['set-cookie'], undefined);
 });
 
-test('Gemini user OAuth callback is retired: 410 for any cookie set, no token exchange (Bite 12 fence)', async () => {
-  process.env.HELMION_GEMINI_OAUTH_CLIENT_ID = 'client.apps.googleusercontent.com';
+test('Gemini user OAuth callback without a verified actor fails closed: no token exchange', async () => {
   const realFetch = globalThis.fetch;
   let fetches = 0;
   globalThis.fetch = async () => { fetches += 1; throw new Error('must not be called'); };
   try {
-    const adminCookie = await callUserOAuth(`${USER_GEMINI_OAUTH_CALLBACK}?code=google-code&state=state-123`, { cookie: 'helmion_gemini_oauth_state=state-123; helmion_gemini_oauth_verifier=verifier-123' });
-    assert.equal(adminCookie.calls[0].status, 410);
-    assert.equal(JSON.parse(adminCookie.calls[0].body).code, 'PROVIDER_OAUTH_RETIRED');
-    const userCookie = await callUserOAuth(`${USER_GEMINI_OAUTH_CALLBACK}?code=google-code&state=state-123`, { cookie: 'helmion_user_gemini_state=state-123; helmion_user_gemini_verifier=verifier-123' });
-    assert.equal(userCookie.calls[0].status, 410);
-    assert.equal(JSON.parse(userCookie.calls[0].body).code, 'PROVIDER_OAUTH_RETIRED');
+    const result = await callUserOAuth(`${USER_GEMINI_OAUTH_CALLBACK}?code=google-code&state=state-123`, { cookie: 'helmion_gemini_user_oauth_state=state-123; helmion_gemini_user_oauth_verifier=verifier-123' });
+    assert.equal(result.calls[0].status, 503);
+    assert.equal(JSON.parse(result.calls[0].body).code, 'GEMINI_OAUTH_UNAVAILABLE');
     assert.equal(fetches, 0);
   } finally {
     globalThis.fetch = realFetch;
-    delete process.env.HELMION_GEMINI_OAUTH_CLIENT_ID;
   }
 });
 

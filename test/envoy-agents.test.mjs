@@ -403,7 +403,7 @@ test('custom agents: sanitizeCustomAgent normalizes handle, emoji, jobTitle, job
   assert.equal(agent.emoji, '🦀');
   assert.equal(agent.jobTitle, 'Rust Systems Architect');
   assert.equal(agent.provider, 'mistral');
-  assert.equal(agent.authMode, 'password_session', 'the legacy input collapses to the one road on sanitize');
+  assert.equal(agent.authMode, 'api_key', 'the legacy input collapses to the one road on sanitize');
 
   const cfg = emptyConfig();
   cfg.customAgents = [agent];
@@ -415,7 +415,7 @@ test('custom agents: sanitizeCustomAgent normalizes handle, emoji, jobTitle, job
   const back = parseConfig(serializeConfig(cfg));
   assert.equal(back.customAgents.length, 1);
   assert.equal(back.customAgents[0].id, 'rusty_bot');
-  assert.equal(back.customAgents[0].authMode, 'password_session', 'the round-trip keeps the single mode');
+  assert.equal(back.customAgents[0].authMode, 'api_key', 'the round-trip keeps the single mode');
   assert.equal(back.debateMode, 'free-willy');
   assert.equal(back.maxRoundTurns, 14);
   assert.equal(back.github.repo, 'TroyHelm/Helmion');
@@ -446,13 +446,13 @@ test('debate turn cap persists across off-writes (Free-Willy cap truth, 2026-11-
   assert.equal(parseConfig(serializeConfig(plain)).maxRoundTurns, 10, 'absent cap reads back as the server default');
 });
 
-test('custom agents: every legacy authMode collapses to password_session, and stored records still load (one-road Bite 5)', async () => {
+test('custom agents: every legacy authMode collapses to api_key, and stored records still load (one-road Bite 5; road changed 2026-11-17)', async () => {
   const { sanitizeCustomAgent, CUSTOM_AGENT_AUTH_MODE } = await import('../src/cloud/envoy-agents.mjs');
-  assert.equal(CUSTOM_AGENT_AUTH_MODE, 'password_session');
+  assert.equal(CUSTOM_AGENT_AUTH_MODE, 'api_key');
   for (const legacy of ['subscription', 'browser-free', 'browser-paid', 'api-key', 'cli', 'SUBSCRIPTION', 'nonsense', '', undefined]) {
     const a = sanitizeCustomAgent({ handle: 'rusty', provider: 'claude', authMode: legacy });
     assert.ok(a, `record with authMode ${String(legacy)} still sanitizes`);
-    assert.equal(a.authMode, 'password_session', `authMode ${String(legacy)} collapses to the one road`);
+    assert.equal(a.authMode, 'api_key', `authMode ${String(legacy)} collapses to the one road`);
   }
   // A record stored by an old build, carrying a legacy mode in its
   // saved JSON, still loads through parseConfig — and comes out
@@ -465,9 +465,9 @@ test('custom agents: every legacy authMode collapses to password_session, and st
   const back = parseConfig(stored);
   assert.ok(back, 'stored record parses');
   assert.equal(back.customAgents.length, 1, 'the stored agent still loads');
-  assert.equal(back.customAgents[0].authMode, 'password_session');
+  assert.equal(back.customAgents[0].authMode, 'api_key');
   assert.equal(back.customAgents[0].jobTitle, 'Rust Systems Architect');
-  assert.equal(publicConfig(back).customAgents[0].authMode, 'password_session', 'the public view carries the single mode too');
+  assert.equal(publicConfig(back).customAgents[0].authMode, 'api_key', 'the public view carries the single mode too');
 });
 
 test('free-willy debate mode: human message dispatches all seated agents; agent message continues debate until maxRoundTurns', () => {

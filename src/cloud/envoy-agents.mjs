@@ -65,12 +65,16 @@
 export const AGENT_PROVIDERS = Object.freeze(['maestro', 'claude', 'openai', 'grok', 'gemini', 'mistral', 'qwen', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse']);
 export const AGENT_NAMES = Object.freeze({ maestro: 'Maestro', helm: 'Helm', librarian: 'Librarian', claude: 'Claude', openai: 'ChatGPT', grok: 'Grok', gemini: 'Gemini', mistral: 'Mistral', qwen: 'Qwen', runway: 'Runway', ollama: 'Ollama', custom: 'Custom AI', groq: 'Groq', nvidia: 'NVIDIA', cloudflare: 'Cloudflare', openrouter: 'OpenRouter', muse: 'Muse' });
 export const CUSTOM_AGENT_ENGINES = Object.freeze(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse', 'custom']);
-// One connect road (owner's law, 2026-11-01): a custom agent's account
-// connects with an email and a password, and the seat works off that
-// sign-in — the 'password_session' auth mode sql/063 defined. The old
-// seat-mode menu no longer exists; sanitizeCustomAgent collapses every
-// stored or incoming authMode value to this single mode.
-export const CUSTOM_AGENT_AUTH_MODE = 'password_session';
+// One connect road: a custom agent's seat works off the tenant's
+// provider connection of record. Under the owner's 2026-11-01 law
+// that was the email + password sign-in ('password_session'); Troy's
+// order of 2026-11-17 (Scribe letter 935) retired the password road,
+// and the connection of record is now the API key ('api_key') — or
+// an OAuth connection where one exists, which outranks the key in
+// the connect route. The old seat-mode menu no longer exists;
+// sanitizeCustomAgent collapses every stored or incoming authMode
+// value to this single mode.
+export const CUSTOM_AGENT_AUTH_MODE = 'api_key';
 export const MAX_CHANNEL_AGENTS = 50;
 export const MAX_DEBATE_TURNS = 50;
 export const DEFAULT_DEBATE_TURNS = 10;
@@ -184,7 +188,7 @@ export function sanitizeCustomAgent(raw) {
   const emoji = String(raw.emoji ?? '🤖').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 16) || '🤖';
   // Every legacy authMode collapses to the one road — stored records
   // keep loading (parseConfig runs them through here) and come out
-  // carrying 'password_session', whatever they were saved with.
+  // carrying 'api_key', whatever they were saved with.
   const authMode = CUSTOM_AGENT_AUTH_MODE;
   const jobTitle = String(raw.jobTitle ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 80);
   const jobPrompt = String(raw.jobPrompt ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 600);
