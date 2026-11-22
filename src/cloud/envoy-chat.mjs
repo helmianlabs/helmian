@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { publishEnvoyMessage } from './envoy-ably.mjs';
 
 const KINDS = new Set(['team', 'direct', 'agent']);
@@ -59,7 +60,7 @@ export function assertEnvoyMembership({ tenantId, subject, role, canUseEnvoy }) 
 
 function contextFor(actor) {
   assertEnvoyMembership({ tenantId: actor.tenantId, subject: actor.subject, role: actor.role, canUseEnvoy: true });
-  return { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: actor.sessionId, requestId: actor.requestId };
+  return { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: actor.sessionId ?? randomUUID(), requestId: actor.requestId ?? randomUUID() };
 }
 
 function rowMessage(row, authorEmoji = null) {

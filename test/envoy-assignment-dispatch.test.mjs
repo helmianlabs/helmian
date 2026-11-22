@@ -192,7 +192,11 @@ test('mesh assignment dispatch on Postgres: one message, two owners, per-part wo
 
     // Phase 2: Free-Willy changes nothing for a marked message —
     // no roster fan-out, and the assignment post opens no debate.
+    // Phase 1's poll claimed both parts (bite J), so expire the
+    // claims first — the re-offer is what debate mode must not
+    // change.
     await mesh.changeConfig(owner, { action: 'set-debate-mode', channelId: channel.id, debateMode: 'free-willy' });
+    await pool.query('update helmion.envoy_work_claims set expires_at = now() - interval \'1 second\' where tenant_id = $1 and message_id = $2', [tenantId, human.id]);
     work = await workFor('claude,gemini,grok');
     assert.equal(work.length, 2, 'a marked message dispatches per part in debate mode too');
     assert.ok(work.every((w) => w.message.id === human.id && w.slice), 'every item is a part of the marked message');
@@ -201,6 +205,9 @@ test('mesh assignment dispatch on Postgres: one message, two owners, per-part wo
     // (no re-hand), Gemini's part is still handed out, and the
     // reply itself opens no debate turn for anyone.
     const claudeReply = (await mesh.postAsAgent(device, { channelId: channel.id, provider: 'claude', replyTo: human.id, body: 'Release notes drafted.' })).receipt.message;
+    // Gemini's part was claimed by the Phase 2 poll; expire the
+    // claim so the re-offer can show what remains.
+    await pool.query('update helmion.envoy_work_claims set expires_at = now() - interval \'1 second\' where tenant_id = $1 and message_id = $2', [tenantId, human.id]);
     work = await workFor('gemini,grok');
     assert.equal(work.length, 1, "only Gemini's unanswered part remains");
     assert.deepEqual(work[0].agents, ['gemini']);
