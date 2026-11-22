@@ -97,7 +97,7 @@ export function createToolCallGate({ pool, rulesProvider = null, now = () => new
           tenantId: resource.tenantId ?? actor.tenantId,
         },
         policyVersion: result.policyVersion,
-        decision: allowed ? 'allow' : 'deny',
+        decision: allowed ? 'ALLOW' : 'DENY',
         privacySummary: `${label} ${allowed ? 'allowed' : 'refused'} by attribute policy (${result.reason})`.slice(0, 240),
         result: { decision: result.decision, matchedRuleIds: result.matchedRuleIds, reason: result.reason },
       });

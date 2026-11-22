@@ -43,7 +43,7 @@ test('with no tenant rules, an in-tenant tool call is allowed by the floor and r
   assert.equal(verdict.allowed, true);
   assert.equal(auditRows.length, 1);
   assert.equal(auditRows[0].actionType, 'tool.call');
-  assert.equal(auditRows[0].decision, 'allow');
+  assert.equal(auditRows[0].decision, 'ALLOW');
 });
 
 test('a panel DENY rule on the tool name refuses that tool, receipted, and lets others pass', async () => {
@@ -54,7 +54,7 @@ test('a panel DENY rule on the tool name refuses that tool, receipted, and lets 
   assert.ok(denied.matchedRuleIds.includes('no-shell'));
   const allowed = await gate.authorizeToolCall(ACTOR, { toolName: 'read_file' });
   assert.equal(allowed.allowed, true);
-  assert.deepEqual(auditRows.map((r) => r.decision), ['deny', 'allow']);
+  assert.deepEqual(auditRows.map((r) => r.decision), ['DENY', 'ALLOW']);
   await assert.rejects(() => gate.assertToolCall(ACTOR, { toolName: 'run_shell' }), (e) => e instanceof ToolCallDeniedError && e.code === 'TOOL_CALL_ATTRIBUTE_POLICY_DENIED');
 });
 

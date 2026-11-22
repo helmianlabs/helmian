@@ -159,6 +159,92 @@ export async function postEmptyDeskAnswerIfNeeded({ pool, tenantId, channelId, m
   } finally { client.release(); }
 }
 
+// ---------- the intake rate limit (bite A2, intake counting) ----------
+// The Site Guard's rate stop is counted HERE, on the send path, at
+// intake — not at the work poll. A poll only ever sees a channel's
+// newest rows, so a count kept there can never reach the stop line
+// during a real flood; the send path sees every message the moment
+// it lands. The count is the sender's own messages in the window,
+// read from the messages table, and a message's RANK in that count
+// (how many of the sender's window messages stand at or before it)
+// is a property of the message itself, so the flag and stop trips
+// are marked on the exact messages that crossed the lines no matter
+// when this hook runs. A message at or past the flag line carries
+// its rank in metadata.siteGuardRate, so the poll never counts it a
+// second time in its own limiter; a message at or past the stop
+// line also carries the Guard's stop record in metadata.guard (the
+// poll treats that mark as terminal, exactly like an intake screen
+// stop) and gets its refusal here, in the Guard's name, under the
+// same reply: key the poll's refusals use — so the channel shows
+// one refusal per stopped message and the message stands answered.
+// The trips themselves are witnessed into the findings feed by the
+// next work poll, which reads the marks; enforcement never waits
+// for that witness. Best-effort, in its own tenant transaction,
+// like the empty-desk answer: a failure is the caller's to log and
+// never fails the send (the message is already durable; an
+// unmarked flood message is still counted by the poll's limiter).
+export const SITE_GUARD_RATE_REFUSAL_SUBJECT = 'agent:site-guard';
+
+export async function applyIntakeRateLimitIfNeeded({ pool, tenantId, channelId, messageId, senderSubject } = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    await client.query(`select set_config('helmion.tenant_id', $1, true)`, [String(tenantId)]);
+    // The rank is computed entirely in SQL against the message's
+    // own stored timestamp: a timestamp read back through the
+    // driver loses its sub-millisecond precision, and a bound
+    // built from it would exclude the message itself from its
+    // own count.
+    const counted = await client.query(
+      `with self as (select created_at from helmion.envoy_messages where tenant_id=$1 and id=$2)
+       select (select created_at from self) as at, count(*)::int as rank, min(m.created_at) as first_at
+         from helmion.envoy_messages m, self
+        where m.tenant_id=$1 and m.author_subject=$3 and m.author_kind='human'
+          and m.created_at > self.created_at - ($4 || ' milliseconds')::interval
+          and m.created_at <= self.created_at`,
+      [String(tenantId), String(messageId), String(senderSubject), String(SITE_GUARD_RATE_WINDOW_MS)],
+    );
+    if (!counted.rows.length || counted.rows[0].at === null) { await client.query('commit'); return { stopped: false, rank: 0, tripped: null }; }
+    const at = new Date(counted.rows[0].at);
+    const windowStart = new Date(at.getTime() - SITE_GUARD_RATE_WINDOW_MS);
+    const rank = counted.rows[0]?.rank ?? 0;
+    if (rank < SITE_GUARD_RATE_FLAG_THRESHOLD) { await client.query('commit'); return { stopped: false, rank, tripped: null }; }
+    const tripped = rank === SITE_GUARD_RATE_FLAG_THRESHOLD ? 'flag' : rank === SITE_GUARD_RATE_STOP_THRESHOLD ? 'stop' : null;
+    const stopped = rank >= SITE_GUARD_RATE_STOP_THRESHOLD;
+    const verdict = {
+      senderKey: siteGuardSenderKey({ authorSubject: senderSubject, authorKind: 'human' }),
+      count: rank,
+      windowMs: SITE_GUARD_RATE_WINDOW_MS,
+      flagThreshold: SITE_GUARD_RATE_FLAG_THRESHOLD,
+      stopThreshold: SITE_GUARD_RATE_STOP_THRESHOLD,
+      level: stopped ? 'stop' : 'flag',
+      tripped,
+      stopped,
+      windowStart: counted.rows[0]?.first_at ? new Date(counted.rows[0].first_at).toISOString() : windowStart.toISOString(),
+      at: at.toISOString(),
+    };
+    const patch = { siteGuardRate: { rank, tripped, windowStart: verdict.windowStart, at: verdict.at } };
+    if (stopped) patch.guard = siteGuardRateStopRecord(verdict);
+    await client.query(
+      `update helmion.envoy_messages set metadata = coalesce(metadata, '{}'::jsonb) || $3::jsonb where tenant_id=$1 and id=$2`,
+      [String(tenantId), String(messageId), JSON.stringify(patch)],
+    );
+    if (stopped) {
+      await client.query(
+        `insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key, metadata)
+         values ($1,$2,$3,'agent',$4,$5,$6)
+         on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing`,
+        [String(tenantId), String(channelId), SITE_GUARD_RATE_REFUSAL_SUBJECT, siteGuardRateRefusalText(verdict), `reply:${String(messageId)}`, JSON.stringify({ guard: siteGuardRateStopRecord(verdict) })],
+      );
+    }
+    await client.query('commit');
+    return { stopped, rank, tripped };
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally { client.release(); }
+}
+
 // ---------- the Librarian filing (bite L1, 2026-11-15) ----------
 // A human who addresses the Librarian with a file request ("Librarian:
 // file this fact. X", "Librarian, remember: X") is not asking the
@@ -679,7 +765,21 @@ export function createEnvoyStore(pool) {
       // never fails the send. The desk has no realtime subscriber,
       // so the answer lands on the sender's own post-send reload
       // and on every client's next poll, like any stored reply.
+      // The intake rate limit runs before every answering hook: a
+      // send the Site Guard stops at the stop line gets its refusal
+      // from the hook itself, and no coordinator, guide, Librarian
+      // or empty-desk answer may also speak for it. A failure here
+      // is logged and the send proceeds unmarked, exactly like the
+      // other hooks' failures.
+      let rateStopped = false;
       if (!out.receipt.replayed && message.authorKind === 'human') {
+        try {
+          rateStopped = (await applyIntakeRateLimitIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.receipt.message.id, senderSubject: message.authorSubject })).stopped === true;
+        } catch (error) {
+          console.error('[envoy-chat] intake rate limit failed:', error.message);
+        }
+      }
+      if (!out.receipt.replayed && message.authorKind === 'human' && !rateStopped) {
         // Hook precedence (DESIGN section 1.5, decision D6):
         // the coordinator first, then the guide matcher, then
         // the empty-desk answer, enforced here in one place so
@@ -785,7 +885,18 @@ export function createEnvoyStore(pool) {
       const actor = { tenantId: binding.tenantId, subject: binding.subject, role: binding.role, sessionId: binding.sessionId, requestId: binding.requestId };
       const message = normalizeEnvoyMessage({ channelId: binding.channelId, authorSubject: binding.subject, authorKind: 'human', body: binding.text });
       const context = contextFor(actor); const idempotencyKey = text(`${binding.provider}:${binding.eventId}`, 'connector idempotency key', 300);
-      return withTenantTransaction(pool, context, async (client) => { await requireActiveTenantMembership(client, context); const channel = await client.query('select id from helmion.envoy_channels where tenant_id=$1 and id=$2', [context.tenantId, message.channelId]); if (channel.rowCount !== 1) throw new Error('Envoy channel was not found in this Organization'); const result = await client.query(`insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key) values ($1,$2,$3,$4,$5,$6) on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing returning id, channel_id, author_subject, author_kind, body, idempotency_key, created_at`, [context.tenantId, message.channelId, message.authorSubject, message.authorKind, message.body, idempotencyKey]); const row = result.rowCount === 1 ? result.rows[0] : (await client.query(`select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject=$3 and idempotency_key=$4`, [context.tenantId, message.channelId, message.authorSubject, idempotencyKey])).rows[0]; if (!row) throw new Error('Envoy connector message receipt was not durable'); return { durable: true, replayed: result.rowCount !== 1, message: rowMessage(row) }; });
+      const out = await withTenantTransaction(pool, context, async (client) => { await requireActiveTenantMembership(client, context); const channel = await client.query('select id from helmion.envoy_channels where tenant_id=$1 and id=$2', [context.tenantId, message.channelId]); if (channel.rowCount !== 1) throw new Error('Envoy channel was not found in this Organization'); const result = await client.query(`insert into helmion.envoy_messages(tenant_id, channel_id, author_subject, author_kind, body, idempotency_key) values ($1,$2,$3,$4,$5,$6) on conflict (tenant_id, channel_id, author_subject, idempotency_key) do nothing returning id, channel_id, author_subject, author_kind, body, idempotency_key, created_at`, [context.tenantId, message.channelId, message.authorSubject, message.authorKind, message.body, idempotencyKey]); const row = result.rowCount === 1 ? result.rows[0] : (await client.query(`select id, channel_id, author_subject, author_kind, body, idempotency_key, created_at from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject=$3 and idempotency_key=$4`, [context.tenantId, message.channelId, message.authorSubject, idempotencyKey])).rows[0]; if (!row) throw new Error('Envoy connector message receipt was not durable'); return { durable: true, replayed: result.rowCount !== 1, message: rowMessage(row) }; });
+      // Connector sends are human sends on the same send path: the
+      // intake rate limit counts them too, best-effort, after the
+      // write is durable — a failure is logged, never fatal.
+      if (!out.replayed) {
+        try {
+          await applyIntakeRateLimitIfNeeded({ pool, tenantId: context.tenantId, channelId: message.channelId, messageId: out.message.id, senderSubject: message.authorSubject });
+        } catch (error) {
+          console.error('[envoy-chat] intake rate limit failed:', error.message);
+        }
+      }
+      return out;
     },
   });
 }
@@ -797,6 +908,7 @@ import { createLibrarianStore } from './envoy-librarian.mjs';
 import { discordBotStatus, slackBotStatus } from './bot-status.mjs';
 import { postHelmKbAnswerIfNeeded } from './helm-kb.mjs';
 import { postMaestroAssignmentIfNeeded } from './envoy-assignments.mjs';
+import { SITE_GUARD_RATE_FLAG_THRESHOLD, SITE_GUARD_RATE_STOP_THRESHOLD, SITE_GUARD_RATE_WINDOW_MS, siteGuardRateRefusalText, siteGuardRateStopRecord, siteGuardSenderKey } from './site-guard.mjs';
 
 // The channels list carries each channel's Discord / Slack link (from
 // its newest config row, the same rows the bridges read) plus the bot
