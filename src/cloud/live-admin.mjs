@@ -50,6 +50,7 @@ import { receiveInboundConnectorEvent } from './connector-gateway.mjs';
 import { createWorkspaceLayoutRepository } from './workspace-layout-repository.mjs';
 import { createAuditEventRepository, normalizeAuditExportQuery } from './audit-event-repository.mjs';
 import { createOrganizationRoleRepository } from './organization-role-repository.mjs';
+import { createTenantAttributeRulesRepository, loadTenantAttributeRules } from './tenant-attribute-rules-repository.mjs';
 import { readOrganizationReadiness } from './organization-readiness.mjs';
 import { buildCoraCapabilityExplorer } from './cora-capability-explorer.mjs';
 import { resolvePublishedCoraSessionConfig } from '../cora/session-config-resolver.mjs';
@@ -153,6 +154,8 @@ const WORKSPACE_LAYOUT_KEYS = ['defaultEnvoyChannelId', 'density', 'panelOrder',
 export const LIVE_ADMIN_ORGANIZATION_MEMBERSHIPS_PATH = '/api/admin/organization/memberships';
 export const LIVE_ADMIN_ORGANIZATION_ROLE_PLAN_PATH = '/api/admin/organization/membership-role-plan';
 export const LIVE_ADMIN_ORGANIZATION_ROLE_PATH = '/api/admin/organization/membership-role';
+export const LIVE_ADMIN_ORGANIZATION_ATTRIBUTE_RULES_PATH = '/api/admin/organization/attribute-rules';
+export const LIVE_ADMIN_ORGANIZATION_ATTRIBUTE_RULE_DELETE_PATH = '/api/admin/organization/attribute-rules/delete';
 export const LIVE_ADMIN_ORGANIZATION_READINESS_PATH = '/api/admin/organization/readiness';
 export const LIVE_ADMIN_CORA_CAPABILITIES_PATH = '/api/admin/cora/capabilities';
 export const LIVE_ADMIN_DESKTOP_PARITY_PATH = '/api/admin/desktop-parity';
@@ -360,6 +363,7 @@ export async function createLiveHelmianCloudAdminHandler({
   workspaceLayoutRepository: suppliedWorkspaceLayoutRepository = null,
   auditEventRepository: suppliedAuditEventRepository = null,
   organizationRoleRepository: suppliedOrganizationRoleRepository = null,
+  tenantAttributeRulesRepository: suppliedTenantAttributeRulesRepository = null,
   providerConnectionRepository: suppliedProviderConnectionRepository = null,
   providerVaultAdapter: suppliedProviderVaultAdapter = null,
   workspaceProjectRepository: suppliedWorkspaceProjectRepository = null,
@@ -421,7 +425,8 @@ export async function createLiveHelmianCloudAdminHandler({
   const personalPreferences = suppliedPersonalPreferencesRepository ?? createCoraPersonalPreferencesRepository(pool);
   const organizationDatabase = suppliedOrganizationDatabaseRepository ?? createOrganizationDatabaseRepository(pool);
   const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);
-  const auditEvents = suppliedAuditEventRepository ?? createAuditEventRepository(pool);
+  const auditEvents = suppliedAuditEventRepository ?? createAuditEventRepository(pool, { attributeRulesProvider: (client, tenantId) => loadTenantAttributeRules(client, tenantId) });
+  const tenantAttributeRules = suppliedTenantAttributeRulesRepository ?? createTenantAttributeRulesRepository(pool);
   const organizationRoles = suppliedOrganizationRoleRepository ?? createOrganizationRoleRepository(pool);
   const providerVaultAdapter = suppliedProviderVaultAdapter ?? createEncryptedVaultAdapterFromEnv({ pool, env });
   const providerConnections = suppliedProviderConnectionRepository ?? createProviderConnectionRepository(pool, { fetchImpl, vaultAdapter: providerVaultAdapter ?? undefined });
@@ -546,11 +551,11 @@ export async function createLiveHelmianCloudAdminHandler({
       // one of their own workspaces (workspace switching, piece 1).
       const membership = claimed.viaDeviceToken === true && claimed.deviceTenantId
         ? await client.query(
-          `select tenant_id, role from helmion.tenant_memberships where subject=$1 and tenant_id=$2 and active`,
+          `select tenant_id, role, job_title from helmion.tenant_memberships where subject=$1 and tenant_id=$2 and active`,
           [claimed.subject, claimed.deviceTenantId],
         )
         : await client.query(
-          `select tenant_id, role from helmion.tenant_memberships where subject=$1 and active order by created_at asc, tenant_id asc`,
+          `select tenant_id, role, job_title from helmion.tenant_memberships where subject=$1 and active order by created_at asc, tenant_id asc`,
           [claimed.subject],
         );
       // Duplicate active memberships can exist (signups that raced before
@@ -568,7 +573,7 @@ export async function createLiveHelmianCloudAdminHandler({
         const selectedTenantId = presentedTenantSelection(request, env);
         if (selectedTenantId) picked = membership.rows.find((row) => row.tenant_id === selectedTenantId) ?? picked;
       }
-      const actor = { subject: claimed.subject, tenantId: picked.tenant_id, role: picked.role };
+      const actor = { subject: claimed.subject, tenantId: picked.tenant_id, role: picked.role, jobTitle: picked.job_title ?? null, attributes: { jobTitle: picked.job_title ?? null } };
       if (claimed.viaDeviceToken === true) actor.viaDeviceToken = true;
       return actor;
     } finally { client.release(); }
@@ -1417,6 +1422,21 @@ export async function createLiveHelmianCloudAdminHandler({
     if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ROLE_PATH) {
       try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['idempotencyKey', 'jobTitle', 'reason', 'subject']); send(response, 200, JSON.stringify({ valid: true, ...await organizationRoles.applyRoleChange(actor, body) })); }
       catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 409 ? 409 : error?.status === 404 ? 404 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_ROLE_ADMIN_REQUIRED' : error?.status === 409 ? 'ORGANIZATION_SELF_LOCKOUT' : error?.status === 404 ? 'ORGANIZATION_MEMBER_NOT_FOUND' : 'ORGANIZATION_ROLE_CHANGE_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ATTRIBUTE_RULES_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await tenantAttributeRules.list(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_ATTRIBUTE_RULES_ADMIN_REQUIRED' : error?.status === 400 ? 'ORGANIZATION_SELECTOR_INVALID' : 'ORGANIZATION_ATTRIBUTE_RULES_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ATTRIBUTE_RULES_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['actions', 'conditions', 'effect', 'reason', 'ruleId']); send(response, 200, JSON.stringify({ valid: true, ...await tenantAttributeRules.create(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 409 ? 409 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_ATTRIBUTE_RULES_ADMIN_REQUIRED' : error?.status === 409 ? 'ORGANIZATION_ATTRIBUTE_RULE_EXISTS' : 'ORGANIZATION_ATTRIBUTE_RULE_INVALID' })); }
+      return true;
+    }
+    if (request.method === 'POST' && requestUrl.pathname === LIVE_ADMIN_ORGANIZATION_ATTRIBUTE_RULE_DELETE_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['reason', 'ruleId']); send(response, 200, JSON.stringify({ valid: true, ...await tenantAttributeRules.remove(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 404 ? 404 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'ORGANIZATION_ATTRIBUTE_RULES_ADMIN_REQUIRED' : error?.status === 404 ? 'ORGANIZATION_ATTRIBUTE_RULE_NOT_FOUND' : 'ORGANIZATION_ATTRIBUTE_RULE_DELETE_INVALID' })); }
       return true;
     }
     if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_PATH) {

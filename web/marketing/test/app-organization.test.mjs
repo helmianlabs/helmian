@@ -30,3 +30,24 @@ test('organizationModel tolerates an empty or missing body', () => {
   assert.deepEqual(organizationModel(), { members: [], roles: [] });
   assert.deepEqual(organizationModel({}), { members: [], roles: [] });
 });
+
+import { readFileSync } from 'node:fs';
+const indexHtml = readFileSync(new URL('../app/index.html', import.meta.url), 'utf8');
+const appJs = readFileSync(new URL('../app/app.js', import.meta.url), 'utf8');
+
+test('the Organization view carries the attribute rules table and create form', () => {
+  for (const id of ['org-rules', 'rule-id', 'rule-effect', 'rule-actions', 'rule-cond-path', 'rule-cond-op', 'rule-cond-value', 'rule-reason', 'rule-create-btn', 'rule-status']) {
+    assert.ok(indexHtml.includes(`id="${id}"`), `missing #${id}`);
+  }
+});
+
+test('the app loads, creates and removes attribute rules through the panel routes', () => {
+  assert.match(appJs, /api\('\/api\/admin\/organization\/attribute-rules'\)/);
+  assert.match(appJs, /post\('\/api\/admin\/organization\/attribute-rules', \{ ruleId, effect, actions, conditions, reason \}\)/);
+  assert.match(appJs, /post\('\/api\/admin\/organization\/attribute-rules\/delete', \{ ruleId, reason \}\)/);
+  assert.match(appJs, /attributeRulesModel/);
+});
+
+test('the role catalog renders as stacked cards, not side-by-side rows', () => {
+  assert.match(appJs, /el\('div', 'cap muted sm', r\.capabilities\.join\(', '\)\)/);
+});

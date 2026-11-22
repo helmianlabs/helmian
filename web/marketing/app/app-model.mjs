@@ -60,6 +60,18 @@ export function organizationModel(body = {}) {
   return { members, roles };
 }
 
+export function attributeRulesModel(body = {}) {
+  const rules = (Array.isArray(body.rules) ? body.rules : []).map((r) => ({
+    ruleId: String(r?.ruleId ?? ''),
+    effect: String(r?.effect ?? ''),
+    actions: Array.isArray(r?.actions) ? r.actions.map(String) : [],
+    conditions: r?.conditions && typeof r.conditions === 'object' && !Array.isArray(r.conditions) ? r.conditions : {},
+    reason: r?.reason ? String(r.reason) : '',
+    active: r?.active === true,
+  })).filter((r) => r.ruleId);
+  return { rules };
+}
+
 export function isAdminRole(role) { return ['owner', 'admin'].includes(String(role ?? '').toLowerCase()); }
 
 export function sessionModel(status, body = {}) {
