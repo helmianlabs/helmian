@@ -22,7 +22,7 @@ function fakePool() {
     async query(sql, values = []) {
       const q = String(sql).replace(/\s+/g, ' ').trim().toLowerCase();
       if (['begin', 'commit', 'rollback'].includes(q)) return { rowCount: 0, rows: [] };
-      if (q.startsWith('select tenant_id, role from helmion.tenant_memberships')) {
+      if (q.startsWith('select tenant_id, role') && q.includes('from helmion.tenant_memberships')) {
         const member = memberships[values[0]];
         return member ? { rowCount: 1, rows: [member] } : { rowCount: 0, rows: [] };
       }

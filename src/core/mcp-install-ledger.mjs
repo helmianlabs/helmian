@@ -71,6 +71,7 @@ import { parseArmingBaselineExport, ARMING_BASELINE_FORMAT, ARMING_BASELINE_VERS
 
 export const LEDGER_DECISIONS = Object.freeze([
   'discovered', 'flagged', 'sandboxed', 'approved', 'rejected', 'installed', 'drift-detected', 'blocked',
+  'package-provenance',
 ]);
 
 const FINGERPRINT_EXTENSIONS = new Set([
