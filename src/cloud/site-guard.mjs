@@ -296,7 +296,13 @@ export function siteGuardSenderKey({ authorSubject = null, authorKind = null } =
  * The rate store: one sliding window of message timestamps per
  * (tenant, sender), held in a Map inside the returned object. The
  * mesh builds ONE limiter per mesh instance and it lives exactly as
- * long as that instance — the limits, stated plainly:
+ * long as that instance. Since the intake-counting fix, the primary
+ * enforcement is on the send path (envoy-chat.mjs counts each human
+ * send against the messages table at intake and marks the trips and
+ * stops there, in real time); this in-process limiter remains the
+ * count for messages that enter through the mesh's own roads (the
+ * bridges) and for any send whose intake hook failed soft. Its
+ * limits, stated plainly:
  *   - In-process only. A restart forgets every count; a sender
  *     mid-flood starts the new process with a clean window.
  *   - Per instance. Where several mesh processes serve one

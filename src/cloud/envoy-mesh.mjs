@@ -41,7 +41,7 @@ import { classifySeatAskThread } from './envoy-actions.mjs';
 import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
-import { screenIntakeContent, siteGuardRefusalText, siteGuardStopRecord, ingestSiteGuardFindings, createSiteGuardRateLimiter, siteGuardSenderKey, siteGuardRateRefusalText, siteGuardRateStopRecord, ingestSiteGuardRateFinding } from './site-guard.mjs';
+import { screenIntakeContent, siteGuardRefusalText, siteGuardStopRecord, ingestSiteGuardFindings, createSiteGuardRateLimiter, siteGuardSenderKey, siteGuardRateRefusalText, siteGuardRateStopRecord, ingestSiteGuardRateFinding, SITE_GUARD_RATE_CLASS, SITE_GUARD_RATE_FLAG_THRESHOLD, SITE_GUARD_RATE_STOP_THRESHOLD, SITE_GUARD_RATE_WINDOW_MS } from './site-guard.mjs';
 import { readNotebookBlock, readNotebookEntries } from './envoy-notebook.mjs';
 import { createLibrarianStore, deriveChannelName, fileAssignmentCompletion, fileDispatchAsk, fileHelmSearchAnswer, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
 import { settleMaestroAssignmentsIfNeeded } from './envoy-assignments.mjs';
@@ -409,6 +409,15 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
   // stated limits (per process, forgotten on restart) are written
   // where it is built, in site-guard.mjs.
   const siteGuardRate = siteGuardRateImpl ?? createSiteGuardRateLimiter({ now });
+  // Intake rate trips (envoy-chat.mjs marks the exact messages that
+  // crossed the flag and stop lines on the send path) are witnessed
+  // into the findings feed by the polls that read the marks — once
+  // per message per mesh instance, so a trip is one sighting, never
+  // one per poll. Bounded like the limiter's own store: at the cap
+  // the set is cleared and a long-lived instance may re-witness a
+  // trip the findings store already holds, which its fingerprint
+  // dedupe folds into the same standing row.
+  const intakeRateWitnessed = new Set();
 
   // Envoy 504 fix, bite B: the filing-tail registry. agentWork's
   // post-commit filings (Guard findings ingests, librarian filings)
@@ -1004,6 +1013,46 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // The per-channel read came back newest-first and the
           // walk runs oldest-first; keep that exact order.
           for (const entry of seating) entry.rows.reverse();
+          // Intake rate stops (bite A2, counted on the send path in
+          // envoy-chat.mjs): when a channel's newest rows hold a
+          // message the send path stopped at the rate stop line,
+          // that sender flooded — and the bulk read's newest-40
+          // window may not reach the sender's earlier, unstopped
+          // messages at all, which would starve them behind the
+          // flood. For a sender with a stopped message in view, the
+          // read also carries their unstopped, still-unanswered
+          // messages in this channel inside the work window, oldest
+          // first, so the walk dispatches the backlog in the order
+          // it was sent. Bounded at 200 rows per sender per poll; a
+          // deeper backlog drains over later polls as answers land.
+          for (const entry of seating) {
+            const stoppedSenders = new Set();
+            for (const row of entry.rows) {
+              if (row.author_kind !== 'human') continue;
+              let meta = row.metadata ?? null;
+              if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = null; } }
+              if ((meta?.guard?.classes ?? []).includes(SITE_GUARD_RATE_CLASS)) stoppedSenders.add(String(row.author_subject));
+            }
+            if (!stoppedSenders.size) continue;
+            const seen = new Set(entry.rows.map((r) => String(r.id)));
+            for (const sender of stoppedSenders) {
+              const backlog = await client.query(
+                `select ${MSG_COLS} from helmion.envoy_messages m
+                  where m.tenant_id=$1 and m.channel_id=$2 and m.author_subject=$3 and m.author_kind='human'
+                    and m.created_at > $4
+                    and not (coalesce(m.metadata, '{}'::jsonb) ? 'guard')
+                    and not exists (select 1 from helmion.envoy_messages r where r.tenant_id=$1 and r.channel_id=$2 and r.idempotency_key = 'reply:' || m.id::text)
+                  order by m.created_at asc, m.id asc limit 200`,
+                [actor.tenantId, entry.channelId, sender, since],
+              );
+              for (const row of backlog.rows) {
+                if (seen.has(String(row.id))) continue;
+                seen.add(String(row.id));
+                entry.rows.push(row);
+              }
+            }
+            entry.rows.sort((a, b) => (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) || (String(a.id) < String(b.id) ? -1 : 1));
+          }
         }
         return { state, seating };
       });
@@ -1173,6 +1222,40 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         // Only messages after the agent joined count.
         for (const row of rows) {
           const message = messageOut(row);
+          // Intake rate trips (bite A2): the send path marked the
+          // exact messages that crossed the flag and stop lines
+          // (metadata.siteGuardRate); the poll that reads a mark
+          // witnesses its trip into the findings feed, once per
+          // message per instance. Enforcement never waited on this
+          // — a stopped message already carries its refusal — this
+          // is the sighting only, in the same job shape the poll's
+          // own limiter trips produce.
+          const rateMark = message.authorKind === 'human' ? message.metadata?.siteGuardRate : null;
+          if (rateMark?.tripped && !intakeRateWitnessed.has(`${actor.tenantId}|${String(message.id)}`)) {
+            if (intakeRateWitnessed.size > 10_000) intakeRateWitnessed.clear();
+            intakeRateWitnessed.add(`${actor.tenantId}|${String(message.id)}`);
+            siteGuardRateJobs.push({
+              verdict: {
+                senderKey: siteGuardSenderKey({ authorSubject: message.authorSubject, authorKind: message.authorKind }),
+                count: rateMark.rank,
+                windowMs: SITE_GUARD_RATE_WINDOW_MS,
+                flagThreshold: SITE_GUARD_RATE_FLAG_THRESHOLD,
+                stopThreshold: SITE_GUARD_RATE_STOP_THRESHOLD,
+                tripped: rateMark.tripped,
+                stopped: rateMark.tripped === 'stop',
+                level: rateMark.tripped,
+                windowStart: rateMark.windowStart,
+                at: rateMark.at,
+              },
+              tenantId: actor.tenantId,
+              channelId: String(channel.id),
+              channelSlug: channel.slug,
+              messageId: message.id,
+              authorKind: message.authorKind,
+              authorSubject: message.authorSubject,
+              authorSource: null,
+            });
+          }
           // Guard spine bite 2: a Guard refusal record (the outcome
           // rides in the message metadata, spread onto the message by
           // messageOut) is terminal. It is never itself a work source,
@@ -1436,14 +1519,24 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // does. Any later message from the same sender is
           // stopped the same way while its count stands over the
           // line, and dispatched again once the window cools.
-          const rateVerdict = siteGuardRate.observe({
-            tenantId: actor.tenantId,
-            senderKey: siteGuardSenderKey({ authorSubject: message.authorSubject, authorKind: message.authorKind }),
-          });
-          if (rateVerdict.tripped) {
+          // A message the send path already counted carries its
+          // rank in metadata.siteGuardRate (bite A2 intake
+          // counting): it is not observed again here, or one flood
+          // would be counted twice and its trips witnessed twice.
+          // This limiter remains the count for messages that never
+          // crossed the send path's hook — the bridge roads that
+          // insert directly — and for any send whose intake hook
+          // failed soft.
+          const rateVerdict = message.metadata?.siteGuardRate
+            ? null
+            : siteGuardRate.observe({
+              tenantId: actor.tenantId,
+              senderKey: siteGuardSenderKey({ authorSubject: message.authorSubject, authorKind: message.authorKind }),
+            });
+          if (rateVerdict?.tripped) {
             siteGuardRateJobs.push({ verdict: rateVerdict, tenantId: actor.tenantId, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind, authorSubject: message.authorSubject, authorSource });
           }
-          if (rateVerdict.stopped) {
+          if (rateVerdict?.stopped) {
             const text = siteGuardRateRefusalText(rateVerdict);
             for (const p of due) {
               insertSpecs.push({
