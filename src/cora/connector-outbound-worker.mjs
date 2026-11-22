@@ -99,7 +99,7 @@ export async function enqueueConnectorMessage({ pool, tenantId, provider, channe
   }
 }
 
-export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-connector-outbound', batchSize = 10, log = () => {}, env = process.env, postMessage = postConnectorMessage, credentials = null, resolveDestination = null } = {}) {
+export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-connector-outbound', batchSize = 10, log = () => {}, env = process.env, postMessage = postConnectorMessage, credentials = null, resolveDestination = null, gate = null } = {}) {
   if (!pool?.connect) throw new Error('connector outbound worker needs a Postgres pool');
   if (!WORKER_ID_PATTERN.test(workerId)) throw new Error('connector outbound worker id is invalid');
   const limit = Math.min(Math.max(Number(batchSize) || 10, 1), 50);
@@ -170,10 +170,32 @@ export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-c
     }
   }
 
+  // The attribute-policy gate for outbound network requests. When a gate
+  // is supplied, every delivery is authorized BEFORE the request leaves:
+  // the tenant's own panel rules can deny a destination domain, and the
+  // verdict's receipt is already in the audit trail either way. A denial
+  // settles the message failed with the policy reason — the request is
+  // never sent. With no gate supplied the worker behaves as before.
+  async function gateAllows(client, message, webhookUrl) {
+    if (!gate) return true;
+    let domain = null;
+    try { domain = webhookUrl ? new URL(webhookUrl).hostname : null; } catch { domain = null; }
+    const verdict = await gate.authorizeNetworkRequest(
+      { tenantId: message.tenant_id, subject: workerId, role: 'system' },
+      { domain, dataLabel: message.provider ?? null },
+    );
+    if (verdict.allowed) return true;
+    log('connector outbound refused by attribute policy', { messageId: message.id, domain, receiptId: verdict.receiptId });
+    return settle(client, message, { status: 'failed', attempts: CONNECTOR_OUTBOUND_MAX_ATTEMPTS, receipt: { reason: 'attribute_policy_denied', provider: message.provider, domain, gateReceiptId: verdict.receiptId, matchedRuleIds: verdict.matchedRuleIds } });
+  }
+
   async function deliver(client, message) {
-    if (!webhookUrlFor(message.provider, env)) {
+    const webhookUrl = webhookUrlFor(message.provider, env);
+    if (!webhookUrl) {
       return settle(client, message, { status: 'failed', attempts: CONNECTOR_OUTBOUND_MAX_ATTEMPTS, receipt: { reason: 'webhook_not_configured', provider: message.provider } });
     }
+    const gated = await gateAllows(client, message, webhookUrl);
+    if (gated !== true) return gated;
     return attemptDelivery(client, message, () => postMessage({ provider: message.provider, text: message.text, env }));
   }
 
@@ -188,6 +210,8 @@ export function createConnectorOutboundWorker({ pool, workerId = 'worker:cloud-c
     if (!webhookUrl) {
       return settle(client, message, { status: 'failed', attempts: CONNECTOR_OUTBOUND_MAX_ATTEMPTS, receipt: { reason: 'tenant_destination_not_configured', provider: message.provider } });
     }
+    const gated = await gateAllows(client, message, webhookUrl);
+    if (gated !== true) return gated;
     return attemptDelivery(client, message, () => postMessage({ provider: message.provider, text: message.text, env, webhookUrl }));
   }
 
