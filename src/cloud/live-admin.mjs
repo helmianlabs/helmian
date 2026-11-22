@@ -1086,7 +1086,7 @@ export async function createLiveHelmianCloudAdminHandler({
         });
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
-        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? 'AUDIT_MEMBERSHIP_REQUIRED' : error?.code ?? (error?.status === 400 ? 'AUDIT_EXPORT_INVALID' : 'AUDIT_EXPORT_UNAVAILABLE') }));
+        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? (error?.code === 'AUDIT_ATTRIBUTE_POLICY_DENIED' ? 'AUDIT_ATTRIBUTE_POLICY_DENIED' : 'AUDIT_MEMBERSHIP_REQUIRED') : error?.code ?? (error?.status === 400 ? 'AUDIT_EXPORT_INVALID' : 'AUDIT_EXPORT_UNAVAILABLE') }));
       }
       return true;
     }
@@ -1099,7 +1099,7 @@ export async function createLiveHelmianCloudAdminHandler({
         }) }));
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
-        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? 'AUDIT_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'AUDIT_QUERY_INVALID' : 'AUDIT_DATABASE_READ_FAILED' }));
+        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? (error?.code === 'AUDIT_ATTRIBUTE_POLICY_DENIED' ? 'AUDIT_ATTRIBUTE_POLICY_DENIED' : 'AUDIT_MEMBERSHIP_REQUIRED') : error?.status === 400 ? 'AUDIT_QUERY_INVALID' : 'AUDIT_DATABASE_READ_FAILED' }));
       }
       return true;
     }

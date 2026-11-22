@@ -51,3 +51,8 @@ test('the app loads, creates and removes attribute rules through the panel route
 test('the role catalog renders as stacked cards, not side-by-side rows', () => {
   assert.match(appJs, /el\('div', 'cap muted sm', r\.capabilities\.join\(', '\)\)/);
 });
+
+test('the Evidence view surfaces an attribute-policy refusal instead of stale rows', () => {
+  assert.match(appJs, /state\.eventsDenied === 'AUDIT_ATTRIBUTE_POLICY_DENIED'/);
+  assert.match(appJs, /Audit read refused: an attribute rule for this workspace denies audit\.read for your role/);
+});
