@@ -5,7 +5,7 @@
 -- evaluation is deny-wins over the combined set.
 create table if not exists helmion.tenant_attribute_rules (
   id bigserial primary key,
-  tenant_id uuid not null,
+  tenant_id text not null references helmion.tenants(tenant_id),
   rule_id text not null,
   effect text not null check (effect in ('ALLOW', 'DENY')),
   actions jsonb not null,
