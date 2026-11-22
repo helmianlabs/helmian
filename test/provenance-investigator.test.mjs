@@ -102,14 +102,21 @@ test('independence is DERIVED from names and conflicts, never self-declared', ()
 /* ── Scoring ─────────────────────────────────────────────────────────────── */
 
 test('scoring follows the documented math, including the unknown-consensus case', () => {
+  // Four DISTINCT origins (own summary, publisher and address each):
+  // the anti-sybil grouping counts each once, so the documented math
+  // reads exactly as it did before grouping existed.
   const evidence = [
-    item({ evidenceId: 's1', stance: 'supports' }),
-    item({ evidenceId: 's2', stance: 'supports', category: 'primary-source' }),
-    item({ evidenceId: 'd1', stance: 'disputes', category: 'rebuttal', rigor: 0.75 }),
-    item({ evidenceId: 'x1', stance: 'context', category: 'affiliation', provenanceRecord: null }),
+    item({ evidenceId: 's1', stance: 'supports', summary: 'Replication one summary.', sourcePublisher: 'Other University', sourceUrl: 'https://one.example.edu/r' }),
+    item({ evidenceId: 's2', stance: 'supports', category: 'primary-source', summary: 'Primary source summary.', sourcePublisher: 'Primary Institute', sourceUrl: 'https://two.example.org/p' }),
+    item({ evidenceId: 'd1', stance: 'disputes', category: 'rebuttal', rigor: 0.75, summary: 'Rebuttal summary.', sourcePublisher: 'Rebuttal College', sourceUrl: 'https://three.example.net/b' }),
+    item({ evidenceId: 'x1', stance: 'context', category: 'affiliation', provenanceRecord: null, summary: 'Affiliation summary.', sourcePublisher: 'Affiliation Body', sourceUrl: 'https://four.example.com/a' }),
   ];
   const { vector, inputs } = scoreDossier(evidence, CLAIM);
-  assert.deepEqual(inputs, { total: 4, verified: 3, independent: 4, supports: 2, disputes: 1 });
+  assert.deepEqual(
+    { total: inputs.total, groups: inputs.groups, verified: inputs.verified, independent: inputs.independent, supports: inputs.supports, disputes: inputs.disputes },
+    { total: 4, groups: 4, verified: 3, independent: 4, supports: 2, disputes: 1 },
+  );
+  assert.equal(inputs.groupDetail.length, 4);
   assert.equal(vector.provenanceScore, 0.75);
   assert.equal(vector.independenceScore, 1);
   assert.ok(Math.abs(vector.consensusRatio - 2 / 3) < 1e-9);
@@ -119,6 +126,29 @@ test('scoring follows the documented math, including the unknown-consensus case'
   assert.equal(empty.vector.consensusRatio, 0.5, 'no stance evidence is unknown, not agreement');
   assert.equal(empty.vector.provenanceScore, 0);
   assert.equal(empty.vector.dissentRigor, 0);
+});
+
+test('anti-sybil: ten copies of one supporting story weigh one source against a single dispute', () => {
+  const copies = Array.from({ length: 10 }, (_, i) => item({
+    evidenceId: `copy-${i}`,
+    stance: 'supports',
+    summary: 'The wire story everyone republished, word for word.',
+    sourcePublisher: 'Wire Service',
+    sourceUrl: `https://mirror${i}.example.net/wire`,
+  }));
+  const dispute = item({
+    evidenceId: 'lone-dispute', stance: 'disputes', category: 'rebuttal', rigor: 0.6,
+    summary: 'An independent laboratory report reaching the opposite conclusion.',
+    sourcePublisher: 'Independent Lab', sourceUrl: 'https://lab.example.org/report',
+  });
+  const { vector, inputs } = scoreDossier([...copies, dispute], CLAIM);
+  assert.equal(inputs.total, 11, 'the raw item count is still reported');
+  assert.equal(inputs.groups, 2, 'the ten copies are one origin');
+  assert.equal(inputs.supports, 1, 'support weighs one source, not ten');
+  assert.equal(inputs.disputes, 1);
+  assert.equal(vector.consensusRatio, 0.5, 'one origin against one origin is an open question, not a 10-to-1 consensus');
+  const wireGroup = inputs.groupDetail.find((g) => g.copies === 10);
+  assert.ok(wireGroup, 'the weighting itself is visible in the dossier inputs');
 });
 
 test('category rigor defaults apply when an item carries none — a retraction outweighs a rebuttal', () => {

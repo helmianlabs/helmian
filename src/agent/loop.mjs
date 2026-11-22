@@ -10,6 +10,7 @@ import { readEnvTier, resolveTurnModel } from './model-router.mjs';
 import { withLocalBrevity } from './local-provider.mjs';
 import { processSessionId } from '../core/provenance-log.mjs';
 import { runPreResponseVerification } from '../core/provenance-verification.mjs';
+import { buildTurnClaims, renderVerificationFooter } from '../core/claim-evidence.mjs';
 
 /** Default cap for tool↔model rounds per user message (was 12; too low for real coding). */
 export const MAX_TOOL_ROUNDS_DEFAULT = 48;
@@ -177,13 +178,17 @@ async function runAgentTurnInner({
   // is one process per sitting. Passed explicitly by anything that knows better.
   sessionId = processSessionId(),
   // Provenance verification (Scribe 1154, Milestone 1): structured claim
-  // evidence for THIS turn, as { claims, profile?, registry? }. Default null
-  // is byte-for-byte today's behaviour — no hook runs and no reply changes.
-  // When a caller supplies it, the final reply runs the pre-response hooks
-  // in src/core/provenance-verification.mjs before it is delivered: an
-  // annotated reply carries its annotations, a quarantined or blocked reply
-  // is replaced by the guardrail notice, and a `provenance_verification`
-  // event reports the action either way.
+  // evidence for THIS turn, as { claims, profile?, registry? }. When a
+  // caller supplies it, the final reply runs the pre-response hooks in
+  // src/core/provenance-verification.mjs before it is delivered: an
+  // annotated reply carries its annotations, a quarantined or blocked
+  // reply is replaced by the guardrail notice, and a
+  // `provenance_verification` event reports the action either way.
+  // When no caller supplies it, the loop is its own production caller:
+  // claim evidence is assembled from the sources this turn's tools
+  // actually consulted (src/core/claim-evidence.mjs) and the same
+  // hooks run on those. Only a turn that consulted nothing citable
+  // keeps the old behaviour — no hook runs and no reply changes.
   provenanceVerification = null,
   // A REAL kill switch for this turn. Default `null` is byte-for-byte today's
   // behaviour: no signal reaches fetch, no abort check ever fires true, and the
@@ -206,6 +211,27 @@ async function runAgentTurnInner({
     const entry = { round, calls, results };
     mcpEvidence.push(entry);
     onEvent({ type: 'mcp_evidence', ...entry });
+  };
+  // Claim evidence for the whole turn, across rounds: every tool
+  // result that names a web address is a source this turn consulted,
+  // and the pre-response verification below builds the reply's claims
+  // from them (src/core/claim-evidence.mjs). A tool result with no
+  // address in it consulted nothing citable and is not a source.
+  const turnSources = [];
+  const collectToolSource = (name, args, resultText) => {
+    const text = String(resultText ?? '');
+    const urls = text.match(/https?:\/\/[^\s)\]"'<>]+/g) ?? [];
+    const argUrl = typeof args?.url === 'string' ? args.url : typeof args?.uri === 'string' ? args.uri : null;
+    // A fetch spelled as a command (curl https://…) names its address
+    // in the arguments, not the output; the address the tool was
+    // asked for is where this text came from, so it stands as the
+    // source's address when the output itself carries none.
+    const argUrls = argUrl ? [] : (JSON.stringify(args ?? {}).match(/https?:\/\/[^\s)\]"'<>]+/g) ?? []);
+    const url = argUrl ?? urls[0] ?? argUrls[0];
+    if (!url) return;
+    if (turnSources.some((s) => s.url === url)) return;
+    if (turnSources.length >= 20) return;
+    turnSources.push({ url, text, publisher: null, author: null, viaTool: name ?? null });
   };
   // Before the prompt is even recorded. A turn cancelled while it sat queued
   // never happened, and appending its user message would leave the history
@@ -334,14 +360,37 @@ async function runAgentTurnInner({
   };
 
   const applyProvenanceVerification = async (text) => {
-    if (!provenanceVerification) return text;
+    // A caller-supplied evidence set wins, exactly as before.
+    if (provenanceVerification) {
+      const verdict = await runPreResponseVerification(
+        {
+          text,
+          claims: provenanceVerification.claims ?? [],
+          profile: provenanceVerification.profile ?? null,
+        },
+        { registry: provenanceVerification.registry ?? null },
+      );
+      onEvent({
+        type: 'provenance_verification',
+        action: verdict.action,
+        annotations: verdict.annotations,
+        reasons: verdict.reasons,
+        evaluations: verdict.evaluations,
+      });
+      return verdict.text;
+    }
+    // The production path: when this turn consulted sources, the
+    // loop itself assembles the claim evidence from them and runs
+    // the same verification — so a live answer carries who-said-it
+    // citations with independence weights, and a claim no consulted
+    // source stands behind is labelled, not passed silently. A turn
+    // that consulted nothing keeps today's behaviour untouched.
+    if (!turnSources.length) return text;
+    const built = buildTurnClaims({ text, sources: turnSources });
+    if (!built.claims.length) return text;
     const verdict = await runPreResponseVerification(
-      {
-        text,
-        claims: provenanceVerification.claims ?? [],
-        profile: provenanceVerification.profile ?? null,
-      },
-      { registry: provenanceVerification.registry ?? null },
+      { text, claims: built.claims, profile: null },
+      {},
     );
     onEvent({
       type: 'provenance_verification',
@@ -349,8 +398,13 @@ async function runAgentTurnInner({
       annotations: verdict.annotations,
       reasons: verdict.reasons,
       evaluations: verdict.evaluations,
+      citations: built.citations,
+      sourceGroups: built.totals.groups,
+      sourcesConsulted: built.totals.sources,
     });
-    return verdict.text;
+    if (verdict.action === 'quarantine' || verdict.action === 'block') return verdict.text;
+    const footer = renderVerificationFooter({ claims: built.claims, groups: built.groups, totals: built.totals, verdict });
+    return footer ? `${verdict.text}\n\n${footer}` : verdict.text;
   };
 
   const announce = (choice, round) => {
@@ -462,6 +516,7 @@ async function runAgentTurnInner({
         result: workbenchResult,
       });
       results.push(clipped);
+      collectToolSource(tc.name, tc.arguments, clipped);
     }
     // Written BEFORE the throw, deliberately: the history has to be well-formed
     // even on the cancelled path, so the next turn on this session can continue

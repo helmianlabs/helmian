@@ -67,6 +67,12 @@ export const COPIES = Object.freeze([
     source: source('src', 'core', 'injection-risk.mjs'),
     generated: generated('helmion-injection.generated.js'),
   }),
+  Object.freeze({
+    name: 'provenance',
+    label: 'src/core/provenance-verification.mjs',
+    source: source('src', 'core', 'provenance-verification.mjs'),
+    generated: generated('helmion-provenance-verification.generated.js'),
+  }),
 ]);
 
 export function copyNamed(name) {
@@ -87,6 +93,10 @@ export const CLAIMS_GENERATED_FILE = CLAIMS.generated;
 export const INJECTION = copyNamed('injection');
 export const INJECTION_SOURCE = INJECTION.source;
 export const INJECTION_GENERATED_FILE = INJECTION.generated;
+
+export const PROVENANCE = copyNamed('provenance');
+export const PROVENANCE_SOURCE = PROVENANCE.source;
+export const PROVENANCE_GENERATED_FILE = PROVENANCE.generated;
 
 /* ─── THE DERIVED CONTENT BUILD ────────────────────────────────────────────
  *
