@@ -69,8 +69,13 @@ function makeFakeJobPool({ missingTable = false, desktops = 1 } = {}) {
       if (sql.includes('from helmion.desktop_links')) {
         return { rows: [{ n: desktops }] };
       }
+      if (sql.includes('from helmion.provenance_weighting_profiles')) {
+        // Bite 5: no tenant in the fake has saved a provenance profile,
+        // so enqueue falls back to the default payload.
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('insert into helmion.profile_sync_jobs')) {
-        const row = { id: nextId++, kind: params[0], status: 'pending', requested_by: params[1], result: null, error: null, created_at: new Date(), claimed_at: null, completed_at: null, expected_files: params[2] ? JSON.parse(params[2]) : null };
+        const row = { id: nextId++, kind: params[0], status: 'pending', requested_by: params[1], result: null, error: null, created_at: new Date(), claimed_at: null, completed_at: null, expected_files: params[2] ? JSON.parse(params[2]) : null, provenance_file: params[3] ? JSON.parse(params[3]) : null };
         rowsFor().push(row);
         return { rows: [row], rowCount: 1 };
       }
@@ -219,6 +224,33 @@ test('job store round-trips enqueue → claim → report, tenant-scoped', async 
 
   const reread = await store.get('t1', job.id);
   assert.deepEqual(reread.files, [VALID_FILE]);
+});
+
+test('bite 5: enqueue stamps the provenance profile file, and its read-back verifies or mismatches', async () => {
+  const store = createProfileSyncJobStore(makeFakeJobPool());
+  const job = await store.enqueue('t1', { requestedBy: 'user-1' });
+  assert.ok(job.provenanceFile, 'the job carries the provenance file');
+  assert.equal(job.provenanceFile.path, '.helmion/provenance/weighting-profile.json');
+  assert.match(job.provenanceFile.content, /provenance-weighting-profile/);
+  const stampedHash = createHash('sha256').update(job.provenanceFile.content, 'utf8').digest('hex');
+
+  const claimed = await store.claimNext('t1');
+  assert.equal(claimed.provenanceFile.content, job.provenanceFile.content, 'the claiming bridge receives the exact bytes');
+
+  const done = await store.report('t1', job.id, {
+    status: 'done',
+    files: [{ path: '.helmion/provenance/weighting-profile.json', target: 'workspace', action: 'created', sha256: stampedHash }],
+  });
+  assert.deepEqual(done.fileChecks, ['verified'], 'a read-back matching the enqueue-time hash verifies');
+
+  const store2 = createProfileSyncJobStore(makeFakeJobPool());
+  const job2 = await store2.enqueue('t1', {});
+  await store2.claimNext('t1');
+  const done2 = await store2.report('t1', job2.id, {
+    status: 'done',
+    files: [{ path: '.helmion/provenance/weighting-profile.json', target: 'workspace', action: 'created', sha256: 'a'.repeat(64) }],
+  });
+  assert.deepEqual(done2.fileChecks, ['mismatch'], 'a fabricated read-back hash mismatches, never verifies');
 });
 
 test('a report for an unclaimed job is refused', async () => {

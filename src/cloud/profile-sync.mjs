@@ -44,6 +44,12 @@ import {
   loadAgentOsTemplates,
   renderAgentOsFiles,
 } from '../core/agent-os.mjs';
+import {
+  PROVENANCE_PROFILE_RELATIVE_PATH,
+  createProvenanceSyncPayload,
+  renderProvenanceProfileFile,
+} from '../core/provenance-profile-sync.mjs';
+import { DEFAULT_WEIGHTING_PROFILE } from '../core/provenance-verification.mjs';
 
 export const PROFILE_SYNC_PATH = '/api/admin/envoy/profile-sync';
 export const PROFILE_SYNC_KIND = 'profile-sync';
@@ -173,11 +179,44 @@ export function reportedKitRelativePath(file) {
 export function verifyProfileSyncFiles(files, expected) {
   if (!Array.isArray(files)) return [];
   return files.map((file) => {
+    // The provenance weighting profile file is not a kit file: it is
+    // reported under the 'workspace' target by its workspace-relative
+    // path, and the job's expectation carries its hash under that key.
+    if (file?.target === 'workspace') {
+      const want = expected?.workspace?.[file?.path];
+      if (typeof want !== 'string') return 'reported';
+      return want === file?.sha256 ? 'verified' : 'mismatch';
+    }
     const rel = reportedKitRelativePath(file);
     const want = rel ? expected?.[file?.target]?.[rel] : undefined;
     if (typeof want !== 'string') return 'reported';
     return want === file?.sha256 ? 'verified' : 'mismatch';
   });
+}
+
+// The provenance file a job carries (bite 5): the tenant's saved payload
+// from helmion.provenance_weighting_profiles (bite 4), or the default
+// payload when the tenant has never saved — rendered to the exact bytes
+// the bridge will write, so the enqueue-time hash and the written file
+// cannot drift. A tenant whose profile table does not exist yet (sql/092
+// not applied) gets the default, never a failed enqueue.
+async function tenantProvenanceFile(client) {
+  let payload = null;
+  try {
+    const r = await client.query(
+      'select payload from helmion.provenance_weighting_profiles where tenant_id = current_setting(\'helmion.tenant_id\', true)',
+    );
+    if (r.rowCount === 1) payload = r.rows[0].payload;
+  } catch (error) {
+    if (error?.code !== '42P01' && error?.code !== '42703') throw error;
+  }
+  if (!payload) payload = createProvenanceSyncPayload(DEFAULT_WEIGHTING_PROFILE, { source: 'default' });
+  const content = renderProvenanceProfileFile(payload);
+  return {
+    path: PROVENANCE_PROFILE_RELATIVE_PATH,
+    content,
+    sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
+  };
 }
 
 function jobOut(row) {
@@ -194,6 +233,11 @@ function jobOut(row) {
     // that could not read its templates) carries no expectation and
     // every file reads 'reported' — never a checkmark it did not earn.
     fileChecks: verifyProfileSyncFiles(files, row.expected_files ?? null),
+    // The provenance weighting profile file this job carries to the PC
+    // (bite 5): present on jobs enqueued after sql/093, null before. The
+    // claiming bridge writes these exact bytes into the workspace; the
+    // content is the tenant's own weighting payload, nothing else.
+    provenanceFile: row.provenance_file ?? null,
     // True only for a job the pending-expiry sweep below closed; the
     // surfaces render an expired job's reason whole instead of as a
     // failure on the PC.
@@ -274,14 +318,33 @@ export function createProfileSyncJobStore(pool) {
     // kit a later deploy happens to ship. Returns the job the page
     // will poll.
     async enqueue(tenantId, { requestedBy = null } = {}) {
-      const expected = await expectedKitHashes();
+      const kitExpected = await expectedKitHashes();
       try {
         return await withTenant(tenantId, async (client) => {
-          const r = await client.query(
-            `insert into helmion.profile_sync_jobs(tenant_id, kind, status, requested_by, expected_files)
-             values (current_setting('helmion.tenant_id', true), $1, 'pending', $2, $3::jsonb)
-             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files`,
-            [PROFILE_SYNC_KIND, requestedBy != null ? String(requestedBy).slice(0, 200) : null, expected ? JSON.stringify(expected) : null]);
+          // The provenance file rides every sync (bite 5): its expected
+          // hash joins the kit expectation under the 'workspace' target,
+          // and its exact bytes are stamped on the job for the bridge.
+          const provFile = await tenantProvenanceFile(client);
+          const expected = { ...(kitExpected ?? {}), workspace: { [provFile.path]: provFile.sha256 } };
+          const provenanceFile = { path: provFile.path, content: provFile.content };
+          let r;
+          try {
+            r = await client.query(
+              `insert into helmion.profile_sync_jobs(tenant_id, kind, status, requested_by, expected_files, provenance_file)
+               values (current_setting('helmion.tenant_id', true), $1, 'pending', $2, $3::jsonb, $4::jsonb)
+               returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files, provenance_file`,
+              [PROFILE_SYNC_KIND, requestedBy != null ? String(requestedBy).slice(0, 200) : null, JSON.stringify(expected), JSON.stringify(provenanceFile)]);
+          } catch (error) {
+            if (error?.code !== '42703') throw error;
+            // sql/093 not applied yet: enqueue without the carried file —
+            // the sync still runs, the provenance file waits for the
+            // migration, and no expectation is stamped for it.
+            r = await client.query(
+              `insert into helmion.profile_sync_jobs(tenant_id, kind, status, requested_by, expected_files)
+               values (current_setting('helmion.tenant_id', true), $1, 'pending', $2, $3::jsonb)
+               returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files, provenance_file`,
+              [PROFILE_SYNC_KIND, requestedBy != null ? String(requestedBy).slice(0, 200) : null, kitExpected ? JSON.stringify(kitExpected) : null]);
+          }
           return jobOut(r.rows[0]);
         });
       } catch (error) {
@@ -297,7 +360,7 @@ export function createProfileSyncJobStore(pool) {
         return await withTenant(tenantId, async (client) => {
           await expireStalePending(client);
           const r = await client.query(
-            `select id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files
+            `select id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files, provenance_file
              from helmion.profile_sync_jobs
              where tenant_id = current_setting('helmion.tenant_id', true) and id = $1`,
             [jobId]);
@@ -318,7 +381,7 @@ export function createProfileSyncJobStore(pool) {
         return await withTenant(tenantId, async (client) => {
           await expireStalePending(client);
           const r = await client.query(
-            `select id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files
+            `select id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files, provenance_file
              from helmion.profile_sync_jobs
              where tenant_id = current_setting('helmion.tenant_id', true)
              order by created_at desc, id desc
@@ -347,7 +410,7 @@ export function createProfileSyncJobStore(pool) {
                order by created_at asc, id asc
                limit 1
              )
-             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files`);
+             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files, provenance_file`);
           return jobOut(r.rows[0] ?? null);
         });
       } catch (error) {
@@ -371,7 +434,7 @@ export function createProfileSyncJobStore(pool) {
             `update helmion.profile_sync_jobs
              set status = $2, result = $3::jsonb, error = $4, completed_at = clock_timestamp()
              where tenant_id = current_setting('helmion.tenant_id', true) and id = $1 and status = 'claimed'
-             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files`,
+             returning id, kind, status, requested_by, result, error, created_at, claimed_at, completed_at, expected_files, provenance_file`,
             [jobId, status, result ? JSON.stringify(result) : null, errorText]);
           if (!r.rows[0]) throw Object.assign(new Error('job not claimed'), { status: 409 });
           return jobOut(r.rows[0]);

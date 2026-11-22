@@ -48,6 +48,7 @@ import { createConnectorRegistrationRepository } from '../cora/connector-registr
 import { CONNECTOR_MAX_BODY_BYTES, readCommunicationConnectorStatus, verifyDiscordInteraction, verifySlackRequest } from './communication-connectors.mjs';
 import { receiveInboundConnectorEvent } from './connector-gateway.mjs';
 import { createWorkspaceLayoutRepository } from './workspace-layout-repository.mjs';
+import { createProvenanceProfileRepository } from './provenance-profile-repository.mjs';
 import { createAuditEventRepository, normalizeAuditExportQuery } from './audit-event-repository.mjs';
 import { createOrganizationRoleRepository } from './organization-role-repository.mjs';
 import { createTenantAttributeRulesRepository, loadTenantAttributeRules } from './tenant-attribute-rules-repository.mjs';
@@ -148,6 +149,7 @@ export const LIVE_CONNECTOR_DISCORD_INBOUND_PATH = '/api/connectors/discord/inbo
 export const LIVE_ADMIN_CORA_PERSONAL_PREFERENCES_PATH = '/api/admin/cora/personal-preferences';
 export const LIVE_ADMIN_ORGANIZATION_DATABASE_PATH = '/api/admin/control-plane/organization-database';
 export const LIVE_ADMIN_WORKSPACE_LAYOUT_PATH = '/api/admin/workspace/layout-preferences';
+export const LIVE_ADMIN_PROVENANCE_PROFILE_PATH = '/api/admin/provenance/profile';
 export const LIVE_ADMIN_WORKSPACE_LAYOUT_RESET_PATH = '/api/admin/workspace/layout-preferences/reset';
 export const LIVE_ADMIN_WORKSPACE_ROLE_DEFAULTS_PATH = '/api/admin/workspace/role-defaults';
 const WORKSPACE_LAYOUT_KEYS = ['defaultEnvoyChannelId', 'density', 'panelOrder', 'visibleShelves'];
@@ -361,6 +363,7 @@ export async function createLiveHelmianCloudAdminHandler({
   personalPreferencesRepository: suppliedPersonalPreferencesRepository = null,
   organizationDatabaseRepository: suppliedOrganizationDatabaseRepository = null,
   workspaceLayoutRepository: suppliedWorkspaceLayoutRepository = null,
+  provenanceProfileRepository: suppliedProvenanceProfileRepository = null,
   auditEventRepository: suppliedAuditEventRepository = null,
   organizationRoleRepository: suppliedOrganizationRoleRepository = null,
   tenantAttributeRulesRepository: suppliedTenantAttributeRulesRepository = null,
@@ -425,6 +428,7 @@ export async function createLiveHelmianCloudAdminHandler({
   const personalPreferences = suppliedPersonalPreferencesRepository ?? createCoraPersonalPreferencesRepository(pool);
   const organizationDatabase = suppliedOrganizationDatabaseRepository ?? createOrganizationDatabaseRepository(pool);
   const workspaceLayout = suppliedWorkspaceLayoutRepository ?? createWorkspaceLayoutRepository(pool);
+  const provenanceProfile = suppliedProvenanceProfileRepository ?? createProvenanceProfileRepository(pool);
   const auditEvents = suppliedAuditEventRepository ?? createAuditEventRepository(pool, { attributeRulesProvider: (client, tenantId) => loadTenantAttributeRules(client, tenantId) });
   const tenantAttributeRules = suppliedTenantAttributeRulesRepository ?? createTenantAttributeRulesRepository(pool);
   const organizationRoles = suppliedOrganizationRoleRepository ?? createOrganizationRoleRepository(pool);
@@ -1086,7 +1090,7 @@ export async function createLiveHelmianCloudAdminHandler({
         });
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
-        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? (error?.code === 'AUDIT_ATTRIBUTE_POLICY_DENIED' ? 'AUDIT_ATTRIBUTE_POLICY_DENIED' : 'AUDIT_MEMBERSHIP_REQUIRED') : error?.code ?? (error?.status === 400 ? 'AUDIT_EXPORT_INVALID' : 'AUDIT_EXPORT_UNAVAILABLE') }));
+        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? 'AUDIT_MEMBERSHIP_REQUIRED' : error?.code ?? (error?.status === 400 ? 'AUDIT_EXPORT_INVALID' : 'AUDIT_EXPORT_UNAVAILABLE') }));
       }
       return true;
     }
@@ -1099,7 +1103,7 @@ export async function createLiveHelmianCloudAdminHandler({
         }) }));
       } catch (error) {
         const denied = error?.status === 403 || error instanceof TenantAuthorizationError;
-        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? (error?.code === 'AUDIT_ATTRIBUTE_POLICY_DENIED' ? 'AUDIT_ATTRIBUTE_POLICY_DENIED' : 'AUDIT_MEMBERSHIP_REQUIRED') : error?.status === 400 ? 'AUDIT_QUERY_INVALID' : 'AUDIT_DATABASE_READ_FAILED' }));
+        send(response, denied ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: denied ? 'AUDIT_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'AUDIT_QUERY_INVALID' : 'AUDIT_DATABASE_READ_FAILED' }));
       }
       return true;
     }
@@ -1597,6 +1601,16 @@ export async function createLiveHelmianCloudAdminHandler({
       } catch (error) {
         send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'CONSOLE_COMMANDS_MEMBERSHIP_REQUIRED' : 'CONSOLE_COMMANDS_INVALID' }));
       }
+      return true;
+    }
+    if (request.method === 'GET' && requestUrl.pathname === LIVE_ADMIN_PROVENANCE_PROFILE_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); send(response, 200, JSON.stringify({ valid: true, ...await provenanceProfile.read(actor) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : error?.status === 400 ? 400 : 503, JSON.stringify({ valid: false, code: error?.status === 403 ? 'PROVENANCE_PROFILE_MEMBERSHIP_REQUIRED' : error?.status === 400 ? 'PROVENANCE_PROFILE_SELECTOR_INVALID' : 'PROVENANCE_PROFILE_READ_FAILED' })); }
+      return true;
+    }
+    if (request.method === 'PUT' && requestUrl.pathname === LIVE_ADMIN_PROVENANCE_PROFILE_PATH) {
+      try { if (['tenant_id', 'organization_id', 'plant_id', 'facility_id', 'subject', 'user_subject'].some((key) => requestUrl.searchParams.has(key))) throw Object.assign(new Error('authority selector is not accepted'), { status: 400 }); const actor = await activeTenantActor(request); const body = await readJsonObject(request); exactKeys(body, ['profile']); send(response, 200, JSON.stringify({ valid: true, ...await provenanceProfile.save(actor, body) })); }
+      catch (error) { send(response, error?.status === 403 || error instanceof TenantAuthorizationError ? 403 : 400, JSON.stringify({ valid: false, code: error?.status === 403 ? 'PROVENANCE_PROFILE_MEMBERSHIP_REQUIRED' : 'PROVENANCE_PROFILE_INVALID' })); }
       return true;
     }
     if (request.method === 'PUT' && requestUrl.pathname === LIVE_ADMIN_WORKSPACE_LAYOUT_PATH) {

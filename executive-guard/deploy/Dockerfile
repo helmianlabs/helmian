@@ -12,6 +12,12 @@ WORKDIR /app
 COPY executive-guard/bin ./executive-guard/bin
 COPY executive-guard/src ./executive-guard/src
 COPY extension/background/redact.js ./extension/background/redact.js
+# The provenance guardrail ruleset the server loads at startup
+# (executive-guard/src/server.mjs imports src/core/provenance-policy.mjs,
+# which imports src/core/provenance-verification.mjs — repo-relative, the
+# same layout as the redactor above).
+COPY src/core/provenance-policy.mjs ./src/core/provenance-policy.mjs
+COPY src/core/provenance-verification.mjs ./src/core/provenance-verification.mjs
 
 # The signing key and the audit log live on separate volumes, so a
 # leaked audit mount never carries the key and vice versa. The state

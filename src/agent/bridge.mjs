@@ -21,6 +21,8 @@ import {
 } from './commands.mjs';
 import { loadEnabledPlugins } from './plugins.mjs';
 import { resolveTurnAttachments, seatIdForProviderId } from './attachments.mjs';
+import { buildTurnProvenance } from './provenance-ingest.mjs';
+import { readFile as readFileAsync } from 'node:fs/promises';
 import { buildConnectorArming, sanitizeArmingRecords } from './connector-arming.mjs';
 
 /**
@@ -205,6 +207,23 @@ export async function runAgentBridge() {
     }
   } catch {
     supergrokResolver = null;
+  }
+
+  // Provenance verification (Scribe 1154) is on per tenant: the pairing
+  // record this bridge exchanged carries the tenant it serves, and
+  // provenance-ingest.mjs holds the list of tenants turned on. An unpaired
+  // bridge or an unlisted tenant leaves this null and every turn behaves
+  // exactly as it did before provenance existed.
+  let bridgeTenantId = null;
+  try {
+    const pairing = JSON.parse(await readFileAsync(
+      join(homedir(), 'AppData', 'Roaming', 'Helmian', 'pc-bridge-token.json'), 'utf8',
+    ));
+    if (typeof pairing?.tenantId === 'string' && pairing.tenantId.trim()) {
+      bridgeTenantId = pairing.tenantId.trim();
+    }
+  } catch {
+    bridgeTenantId = null;
   }
 
   // Human-in-the-loop approval for 'ask' mode. The broker is the only source of
@@ -659,6 +678,43 @@ export async function runAgentBridge() {
           }
         }
 
+        // Provenance ingestion for this turn (Stage 1): sources named in
+        // the turn are fetched, fingerprinted, and stamped now, and the
+        // records ride into the loop's pre-response hooks. Null for every
+        // tenant not turned on, and for turns carrying no sources.
+        let provenanceVerification = null;
+        try {
+          provenanceVerification = await buildTurnProvenance({
+            text: turnText,
+            tenantId: bridgeTenantId,
+            workspaceRoot: state.runtime.root,
+          });
+          if (provenanceVerification?.profileWarning) {
+            emit({ event: 'status', message: `Provenance: ${provenanceVerification.profileWarning}` });
+          }
+          if (provenanceVerification?.claims?.length) {
+            // The ingestion record on the wire: each source's fingerprint
+            // (sha256 of what was retrieved), retrieval timestamp, and the
+            // derived Unverified Provenance flag — the Stage 1 evidence
+            // for this turn, recorded before the reply exists.
+            emit({
+              event: 'provenance_ingestion',
+              sources: provenanceVerification.claims.map((c) => ({
+                claimId: c.claimId,
+                sourceUrl: c.provenanceRecord.sourceUrl,
+                sourceHash: c.provenanceRecord.sourceHash ?? null,
+                retrievedAt: c.provenanceRecord.retrievedAt,
+                signatureStatus: c.provenanceRecord.signatureStatus,
+                unverifiedProvenance: c.provenanceRecord.unverifiedProvenance,
+                flagReasons: c.provenanceRecord.flagReasons,
+              })),
+            });
+          }
+        } catch (err) {
+          emit({ event: 'status', message: `Provenance ingestion failed (${err?.message ?? String(err)}); continuing without it.` });
+          provenanceVerification = null;
+        }
+
         try {
         await runAgentTurn({
           userText: turnText,
@@ -671,6 +727,7 @@ export async function runAgentBridge() {
           images,
           webSearch: turnWebSearch,
           mcpServers: turnMcpServers,
+          ...(provenanceVerification ? { provenanceVerification } : {}),
           onEvent: (ev) => {
             if (ev.type === 'model') {
               emit({
@@ -701,6 +758,19 @@ export async function runAgentBridge() {
                 round: ev.round,
                 timestamp: ev.timestamp,
                 sessionId: ev.sessionId,
+              });
+            } else if (ev.type === 'provenance_verification') {
+              // The pre-response verification verdict for this turn: the
+              // guardrail action, the annotations applied, and the per-claim
+              // evaluations carrying each source's fingerprint, retrieval
+              // timestamp, and Unverified Provenance flag. Forwarded whole —
+              // this event is the turn's provenance record on the wire.
+              emit({
+                event: 'provenance_verification',
+                action: ev.action,
+                annotations: ev.annotations,
+                reasons: ev.reasons,
+                evaluations: ev.evaluations,
               });
             } else if (ev.type === 'mcp_evidence') {
               // The Pattern-A record: what the provider's cloud actually
