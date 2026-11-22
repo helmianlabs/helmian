@@ -13,6 +13,8 @@
 //   GET  /v1/audit/verify       approver  re-verify the chain end to end
 //   POST /v1/audit/outcomes     device    report what happened after a decision
 //                                         (docs/OUTCOMES.md has the exact contract)
+//   GET  /v1/provenance/policy  device    the loaded provenance guardrail ruleset
+//   POST /v1/provenance/evaluate device   evaluate one claim against it (+ its badge)
 //
 // Pending approvals, the decision issued for each approval and used nonces are
 // persisted through a state store (src/state.mjs) and rebuilt on start.
@@ -27,6 +29,12 @@ import http from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { ActionError, actionHash, normalizeAction } from './action.mjs';
 import { DEFAULT_POLICY, evaluatePolicy, validatePolicy } from './policy.mjs';
+import {
+  DEFAULT_PROVENANCE_POLICY,
+  evaluateProvenancePolicy,
+  validateProvenancePolicy,
+  badgeForClaim,
+} from '../../src/core/provenance-policy.mjs';
 import { DECISION_TTL_SECONDS, signActionGrant, signDecision } from './signing.mjs';
 import { canonicalJson } from './canonical.mjs';
 import { memoryState } from './state.mjs';
@@ -131,6 +139,7 @@ export function createExecutiveGuard({
   deviceTokens = {},
   approverTokens = {},
   policy = DEFAULT_POLICY,
+  provenancePolicy = DEFAULT_PROVENANCE_POLICY,
   now = Date.now,
   state = memoryState(),
   candidates = memoryCandidates(),
@@ -140,6 +149,10 @@ export function createExecutiveGuard({
   if (!key) throw new Error('createExecutiveGuard needs a signing key');
   if (!audit) throw new Error('createExecutiveGuard needs an audit store');
   validatePolicy(policy);
+  // The provenance guardrail ruleset (Scribe 1154, Milestone 3) is loaded
+  // and validated at construction: a malformed ruleset stops the server
+  // from starting rather than letting it evaluate claims against garbage.
+  validateProvenancePolicy(provenancePolicy);
   const findDevice = tokenTable(deviceTokens);
   const findApprover = tokenTable(approverTokens);
   const approvals = new Map();
@@ -638,6 +651,29 @@ export function createExecutiveGuard({
         const out = await recordOutcome(req, deviceId);
         return send(res, out.status, out.body);
       }
+      if (path === '/v1/provenance/policy' || path === '/v1/provenance/evaluate') {
+        const deviceId = findDevice(token);
+        if (!deviceId) throw new HttpError(401, 'unauthorized');
+        if (req.method === 'GET' && path === '/v1/provenance/policy') {
+          return send(res, 200, { policy: provenancePolicy });
+        }
+        if (req.method === 'POST' && path === '/v1/provenance/evaluate') {
+          const body = await readJson(req);
+          const claim = body?.claim;
+          if (!claim || typeof claim !== 'object' || Array.isArray(claim)
+            || typeof claim.claimId !== 'string' || !claim.claimId) {
+            throw new HttpError(400, 'claim-required', 'body.claim must be an object with a claimId');
+          }
+          const evaluation = evaluateProvenancePolicy(claim, provenancePolicy);
+          const badge = badgeForClaim(claim, provenancePolicy);
+          audit.append({
+            event: 'provenance.evaluated', deviceId,
+            claimId: evaluation.claimId, action: evaluation.action, ruleId: evaluation.ruleId,
+          });
+          return send(res, 200, { evaluation, badge });
+        }
+        throw new HttpError(405, 'method-not-allowed');
+      }
       if (path === '/v1/decisions' || path === '/v1/grants' || (/^\/v1\/approvals\/[^/]+$/.test(path) && req.method === 'GET')) {
         const deviceId = findDevice(token);
         if (!deviceId) throw new HttpError(401, 'unauthorized');
@@ -689,5 +725,5 @@ export function createExecutiveGuard({
   }
 
   const server = http.createServer((req, res) => { handle(req, res); });
-  return { server, approvals, handle, issuedDecisions, candidates, grants };
+  return { server, approvals, handle, issuedDecisions, candidates, grants, provenancePolicy };
 }

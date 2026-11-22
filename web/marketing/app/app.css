@@ -1013,3 +1013,18 @@ html { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
 ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
+
+/* Provenance verification (Scribe 1154, bite 4): guard badge chips + the
+   weighting slider rows in Settings. Tones mirror the Milestone 3 badge
+   data: green verified, amber unverified/note, orange contestation and
+   conflicts, red quarantine/block. */
+.prov-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.prov-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid; }
+.prov-badge-green { color: #1d7a3a; border-color: #1d7a3a; background: rgba(29, 122, 58, 0.12); }
+.prov-badge-amber { color: #9a6a00; border-color: #9a6a00; background: rgba(154, 106, 0, 0.12); }
+.prov-badge-orange { color: #b3540a; border-color: #b3540a; background: rgba(179, 84, 10, 0.12); }
+.prov-badge-red { color: #b3261e; border-color: #b3261e; background: rgba(179, 38, 30, 0.12); }
+.prov-slider-row { align-items: center; gap: 10px; }
+.prov-slider { flex: 1; }
+.prov-slider-value { min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
+.prov-slider-desc { margin: 2px 0 10px; }

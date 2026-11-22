@@ -33,7 +33,7 @@ test('the env example carries no real secrets: every token is a CHANGE_ME placeh
 
 test('the files the image copies are enough to start the server', async () => {
   const copies = [...dockerfile.matchAll(/^COPY\s+(?:--\S+\s+)*(\S+)\s+(\S+)/gm)].map((m) => m[1]);
-  assert.deepEqual(copies.sort(), ['executive-guard/bin', 'executive-guard/src', 'extension/background/redact.js']);
+  assert.deepEqual(copies.sort(), ['executive-guard/bin', 'executive-guard/src', 'extension/background/redact.js', 'src/core/provenance-policy.mjs', 'src/core/provenance-verification.mjs']);
   const root = mkdtempSync(join(tmpdir(), 'eg-image-'));
   for (const rel of copies) {
     mkdirSync(dirname(join(root, rel)), { recursive: true });

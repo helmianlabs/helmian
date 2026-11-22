@@ -19,6 +19,7 @@
 // on success, and on a definitive refusal, so a dead code never loops a
 // supervisor's restart backoff forever.
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { createInterface as createPromptInterface } from 'node:readline/promises';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -658,6 +659,29 @@ export async function runBridge(overrides = {}) {
     try {
       log(`profile sync job ${claimed.id}: running the Agent OS installer`);
       const { files } = await executeProfileSync({ home: homedir() });
+      // Provenance weighting profile (Scribe 1154, bite 5): the job
+      // carries the tenant's profile file as exact bytes; write them into
+      // this workspace and report the file with the sha256 of the bytes
+      // read back, so the cloud can verify the write against the hash it
+      // stamped at enqueue time. A write failure fails the job report —
+      // a sync that claims a file it did not write is not sent.
+      if (claimed.provenanceFile?.content && claimed.provenanceFile?.path === '.helmion/provenance/weighting-profile.json') {
+        // The path is pinned to the one file this feature writes: cloud
+        // data never gets to name another destination on this machine.
+        const relPath = String(claimed.provenanceFile.path);
+        const dest = join(deps.workspace, ...relPath.split('/'));
+        const existed = await readFile(dest).then(() => true, () => false);
+        await mkdir(dirname(dest), { recursive: true });
+        await writeFile(dest, String(claimed.provenanceFile.content), 'utf8');
+        const written = await readFile(dest);
+        files.push({
+          target: 'workspace',
+          path: relPath,
+          action: existed ? 'updated' : 'created',
+          sha256: createHash('sha256').update(written).digest('hex'),
+        });
+        log(`profile sync job ${claimed.id}: provenance weighting profile written to ${relPath}`);
+      }
       await api(deps, '/api/admin/envoy/profile-sync', {
         method: 'POST', token: creds.token,
         body: { jobId: claimed.id, status: 'done', files },
