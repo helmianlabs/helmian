@@ -39,6 +39,12 @@ test('mesh end to end on Postgres: agents join, work is routed once, Discord lin
   const device = { tenantId, subject: owner.subject, role: 'owner', viaDeviceToken: true };
   await pool.query('insert into helmion.tenants(tenant_id, display_name) values ($1,$2)', [tenantId, 'Mesh test']);
   await pool.query('insert into helmion.tenant_memberships(tenant_id, subject, role) values ($1,$2,$3)', [tenantId, owner.subject, 'owner']);
+  // This workspace's agents ARE connected (they join, answer, and
+  // post throughout the test): record the connection presence a real
+  // workspace carries, so the empty-desk answer — Maestro's post for
+  // workspaces with no AI connected — correctly stays quiet here.
+  await pool.query('insert into helmion.runner_provider_presence(tenant_id, provider_name, connected) values ($1,$2,true)', [tenantId, 'claude']);
+  await pool.query('insert into helmion.runner_provider_presence(tenant_id, provider_name, connected) values ($1,$2,true)', [tenantId, 'gemini']);
   const published = [];
   const mesh = createEnvoyMesh({ pool, publishImpl: async (x) => published.push(x), nameLookup: async () => 'Troy' });
   const chat = createEnvoyStore(pool);
@@ -65,10 +71,18 @@ test('mesh end to end on Postgres: agents join, work is routed once, Discord lin
     const human = (await chat.appendMessage(owner, { channelId: channel.id, body: 'Plan the launch page', idempotencyKey: randomUUID() })).receipt.message;
     // Session callers cannot pull agent work or post as agents.
     await assert.rejects(mesh.agentWork(owner, 'claude'), /DEVICE_TOKEN/);
-    // Bite 2 matrix, ordinary channel: the unnamed message earns NO
-    // agent turn — not even with 'maestro' on the roster and asking.
+    // Maestro always-on (the settled routing since the M/H/L
+    // programme, proven by the always-on tests in this file): an
+    // unnamed message in an ordinary channel dispatches desk-style
+    // to the whole crew — 'maestro' itself is never an answerer.
+    // (This assertion supersedes the Bite 2 silence line, which the
+    // always-on change retired.)
     let work = (await mesh.agentWork(device, 'maestro,claude,gemini')).work.filter((w) => w.channel.id === channel.id);
-    assert.equal(work.length, 0, 'unnamed message in an ordinary channel is silence');
+    assert.equal(work.length, 1, 'unnamed message dispatches to the crew under always-on routing');
+    assert.equal(work[0].message.id, human.id);
+    assert.deepEqual(work[0].agents, ['claude', 'gemini'], "'maestro' is never among the answerers");
+    // Claude answers the unnamed message, clearing its work.
+    await mesh.postAsAgent(device, { channelId: channel.id, provider: 'claude', replyTo: human.id, body: 'Claim: on it.' });
     // A named agent answers.
     const named = (await chat.appendMessage(owner, { channelId: channel.id, body: '@Claude plan the launch page', idempotencyKey: randomUUID() })).receipt.message;
     work = (await mesh.agentWork(device, 'maestro,claude,gemini')).work.filter((w) => w.channel.id === channel.id);
@@ -199,12 +213,16 @@ test('mesh rooms: an agent room seats exactly its agent and routes its own work'
   const chat = createEnvoyStore(pool);
   const mesh = createEnvoyMesh({ pool });
   try {
-    await pool.query('insert into helmion.tenants (tenant_id, owner_subject) values ($1,$2)', [tenantId, owner.subject]);
+    await pool.query('insert into helmion.tenants (tenant_id, display_name) values ($1,$2)', [tenantId, 'Envoy Mesh Test']);
+    await pool.query('insert into helmion.tenant_memberships(tenant_id, subject, role) values ($1,$2,$3)', [tenantId, owner.subject, 'owner']);
     const { channel } = await chat.createChannel(owner, { slug: 'agent-claude', title: 'Claude', kind: 'agent' });
     assert.equal(channel.kind, 'agent');
 
     const seeded = await mesh.seedRoomAgent(owner, channel.id, 'claude');
-    assert.deepEqual(seeded, { seeded: true, configured: true });
+    // The transaction result also carries its durability marker (the
+    // withTenantTransaction receipt); the seeding contract is the two
+    // fields below.
+    assert.deepEqual({ seeded: seeded.seeded, configured: seeded.configured }, { seeded: true, configured: true });
     const again = await mesh.seedRoomAgent(owner, channel.id, 'claude');
     assert.equal(again.seeded, false, 'seeding never rewrites an existing roster');
     const other = await mesh.seedRoomAgent(owner, channel.id, 'gemini');
@@ -240,7 +258,8 @@ test('mesh desk: the seat seeds its roster once, refuses other channels, and dis
   const chat = createEnvoyStore(pool);
   const mesh = createEnvoyMesh({ pool });
   try {
-    await pool.query('insert into helmion.tenants (tenant_id, owner_subject) values ($1,$2)', [tenantId, owner.subject]);
+    await pool.query('insert into helmion.tenants (tenant_id, display_name) values ($1,$2)', [tenantId, 'Envoy Mesh Test']);
+    await pool.query('insert into helmion.tenant_memberships(tenant_id, subject, role) values ($1,$2,$3)', [tenantId, owner.subject, 'owner']);
     // A shared channel seats Claude, Maestro and Gemini.
     const { channel: build } = await chat.createChannel(owner, { slug: 'build', title: 'Build', kind: 'team' });
     await mesh.changeConfig(owner, { action: 'add-agent', channelId: build.id, provider: 'claude' });
@@ -275,10 +294,15 @@ test('mesh desk: the seat seeds its roster once, refuses other channels, and dis
     assert.equal(receipt.receipt.message.agentProvider, 'claude');
     work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === desk.id && w.message.id === one.id);
     assert.equal(work.length, 0, 'answered desk work clears');
-    // The unnamed dispatch is still waiting on Gemini alone.
+    // The unnamed dispatch is still open: neither seat has answered
+    // THIS message (Claude's answer settled the named one, not this
+    // one). Its claims from the first poll are live (bite J), so
+    // expire them — the re-offer shows the dispatch still waits on
+    // both seats.
+    await pool.query('update helmion.envoy_work_claims set expires_at = now() - interval \'1 second\' where tenant_id = $1 and message_id = $2', [tenantId, all.id]);
     work = (await mesh.agentWork(device, 'claude,gemini')).work.filter((w) => w.channel.id === desk.id && w.message.id === all.id);
     assert.equal(work.length, 1);
-    assert.deepEqual(work[0].agents, ['gemini']);
+    assert.deepEqual(work[0].agents, ['claude', 'gemini']);
   } finally {
     await pool.query('delete from helmion.tenants where tenant_id = $1', [tenantId]).catch(() => {});
     await pool.end();
@@ -294,7 +318,8 @@ test('mesh maestro always-on: unnamed sends dispatch with no flag set, and the r
   const chat = createEnvoyStore(pool);
   const mesh = createEnvoyMesh({ pool });
   try {
-    await pool.query('insert into helmion.tenants (tenant_id, owner_subject) values ($1,$2)', [tenantId, owner.subject]);
+    await pool.query('insert into helmion.tenants (tenant_id, display_name) values ($1,$2)', [tenantId, 'Envoy Mesh Test']);
+    await pool.query('insert into helmion.tenant_memberships(tenant_id, subject, role) values ($1,$2,$3)', [tenantId, owner.subject, 'owner']);
     const { channel } = await chat.createChannel(owner, { slug: 'follow', title: 'Follow', kind: 'team' });
     await mesh.changeConfig(owner, { action: 'add-agent', channelId: channel.id, provider: 'claude' });
     await mesh.changeConfig(owner, { action: 'add-agent', channelId: channel.id, provider: 'gemini' });
@@ -554,7 +579,8 @@ test('mesh on Postgres: agentWork rides resolved skills; a failed read changes n
   ]);
   const mesh = createEnvoyMesh({ pool, skillReadImpl: async (_p, _t, ids) => new Map(ids.filter((id) => canned.has(id)).map((id) => [id, canned.get(id)])) });
   try {
-    await pool.query('insert into helmion.tenants (tenant_id, owner_subject) values ($1,$2)', [tenantId, owner.subject]);
+    await pool.query('insert into helmion.tenants (tenant_id, display_name) values ($1,$2)', [tenantId, 'Envoy Mesh Test']);
+    await pool.query('insert into helmion.tenant_memberships(tenant_id, subject, role) values ($1,$2,$3)', [tenantId, owner.subject, 'owner']);
     const { channel } = await chat.createChannel(owner, { slug: 'skills', title: 'Skills', kind: 'agent' });
     await mesh.seedRoomAgent(owner, channel.id, 'claude');
 
@@ -586,9 +612,18 @@ test('mesh on Postgres: agentWork rides resolved skills; a failed read changes n
       { id: 'gone-skill', missing: true, seatId: 'all' },
     ], 'blanket rides as all; the seat-scoped record clamps all → its own seats; the unknown id rides as missing');
 
-    // Read failure: dispatch is unchanged and carries no skills.
+    // Read failure: dispatch is unchanged and carries no skills. A
+    // fresh message carries this case — the one above is already
+    // claimed by the successful pull (bite J claims), and a claimed
+    // message is not handed out twice.
+    const skilled2 = (await chat.appendMessage(owner, {
+      channelId: channel.id,
+      body: 'with skills attached, while the store is down',
+      idempotencyKey: randomUUID(),
+      metadata: { skills: [{ skillId: 'blanket-skill', seatId: 'all' }] },
+    })).receipt.message;
     const failing = createEnvoyMesh({ pool, skillReadImpl: async () => { throw new Error('store is down'); }, skillLogImpl: () => {} });
-    work = (await failing.agentWork(device, 'claude')).work.filter((w) => w.channel.id === channel.id && w.message.id === skilled.id);
+    work = (await failing.agentWork(device, 'claude')).work.filter((w) => w.channel.id === channel.id && w.message.id === skilled2.id);
     assert.equal(work.length, 1, 'the work is still handed out');
     assert.equal('skills' in work[0], false, 'a failed skill read leaves the item skill-less, never half-resolved');
   } finally {

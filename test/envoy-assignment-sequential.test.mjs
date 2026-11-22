@@ -161,6 +161,12 @@ test('mesh sequential release on Postgres: a roll call is conducted one seat at 
     assert.equal(work.length, 1, 'a sequential assignment releases one part at a time');
     assert.deepEqual(work[0].agents, ['claude']);
     assert.deepEqual(work[0].slice, { n: 1, total: 2, text: 'Claude: report in.', job: ROLL_CALL });
+    // The first poll claimed part 1 (bite J): a later poll gets
+    // nothing while the claim stands. Expire the claim the way the
+    // claim suite does, and the re-offer still holds part 2 back.
+    work = await workFor(human.id);
+    assert.equal(work.length, 0, 'while part 1 is claimed, a later poll is handed nothing');
+    await pool.query('update helmion.envoy_work_claims set expires_at = now() - interval \'1 second\' where tenant_id = $1 and message_id = $2', [tenantId, human.id]);
     work = await workFor(human.id);
     assert.equal(work.length, 1, 'a later poll still holds part 2 back');
     assert.equal(work[0].slice.n, 1);
