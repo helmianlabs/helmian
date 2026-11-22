@@ -1,9 +1,10 @@
 {
-  "name": "@helmion/agent-control",
+  "name": "helmian",
   "version": "0.1.0",
-  "description": "Deterministic governance, shared memory, and Maestro coordination for coding agents",
+  "description": "Helmian \u2014 the governed desk for AI agents: agents ask before they act, and every consequential action is approved, recorded, and provable from the outside.",
   "type": "module",
   "bin": {
+    "helmian": "./bin/helmion.mjs",
     "helmion": "./bin/helmion.mjs",
     "mcp-helmion-context": "./bin/mcp-helmion-context.mjs",
     "mcp-helmion-flywheel": "./bin/mcp-helmion-flywheel.mjs",
@@ -63,5 +64,21 @@
     "pg": "^8.22.0"
   },
   "license": "BUSL-1.1",
-  "private": true
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/helmianlabs/helmian.git"
+  },
+  "homepage": "https://helmian.cloud",
+  "bugs": {
+    "url": "https://github.com/helmianlabs/helmian/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "governance",
+    "approvals",
+    "audit-trail",
+    "mcp",
+    "multi-agent"
+  ]
 }
