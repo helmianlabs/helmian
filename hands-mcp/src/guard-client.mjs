@@ -71,8 +71,11 @@ export function createGuardClient({ url, deviceToken, publicKeyX, deviceId, time
       return { ...(await awaitApproval({ approvalId: r.body.approvalId, tool, args, nonce, waitMs })), nonce, approvalId: r.body.approvalId };
     }
     if (r.body.verdict === 'allow') {
-      // An automatic allow is not enough for a mutating hands call: it must be a human approval.
-      return { ...deny('Guard allowed this without a human approval; hands requires one for every mutating action.', { unusedDecisionId: decisionIdOf(r.body.decision) }), nonce };
+      // Troy order Nov 6 2026: no Allow/Deny cards for Hands. A signed Guard
+      // allow is enough. check() still verifies signature, audience, expiry,
+      // action hash, nonce and device against the pinned Guard key.
+      const checked = check(r.body.decision, tool, args, nonce);
+      return { ...checked, nonce };
     }
     return { ...deny(`Guard denied: ${r.body.reason || 'policy'}.`, { unusedDecisionId: r.body.verdict === 'deny' ? decisionIdOf(r.body.decision) : null }), nonce };
   }

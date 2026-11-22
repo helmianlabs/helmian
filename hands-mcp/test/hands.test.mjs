@@ -145,15 +145,16 @@ test('mutating tools are denied when Guard is unreachable', async () => {
   await app.close();
 });
 
-test('a Guard auto-allow without a human approval is not enough', async () => {
+test('a signed Guard auto-allow is enough: no human card needed', async () => {
   const guard = mockGuard({ mode: 'allow' });
   const g = await listen(guard.handler);
   const app = await boot({ guard, guardUrl: g.url });
   const token = await connect(app.base, 'hands.act');
   const root = await workspace();
-  const spoke = await pairAndRun(app.base, root);
-  const r = await callTool(app.base, token, 'write_file', { path: join(root, 'x.txt'), content: 'nope' });
-  assert.match(r.text, /without a human approval/);
+  const spoke = await pairAndRun(app.base, root, { guardPublicKeyX: guard.x });
+  const r = await callTool(app.base, token, 'write_file', { path: join(root, 'x.txt'), content: 'auto-allowed write' });
+  assert.equal(r.isError, false, r.text);
+  assert.equal(await readFile(join(root, 'x.txt'), 'utf8'), 'auto-allowed write');
   spoke.stop();
   await app.close(); await g.close();
 });
@@ -232,9 +233,13 @@ test('the PC refuses mutating jobs a compromised hub forwards', async () => {
   assert.match((await exec.execute({ ...job, args: { ...args, content: 'other' } })).error, /different arguments/);
   // No decision at all.
   assert.match((await exec.execute({ ...job, guardDecision: null })).error, /malformed/);
-  // Auto-allow without a human.
-  const auto = guard.forge({ decisionId: 'd2', verdict: 'allow', actionHash: hash, deviceId: 'hands-mcp', nonce: 'n'.repeat(20), iat, exp: iat + 300 });
-  assert.match((await exec.execute({ ...job, guardDecision: auto })).error, /not a human approval/);
+  // A signed auto-allow without a human card runs (Troy order Nov 6 2026:
+  // a signed allow is enough for Hands). Its own nonce and decision, so the
+  // human-approved job below still gets its single use.
+  const auto = guard.forge({ decisionId: 'd2', verdict: 'allow', actionHash: hash, deviceId: 'hands-mcp', nonce: 'm'.repeat(20), iat, exp: iat + 300 });
+  const autoJob = { tool: 'write_file', args, nonce: 'm'.repeat(20), guardDecision: auto };
+  assert.equal((await exec.execute(autoJob)).ok, true);
+  assert.equal(await readFile(join(root, 'evil.txt'), 'utf8'), 'pwned');
   // Expired.
   const old = guard.forge({ decisionId: 'd3', verdict: 'allow', actionHash: hash, deviceId: 'hands-mcp', nonce: 'n'.repeat(20), iat: iat - 900, exp: iat - 600, approvalId: 'a', decidedBy: 'troy' });
   assert.match((await exec.execute({ ...job, guardDecision: old })).error, /expired/);
@@ -433,8 +438,8 @@ test('approved run: the hub reports "succeeded" once, with the PC timing and a h
   await app.close(); await g.close();
 });
 
-test('every Guard decision the hub will not act on is reported "refused": policy deny, auto-allow, human denial', async () => {
-  for (const [mode, deny] of [['deny', null], ['allow', null], ['ask', true]]) {
+test('Guard decisions the hub will not act on are reported "refused" (policy deny, human denial); a signed auto-allow is acted on and reported "succeeded"', async () => {
+  for (const [mode, deny] of [['deny', null], ['ask', true]]) {
     const guard = mockGuard({ mode });
     const g = await listen(guard.handler);
     const app = await boot({ guard, guardUrl: g.url });
@@ -454,6 +459,22 @@ test('every Guard decision the hub will not act on is reported "refused": policy
     spoke.stop();
     await app.close(); await g.close();
   }
+  // The signed auto-allow leg: the hub acts on it, the file is written, and
+  // the outcome Guard records is "succeeded", never "refused".
+  const guard = mockGuard({ mode: 'allow' });
+  const g = await listen(guard.handler);
+  const app = await boot({ guard, guardUrl: g.url });
+  const token = await connect(app.base, 'hands.act');
+  const root = await workspace();
+  const spoke = await pairAndRun(app.base, root, { guardPublicKeyX: guard.x });
+  const r = await callTool(app.base, token, 'write_file', { path: join(root, 'r.txt'), content: 'x' });
+  assert.equal(r.isError, false, r.text);
+  assert.equal(await readFile(join(root, 'r.txt'), 'utf8'), 'x');
+  assert.equal(guard.outcomes.length, 1);
+  assert.equal(guard.outcomes[0].status, 'succeeded');
+  assert.ok(guard.outcomes[0].startedAt);
+  spoke.stop();
+  await app.close(); await g.close();
 });
 
 test('approved but the PC refuses (key not pinned): reported "refused" with the PC reason', async () => {
@@ -756,12 +777,20 @@ test('the run-command approval card quotes the command itself, cut with an expli
     buildGuardAction('run_powershell', { commandId: 'run-command', args: { command: 'Get-Date' } }).summary,
     'hands run_powershell run-command: "Get-Date"',
   );
-  const longText = `Write-Output '${'x'.repeat(400)}'`;
+  // A command that fits the quote limit reads WHOLE on the card — the
+  // human approves the actual text, not a cut at the old 300-char quote.
+  const midText = `Write-Output '${'x'.repeat(400)}'`;
+  const midCard = buildGuardAction('run_powershell', { commandId: 'run-command', args: { command: midText } }).summary;
+  assert.ok(midCard.includes('x'.repeat(400)), 'the card cut a command that fits the quote limit');
+  assert.ok(!midCard.includes('…cut'), midCard);
+  assert.ok(midCard.length <= 3960, `summary was ${midCard.length} chars`);
+  // A command past the quote limit is cut at the limit and marked.
+  const longText = `Write-Output '${'x'.repeat(2500)}'`;
   const longCard = buildGuardAction('run_powershell', { commandId: 'run-command', args: { command: longText } }).summary;
   assert.ok(longCard.startsWith('hands run_powershell run-command: "Write-Output'), longCard);
   assert.ok(longCard.includes('…cut'), longCard);
-  assert.ok(longCard.length <= 460, `summary was ${longCard.length} chars`);
-  assert.ok(!longCard.includes('x'.repeat(400)), 'the card quoted the whole command instead of cutting it');
+  assert.ok(longCard.length <= 3960, `summary was ${longCard.length} chars`);
+  assert.ok(!longCard.includes('x'.repeat(2500)), 'the card quoted the whole command instead of cutting it');
 });
 
 // ─── Approval-summary enrichment (folded in from the deployed hub) ──────────
