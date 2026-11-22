@@ -58,7 +58,7 @@ import {
 import {
   getNudgeSettings, queuePending, readNudgeLog, runNudges, setNudgeSettings, noteTab, siteForHost,
 } from './nudge-policy.js';
-import { scanProse } from './claims.js';
+import { scanProse, scanProseProvenance } from './claims.js';
 import {
   getUploadSettings,
   setUploadSettings,
@@ -610,6 +610,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (type === 'helmion:claims') {
       const results = scanProse(message.passages || []);
+      sendResponse({ ok: true, results });
+      return false;
+    }
+
+    if (type === 'helmion:provenance') {
+      const results = scanProseProvenance(message.passages || []);
       sendResponse({ ok: true, results });
       return false;
     }

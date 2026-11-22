@@ -42,6 +42,7 @@ import {
   isUnverifiedProvenance,
   EVIDENCE_CLUSTERS,
 } from './provenance-verification.mjs';
+import { groupSourcesByOrigin } from './claim-evidence.mjs';
 
 export const DOSSIER_SCHEMA_VERSION = 1;
 
@@ -214,46 +215,92 @@ function rigorOf(item) {
 /* ── Scoring: dossier evidence -> ContestationVector ─────────────────────── */
 
 /**
- * The vector math, in the open:
- *   provenanceScore   share of evidence items carrying a provenance record
- *                     that is NOT flagged Unverified Provenance (0 when the
- *                     investigation gathered no evidence at all).
- *   independenceScore share of evidence items independent of the claim's
- *                     authors/institutions with no undisclosed financial tie.
- *   consensusRatio    supports / (supports + disputes) among stance-bearing
- *                     items; 0.5 — genuinely unknown, not agreement — when no
- *                     item takes a side.
- *   dissentRigor      the highest rigor among disputing items (category
- *                     defaults when an item carries none); 0 when nothing
- *                     disputes the claim.
- * Clusters count the stance-bearing items that declared one.
+ * The vector math, in the open — and weighted against Sybil counting.
+ *
+ * Evidence is grouped BY ORIGIN before anything is counted (the
+ * grouping in src/core/claim-evidence.mjs: same address, same
+ * syndicated text, or same author on the same domain family = one
+ * origin). Twenty copies of one wire story are one voice, not
+ * twenty: every count below is a sum of GROUP weights, never a raw
+ * item count, so repetition cannot manufacture consensus. A group
+ * speaks with the stance its members share; a group whose members
+ * disagree with each other counts as context, neither for nor
+ * against. A group is verified when any member carries an unflagged
+ * provenance record (the origin's best record speaks for it) and
+ * independent when its representative item is independent of the
+ * claim's authors — same origin, same authorship, so one check
+ * stands for the group.
+ *
+ *   provenanceScore   verified group weight / total group weight
+ *                     (0 when the investigation gathered no evidence).
+ *   independenceScore independent group weight / total group weight.
+ *   consensusRatio    supporting weight / (supporting + disputing
+ *                     weight); 0.5 — genuinely unknown, not agreement
+ *                     — when no group takes a side.
+ *   dissentRigor      the highest rigor among disputing groups
+ *                     (category defaults when an item carries none);
+ *                     0 when nothing disputes the claim.
+ * Clusters count the stance-bearing groups that declared one.
+ * `inputs` carries the raw item total beside the group counts and a
+ * per-group breakdown, so a surface rendering the dossier shows the
+ * weighting itself, not just its result.
  */
 export function scoreDossier(evidence = [], claim = {}) {
   const items = Array.isArray(evidence) ? evidence : [];
   const total = items.length;
-  const verified = items.filter((i) => i.provenanceRecord && !isUnverifiedProvenance(i.provenanceRecord)).length;
-  const independent = items.filter((i) => isIndependentEvidence(i, claim)).length;
-  const supports = items.filter((i) => i.stance === 'supports').length;
-  const disputes = items.filter((i) => i.stance === 'disputes').length;
+  const views = items.map((item) => ({
+    url: item.sourceUrl ?? item.provenanceRecord?.sourceUrl ?? '',
+    text: item.summary ?? '',
+    author: item.sourceAuthor ?? '',
+    publisher: item.sourcePublisher ?? '',
+  }));
+  const groups = groupSourcesByOrigin(views).map((group) => {
+    const members = group.members.map((i) => items[i]);
+    const stances = [...new Set(members.map((m) => m.stance).filter((s) => s === 'supports' || s === 'disputes'))];
+    return {
+      key: group.key,
+      weight: group.weight,
+      copies: members.length,
+      stance: stances.length === 1 ? stances[0] : 'context',
+      verified: members.some((m) => m.provenanceRecord && !isUnverifiedProvenance(m.provenanceRecord)),
+      independent: isIndependentEvidence(members[0], claim),
+      rigor: Math.max(...members.map(rigorOf)),
+      cluster: members.find((m) => m.cluster && m.stance !== 'context')?.cluster ?? null,
+    };
+  });
+  const totalWeight = groups.reduce((sum, g) => sum + g.weight, 0);
+  const weightOf = (list) => list.reduce((sum, g) => sum + g.weight, 0);
+  const verified = weightOf(groups.filter((g) => g.verified));
+  const independent = weightOf(groups.filter((g) => g.independent));
+  const supports = weightOf(groups.filter((g) => g.stance === 'supports'));
+  const disputes = weightOf(groups.filter((g) => g.stance === 'disputes'));
   const dissentRigor = disputes
-    ? Math.max(...items.filter((i) => i.stance === 'disputes').map(rigorOf))
+    ? Math.max(...groups.filter((g) => g.stance === 'disputes').map((g) => g.rigor))
     : 0;
   const clusters = {};
-  for (const item of items) {
-    if (item.cluster && item.stance !== 'context') {
-      clusters[item.cluster] = (clusters[item.cluster] ?? 0) + 1;
+  for (const group of groups) {
+    if (group.cluster && group.stance !== 'context') {
+      clusters[group.cluster] = (clusters[group.cluster] ?? 0) + 1;
     }
   }
   const vector = createContestationVector({
-    provenanceScore: total ? verified / total : 0,
-    independenceScore: total ? independent / total : 0,
+    provenanceScore: totalWeight ? verified / totalWeight : 0,
+    independenceScore: totalWeight ? independent / totalWeight : 0,
     consensusRatio: supports + disputes ? supports / (supports + disputes) : 0.5,
     dissentRigor,
     ...(Object.keys(clusters).length ? { clusters } : {}),
   });
   return {
     vector,
-    inputs: { total, verified, independent, supports, disputes },
+    inputs: {
+      total,
+      groups: groups.length,
+      verified,
+      independent,
+      supports,
+      disputes,
+      groupDetail: groups.map((g) => ({ key: g.key, copies: g.copies, stance: g.stance, weight: g.weight })),
+    },
   };
 }
 

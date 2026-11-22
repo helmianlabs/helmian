@@ -36,6 +36,11 @@ import {
   describeFindings,
 } from '../generated/helmion-unverified-claims.generated.js';
 import {
+  evaluateClaimGuardrails,
+  annotationForEvaluation,
+  createProvenanceRecord,
+} from '../generated/helmion-provenance-verification.generated.js';
+import {
   detectHarmfulContent,
   describeHarmFindings,
 } from '../generated/helmion-harmful-content.generated.js';
@@ -118,6 +123,134 @@ export function scanProse(passages) {
       ? describeHarmFindings({ flagged: true, hits: result.harmHits })
       : '';
     const summary = [claimSummary, harmSummary].filter(Boolean).join('\n');
+    return { id: passage?.id ?? null, ...result, summary };
+  });
+}
+
+/* ─── THE PROVENANCE LANE ───────────────────────────────────────────────────
+ *
+ * The same pre-response verification the agent loop runs on its own
+ * replies (src/core/provenance-verification.mjs, synced byte-for-byte
+ * into ../generated/), run here over prose the extension reads off a
+ * page. The passage's sentences are the claims; a sentence a supplied
+ * source supports carries that source's provenance record, and a
+ * sentence nothing supports carries none — so the guardrail core
+ * labels it Unverified Provenance instead of the extension inventing
+ * a softer wording of its own.
+ *
+ * Two honest limits of this surface, stated rather than smoothed
+ * over: the extension cannot hash a source synchronously, so a
+ * record it builds carries no source hash and its signature is
+ * 'not-checked' — which the core itself flags as unverified; and
+ * this lane scores no contestation vector, so every claim is also
+ * annotated for that absence. Both annotations are the core's own
+ * sentences, not this file's paraphrase.
+ *
+ * AND IT STILL NEVER BLOCKS. The core's guardrail actions include
+ * quarantine and block; this lane reports the strongest action as
+ * information and spells `blocked` false literally, exactly like the
+ * claims lane above. A reading aid does not become a gate by
+ * importing a stricter module.
+ */
+
+const PROVENANCE_SUPPORT_OVERLAP = 0.22;
+const PROVENANCE_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'of', 'to', 'in', 'on', 'for', 'with',
+  'is', 'are', 'was', 'were', 'be', 'been', 'it', 'its', 'this', 'that', 'as',
+  'at', 'by', 'from', 'has', 'have', 'had', 'will', 'would', 'can', 'could',
+  'should', 'than', 'then', 'so', 'if', 'when', 'which', 'who', 'what', 'how',
+]);
+
+function provenanceWords(text) {
+  const words = new Set();
+  for (const word of String(text ?? '').toLowerCase().split(/[^a-z0-9]+/)) {
+    if (word.length >= 3 && !PROVENANCE_STOPWORDS.has(word)) words.add(word);
+  }
+  return words;
+}
+
+function provenanceSentences(text) {
+  return String(text ?? '')
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.replace(/^[-*•]\s+/, '').trim())
+    .filter((s) => s.length >= 30);
+}
+
+/**
+ * One passage plus the sources its page offers, one provenance
+ * verdict out. `sources` is [{ url, text, publisher?, author? }] —
+ * usually empty for prose read off a page, which is itself the
+ * finding: claims with no source offered are labelled, not passed.
+ */
+export function scanPassageProvenance(passage, sources = []) {
+  const text = String(passage ?? '').trim();
+  if (!text) return { blocked: false, flagged: false, action: 'allow', annotations: [], evaluations: [] };
+  if (text.length > MAX_PASSAGE_LENGTH) {
+    return {
+      blocked: false,
+      flagged: false,
+      action: 'allow',
+      annotations: [],
+      evaluations: [],
+      skipped: `passage is ${text.length} characters, over the ${MAX_PASSAGE_LENGTH} limit`,
+    };
+  }
+  const offered = (Array.isArray(sources) ? sources : []).filter((s) => s && s.url);
+  const records = offered.map((source, i) => createProvenanceRecord({
+    recordId: `ext-src-${i + 1}`,
+    sourceUrl: String(source.url),
+    sourceHash: '',
+    signatureStatus: 'not-checked',
+    attributionStatus: source.publisher ? 'publisher-only' : 'unknown',
+    publisher: source.publisher || '',
+    author: source.author || '',
+  }));
+  const sourceWords = offered.map((s) => provenanceWords(s.text ?? ''));
+  const claims = [];
+  for (const sentence of provenanceSentences(text)) {
+    if (claims.length >= 12) break;
+    const words = provenanceWords(sentence);
+    if (words.size < 4) continue;
+    let best = -1; let bestOverlap = 0;
+    offered.forEach((source, si) => {
+      let shared = 0;
+      for (const word of words) if (sourceWords[si].has(word)) shared += 1;
+      const ratio = shared / words.size;
+      if (ratio >= PROVENANCE_SUPPORT_OVERLAP && ratio > bestOverlap) { bestOverlap = ratio; best = si; }
+    });
+    claims.push({
+      claimId: `c${claims.length + 1}`,
+      text: sentence,
+      provenanceRecord: best >= 0 ? records[best] : null,
+      contestationVector: null,
+    });
+  }
+  const evaluations = claims.map((claim) => evaluateClaimGuardrails(claim, null));
+  const rank = { allow: 0, annotate: 1, quarantine: 2, block: 3 };
+  let action = 'allow';
+  const annotations = [];
+  evaluations.forEach((evaluation, i) => {
+    if (rank[evaluation.action] > rank[action]) action = evaluation.action;
+    const annotation = annotationForEvaluation(evaluation, claims[i]);
+    if (annotation) annotations.push(annotation);
+  });
+  return {
+    // Spelled literally, as above: this lane has no route to a mask
+    // or a refusal, whatever the core's action vocabulary says.
+    blocked: false,
+    flagged: action !== 'allow',
+    action,
+    annotations,
+    evaluations,
+  };
+}
+
+// passages: [{ id, text, sources? }]  ->  [{ id, blocked:false, flagged, action, annotations, evaluations, summary }]
+export function scanProseProvenance(passages) {
+  if (!Array.isArray(passages)) throw new TypeError('scanProseProvenance expects an array of passages');
+  return passages.map((passage) => {
+    const result = scanPassageProvenance(passage?.text, passage?.sources ?? []);
+    const summary = result.annotations.join('\n');
     return { id: passage?.id ?? null, ...result, summary };
   });
 }

@@ -86,6 +86,16 @@ test('POSITIVE CONTROL: a detector that DOES block cannot make this lane block',
         'utf8',
       );
 
+      // Provenance lane is a third import; stub it the same way so the
+      // isolated copy loads without the real generated tree.
+      await writeFile(
+        join(dir, 'provenance-stub.js'),
+        'export function evaluateClaimGuardrails() { return { claimId: "", action: "allow", reasons: [], unverifiedProvenance: false }; }\n'
+        + 'export function annotationForEvaluation() { return ""; }\n'
+        + 'export function createProvenanceRecord(input) { return { ...input }; }\n',
+        'utf8',
+      );
+
       const wrapper = await readFile(new URL('../background/claims.js', import.meta.url), 'utf8');
       let rewired = wrapper.replace(
         '../generated/helmion-unverified-claims.generated.js',
@@ -94,6 +104,10 @@ test('POSITIVE CONTROL: a detector that DOES block cannot make this lane block',
       rewired = rewired.replace(
         '../generated/helmion-harmful-content.generated.js',
         './harm-stub.js',
+      );
+      rewired = rewired.replace(
+        '../generated/helmion-provenance-verification.generated.js',
+        './provenance-stub.js',
       );
       assert.notEqual(rewired, wrapper, 'the import specifier was not rewritten — this control tests nothing');
       await writeFile(join(dir, 'claims.js'), rewired, 'utf8');
