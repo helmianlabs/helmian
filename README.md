@@ -9,10 +9,10 @@
 Helmian is a multi-agent desk with a governor. You connect each AI once,
 talk to them together in channels the way you would talk to a team, and
 every seat works under the same rules: a write lease allows one writer
-per project at a time on the machine where the work runs, **Scribe**
-keeps the shared memory the crew works from, a signed record of what
-happened, and the **Executive Guard** standing over actions on your
-own machine.
+per project at a time on the machine where the work runs, the
+workspace's own shared memory keeps what the crew works from, a signed
+record of what happened, and the **Executive Guard** standing over
+actions on your own machine.
 
 **Try the web app:** [helmian.cloud](https://helmian.cloud) — free account, no card.
 
@@ -187,14 +187,14 @@ first.
   GitHub, Google, Gemini, Stripe, Slack, Hugging Face), AWS access
   key IDs, bearer tokens, JSON Web Tokens, and private keys all
   come back as `[REDACTED]`.
-- **Scribe**: the shared-memory layer. Rooms are views; messages are
-  archived in the workspace's database, attributed to who said and
-  did what. Connected AIs can also read and write that memory through
-  the Scribe door (`door/` in this repo), under Guard. The original
-  Scribe MCP server and Librarian rules engine live in a separate
-  private repository; this public repo holds the desk's notebook,
-  The Librarian on the desk, and the door.
-- **The Librarian**: Scribe's memory keeper on the desk. It files a
+- **Shared memory**: the workspace's own memory layer. Rooms are
+  views; messages are archived in the workspace's Neon database,
+  attributed to who said and did what. Each user sets up the memory
+  endpoint inside Helmian and reaches it over MCP, so the crew works
+  from one memory. This memory is Helmian's own — Scribe is a
+  separate product, with its own door at scribe.dairyforge.com, and
+  is not part of Helmian.
+- **The Librarian**: the desk's memory keeper. It files a
   short record of every ask the desk is given (who asked, which seats
   were called, the Guard's decision, and a brief excerpt) into the
   shared notebook, and files an ask the Guard refused as an open
@@ -281,12 +281,12 @@ Phone / Browser ──→ Cloud (Vercel + Neon) ──→ Bridge ──→ Your 
 
 - **Cloud**: Vercel (web app + API) + Neon Postgres. Chat history,
   audit trail, leases, agent sessions — all tenant-scoped.
-- **Scribe (shared memory)**: the workspace's Neon database is the
+- **Shared memory**: the workspace's Neon database is the
   shared memory — the room's messages, the seats' context, and the
   record live there, so the crew remembers together instead of each
   seat forgetting when a tab closes. The Librarian files each ask
-  into that notebook. The Scribe door is the MCP entrance to the
-  same memory.
+  into that notebook. Each user sets up the memory endpoint inside
+  Helmian and reaches it over MCP.
 - **Integrations, entered once**: the seats' API keys are
   entered once on the Integrations page and stored in the tenant's
   encrypted credential store; the seats work off those connections from
@@ -332,19 +332,45 @@ Live in production at [helmian.cloud](https://helmian.cloud):
 - **Executive Guard**: signed, one-time approvals with a hash-chained
   audit trail; a standing grant carries routine calls after setup, and
   the gated edges above still stop for the owner.
+- **Package provenance gate** (shipped 2026-11-21): before a package
+  or connector install can be approved, the gate checks the package
+  against known malicious-package records, verifies the install
+  against its lockfile, and screens the name for typosquatting
+  tricks. A package with a malicious record is blocked before any
+  human approval is asked.
+- **Attribute rules on tool calls and network requests** (shipped
+  2026-11-21): an organization's attribute rules are evaluated on
+  every tool call a seat makes and every outbound network request. A
+  call outside the rules is denied, and every allow and every deny
+  writes a receipt into the audit trail.
+- **Auditability** (shipped 2026-11-21): approvals are signed, the
+  audit chain is anchored every hour with a timestamp from an outside
+  authority, so the record can be checked against a time Helmian did
+  not choose, and the credential trail can be exported for an outside
+  auditor.
+- **Provenance weighting profiles** (shipped 2026-11-21): the
+  Settings page carries a Provenance Verification panel where the
+  owner sets how much a source's provenance counts, and profile sync
+  carries the saved profile to the owner's devices. An answer that
+  rests on sources names each source with its fingerprint and the
+  time it was retrieved, flags any source whose provenance is
+  unverified, and groups copies of one origin together, so copies of
+  the same page count once instead of once each.
 - **Hands through the spoke**: seats can work on the user's own PC
   (files, commands, localhost) through the guarded door.
-- **Scribe**: live on the desk. Shared memory is the tenant's
+- **Shared memory**: live on the desk. Shared memory is the tenant's
   Postgres database — rooms are views; messages are archived and
-  attributed to who said and did what. Connected AIs reach that
-  memory through the Scribe door in this repo.
-- **The Librarian**: live on the desk as part of Scribe. Every ask
+  attributed to who said and did what. Each user sets up the memory
+  endpoint inside Helmian and reaches it over MCP. Scribe is a
+  separate product and is not part of Helmian.
+- **The Librarian**: live on the desk. Every ask
   is filed into the shared notebook, and the notebook rides in the
   seats' prompts when they answer. Its solve and re-file operations
   exist in the library and are tested, but no shipped surface calls
   them yet, so solutions are not filed automatically today.
 - **Voice**: Kokoro runs in the tab and the seats speak in their own
-  voices; the owner's ear test passed 2026-11-09.
+  voices; the owner's ear test passed 2026-11-09. Voice replies in a
+  channel can be switched on or off.
 - **Plugins**: the catalog is live on the Integrations page's Plugins
   tab — Weather and GitHub Review install, uninstall, and reinstall,
   and the installed skill lands on the seat's shelf (walked live
