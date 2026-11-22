@@ -98,16 +98,22 @@ export async function appendAuditEvent(client, context, input) {
   return String(receipt.rows[0].id);
 }
 
-export function createAuditEventRepository(pool, { attributeRules = DEFAULT_AUDIT_ATTRIBUTE_RULES } = {}) {
+export function createAuditEventRepository(pool, { attributeRules = DEFAULT_AUDIT_ATTRIBUTE_RULES, attributeRulesProvider = null } = {}) {
   const policyRules = attributeRules == null ? null : attributeRules;
-  function authorizeAuditRead(actor, context, query) {
+  async function authorizeAuditRead(client, actor, context, query) {
     if (policyRules == null) return null;
+    // Tenant rules (Organization panel, sql/095) join the shipped defaults
+    // for this read: the provider runs inside the tenant transaction, so
+    // the rules it returns are the actor's own Organization's, read under
+    // the same tenant scope. Defaults stay the floor; deny wins.
+    const tenantRules = attributeRulesProvider ? await attributeRulesProvider(client, context.tenantId) : [];
+    const rules = [...policyRules, ...tenantRules];
     const result = evaluateAttributePolicy({
       action: 'audit.read',
       context: { ...context, attributes: actor?.attributes ?? {} },
       resource: { tenantId: context.tenantId, kind: 'audit_events' },
       request: { tenantScope: 'verified', action: query.action, actor: query.actor, status: query.status, from: query.from, to: query.to },
-      rules: policyRules,
+      rules,
     });
     if (result.decision !== 'ALLOW') {
       throw Object.assign(new TenantAuthorizationError(`Attribute policy denied audit read: ${result.reason}`), {
@@ -125,7 +131,7 @@ export function createAuditEventRepository(pool, { attributeRules = DEFAULT_AUDI
       const context = { tenantId: actor?.tenantId, actorSubject: actor?.subject, actorRole: actor?.role, sessionId: randomUUID(), requestId: randomUUID() };
       return withTenantTransaction(pool, context, async (client, scoped) => {
         await requireActiveTenantMembership(client, scoped);
-        const attributePolicy = authorizeAuditRead(actor, scoped, query);
+        const attributePolicy = await authorizeAuditRead(client, actor, scoped, query);
         const values = [scoped.tenantId];
         const where = ['tenant_id=$1'];
         const add = (sql, value) => { values.push(value); where.push(sql.replace('$N', `$${values.length}`)); };
@@ -156,7 +162,7 @@ export function createAuditEventRepository(pool, { attributeRules = DEFAULT_AUDI
       const context = { tenantId: actor?.tenantId, actorSubject: actor?.subject, actorRole: actor?.role, sessionId: actor?.sessionId ?? randomUUID(), requestId: actor?.requestId ?? randomUUID() };
       return withTenantTransaction(pool, context, async (client, scoped) => {
         await requireActiveTenantMembership(client, scoped);
-        const attributePolicy = authorizeAuditRead(actor, scoped, query);
+        const attributePolicy = await authorizeAuditRead(client, actor, scoped, query);
         const values = [scoped.tenantId];
         const where = ['tenant_id=$1'];
         const add = (sql, value) => { values.push(value); where.push(sql.replace('$N', `$${values.length}`)); };

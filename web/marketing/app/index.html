@@ -8,15 +8,15 @@
        the stylesheets land so a light-theme user never gets a dark
        flash. It is an external file because the /app CSP allows
        external scripts only; an inline block here cannot run. -->
-  <script src="/app/theme-init.js?v=c455b9b702e1f1c1"></script>
+  <script src="/app/theme-init.js?v=fbbbbf3a8826c261"></script>
   <title>Helmian</title>
   <link rel="icon" type="image/png" href="/assets/helmian-logo.png">
   <link rel="manifest" href="/app/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/assets/helmian-logo.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <link rel="stylesheet" href="/app/app.css?v=c455b9b702e1f1c1">
-  <link rel="stylesheet" href="/app/envoy.css?v=c455b9b702e1f1c1">
-  <script type="module" src="/app/app.js?v=c455b9b702e1f1c1"></script>
+  <link rel="stylesheet" href="/app/app.css?v=fbbbbf3a8826c261">
+  <link rel="stylesheet" href="/app/envoy.css?v=fbbbbf3a8826c261">
+  <script type="module" src="/app/app.js?v=fbbbbf3a8826c261"></script>
 </head>
 <body>
 <div id="shell" class="shell" data-view="desktop">
@@ -562,6 +562,21 @@
           <button id="org-apply-btn" class="btn" type="button">Apply role change</button>
         </div>
         <p id="org-status" class="muted sm"></p>
+      </div>
+      <h3>Attribute rules</h3>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Rule</th><th>Effect</th><th>Actions</th><th>Conditions</th><th>Reason</th><th></th></tr></thead><tbody id="org-rules"></tbody></table></div>
+      <div class="card">
+        <label class="fld"><span>Rule id</span><input id="rule-id" type="text" autocomplete="off" placeholder="e.g. drivers-no-audit-read"></label>
+        <label class="fld"><span>Effect</span><select id="rule-effect"><option value="DENY">DENY</option><option value="ALLOW">ALLOW</option></select></label>
+        <label class="fld"><span>Actions (comma separated)</span><input id="rule-actions" type="text" autocomplete="off" value="audit.read"></label>
+        <label class="fld"><span>Condition path</span><input id="rule-cond-path" type="text" autocomplete="off" placeholder="actor.jobTitle"></label>
+        <label class="fld"><span>Condition</span><select id="rule-cond-op"><option value="eq">equals</option><option value="in">is one of</option><option value="notIn">is not one of</option><option value="exists">exists</option></select></label>
+        <label class="fld"><span>Condition value</span><input id="rule-cond-value" type="text" autocomplete="off" placeholder="driver"></label>
+        <label class="fld"><span>Reason</span><input id="rule-reason" type="text" autocomplete="off" placeholder="why this rule"></label>
+        <div class="row-actions">
+          <button id="rule-create-btn" class="btn" type="button">Create rule</button>
+        </div>
+        <p id="rule-status" class="muted sm"></p>
       </div>
     </section>
 

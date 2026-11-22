@@ -358,6 +358,8 @@ h1 { font-size:26px; margin:6px 0 10px; } h2 { font-size:18px; margin:0 0 16px; 
 .mask { font-family:var(--mono); color:var(--muted); }
 .cards4 { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:12px; margin-bottom:12px; }
 .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }
+#org-catalog .card{min-width:0}
+#org-catalog .cap{overflow-wrap:anywhere}
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; }
 .card { background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
 .card .title { font-weight:600; } .card .meta { color:var(--muted); font-size:12px; margin-top:4px; } .card .big { font-size:24px; font-weight:600; margin-top:4px; }
