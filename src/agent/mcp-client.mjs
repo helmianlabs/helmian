@@ -93,6 +93,14 @@ export async function createMcpClient({
   cwd,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   spawnFn = spawn,
+  // The attribute-policy gate (src/cloud/tool-call-gate.mjs). When a gate
+  // and a gateActor are supplied, every tool call is authorized BEFORE it
+  // is sent to the server, and a denial refuses the call with the
+  // receipt recorded. Callers without a tenant actor leave both unset
+  // and the client behaves exactly as before.
+  gate = null,
+  gateActor = null,
+  gateDataLabel = null,
 } = {}) {
   if (!command || typeof command !== 'string') {
     throw new McpClientError('an MCP server needs a command to run');
@@ -237,6 +245,12 @@ export async function createMcpClient({
      */
     async callTool(name, args = {}) {
       if (!name) throw new McpClientError('callTool needs a tool name');
+      if (gate && gateActor) {
+        const verdict = await gate.authorizeToolCall(gateActor, { toolName: name, dataLabel: gateDataLabel });
+        if (!verdict.allowed) {
+          throw new McpClientError(`tool call refused by attribute policy: ${verdict.reason}`, { code: 'TOOL_CALL_ATTRIBUTE_POLICY_DENIED', receiptId: verdict.receiptId, matchedRuleIds: verdict.matchedRuleIds });
+        }
+      }
       return request('tools/call', { name, arguments: args });
     },
 
