@@ -22,11 +22,23 @@
 // consentBoundary is not exported (the file fails outright) and
 // the discovery call carries no signal (its test times out).
 
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { consentBoundary, CONSENT_BOUNDARY_FETCH_BUDGET_MS } from '../src/cloud/connector-library-write-route.mjs';
 import { discoverAuthorizationServer, ConnectorOAuthDcrError, DCR_DISCOVERY_BUDGET_MS } from '../src/cloud/connector-oauth-dcr.mjs';
+
+// Harness pin (CI finding, 2026-11-20): these tests wait on nothing
+// but AbortSignal.timeout timers, whose internal timer does not hold
+// the event loop. On Node 22 the test runner sees the loop resolve
+// while the abort is still pending and cancels all three tests
+// (cancelledByParent, "Promise resolution is still pending but the
+// event loop has already resolved" — reproduced by hand on
+// v22.21.1; Node 24's runner holds the loop and the file passes).
+// A plain ref'd interval keeps the loop alive so the aborts can
+// fire; it touches nothing the tests assert.
+const keepAlive = setInterval(() => {}, 1_000);
+after(() => clearInterval(keepAlive));
 
 // A fetch that hangs forever unless its abort signal fires.
 const hangingFetch = (url, init = {}) => new Promise((resolve, reject) => {
