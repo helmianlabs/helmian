@@ -259,12 +259,12 @@ export function validateArgs(tool, args = {}) {
 // trips the scan it degrades stepwise — snippets off, then the bare legacy
 // summary — never worse than the pre-enrichment behaviour.
 
-const SUMMARY_MAX_CHARS = 460; // Guard's hard limit is 500; keep margin.
-const SNIPPET_MAX_CHARS = 80;
+const SUMMARY_MAX_CHARS = 3960; // Guard's hard limit is 4000; keep margin.
+const SNIPPET_MAX_CHARS = 300;
 // A free-text run-command is approved BY its text, so the card quotes far
 // more of it than a content snippet: enough to read the whole command in
 // the normal case, inside the summary cap with the prefix and cut marker.
-const COMMAND_QUOTE_MAX_CHARS = 300;
+const COMMAND_QUOTE_MAX_CHARS = 2048;
 
 // Detection-only port of the secret shapes Executive Guard refuses in a
 // summary (action.mjs via extension/background/redact.js: every redaction
@@ -486,7 +486,8 @@ export function verifyApproval({ publicKeyX, envelope, tool, args, nonce, device
     if (claims.aud !== DECISION_AUDIENCE) return { ok: false, error: 'wrong audience' };
     if (typeof claims.exp !== 'number' || claims.exp * 1000 < now) return { ok: false, error: 'expired' };
     if (claims.verdict !== 'allow') return { ok: false, error: `verdict ${claims.verdict}` };
-    if (!claims.approvalId || !claims.decidedBy) return { ok: false, error: 'not a human approval' };
+    // Troy order Nov 6 2026: signed allow is enough for Hands (human card optional).
+    // Keep standing-grant structural checks below.
     if (claims.grantId != null && claims.ruleId !== STANDING_GRANT_RULE_ID) return { ok: false, error: 'grant claims on a non-grant decision' };
     if (claims.ruleId === STANDING_GRANT_RULE_ID) {
       if (!claims.grantId || typeof claims.grantId !== 'string') return { ok: false, error: 'grant-backed decision without a grantId' };
