@@ -1,7 +1,7 @@
-import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry, guardPaneApprovalsModel, approvalPopupModel, organizationModel, attributeRulesModel } from './app-model.mjs?v=fbbbbf3a8826c261';
-import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=fbbbbf3a8826c261';
-import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=fbbbbf3a8826c261';
-import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=fbbbbf3a8826c261';
+import { VIEW_TITLES, viewTitles, isPlainEmojiMode, ADVANCED_VIEWS, PANEL_VIEWS, PANEL_TABS, viewFromHash, isAdminRole, sessionModel, projectsModel, filterProjects, projectKeyFromName, approvalsModel, logLines, BRIDGE_DISPLAY_NAME, feedModel, feedAckClearIds, humanAction, formatTime, maskSecret, integrationsModel, agentsModel, createModel, createIntentPayload, metricsModel, postureModel, addSession, plainEvent, sessionsFromServer, PROVIDERS, progressModel, planFromText, homeModel, smsInviteHref, desktopsModel, forgetDesktopPayload, collapseRepeats, workspaceName, friendlyWorkspace, profileSyncResultModel, guardQueueReadModel, GUARD_QUEUE_NO_ANSWER, settleWithStateRetry, guardPaneApprovalsModel, approvalPopupModel, organizationModel, attributeRulesModel } from './app-model.mjs?v=40ad6e8dd2e6d871';
+import { addAttachment, attachmentKey, buildMessageRequest, pickerModel, removeAttachment } from './composer-picker.mjs?v=40ad6e8dd2e6d871';
+import { accountIdentityModel, downloadsModel, reportIssueHref, SHORTCUTS } from './account-menu.mjs?v=40ad6e8dd2e6d871';
+import { LIBRARY_FACES, libraryFaceToken, libraryFaceStillUrl } from './face-library.mjs?v=40ad6e8dd2e6d871';
 const KOKORO_URL = 'https://esm.sh/kokoro-js@1.2.1';
 
 const $ = (s) => document.querySelector(s);
@@ -2094,7 +2094,8 @@ async function loadFeedData({ force = false } = {}) {
   if (!force && feedLoadedAt && Date.now() - feedLoadedAt < FEED_STALE_MS) return;
   const loading = (async () => {
     const [ev, ap, gf] = await Promise.allSettled([api('/api/admin/events'), api('/api/admin/cora/approvals'), api('/api/admin/guard/findings')]);
-    if (ev.status === 'fulfilled') state.events = Array.isArray(ev.value.events) ? ev.value.events : [];
+    if (ev.status === 'fulfilled') { state.events = Array.isArray(ev.value.events) ? ev.value.events : []; state.eventsDenied = null; }
+    else if (ev.reason?.status === 403) state.eventsDenied = ev.reason?.body?.code || ev.reason?.message || 'AUDIT_MEMBERSHIP_REQUIRED';
     if (ap.status === 'fulfilled') state.approvals = approvalsModel(ap.value, state.actor?.role).items;
     state.findings = gf.status === 'fulfilled' && Array.isArray(gf.value.findings) ? gf.value.findings : [];
     // The Guard pane's shelf carries the PC (hands) approvals too (Bite
@@ -2693,7 +2694,8 @@ const ruleCreateBtn = $('#rule-create-btn'); if (ruleCreateBtn) ruleCreateBtn.on
 async function loadEvidence() {
   await loadFeedData();
   const tb = $('#evidence');
-  if (!state.events.length) { const tr = el('tr'); const td = el('td', 'muted', 'No evidence recorded yet.'); td.colSpan = 4; tr.append(td); tb.replaceChildren(tr); }
+  if (state.eventsDenied) { const tr = el('tr'); const td = el('td', 'muted', state.eventsDenied === 'AUDIT_ATTRIBUTE_POLICY_DENIED' ? 'Audit read refused: an attribute rule for this workspace denies audit.read for your role. The refusal itself is the rule working.' : 'Audit read refused for this workspace.'); td.colSpan = 4; tr.append(td); tb.replaceChildren(tr); }
+  else if (!state.events.length) { const tr = el('tr'); const td = el('td', 'muted', 'No evidence recorded yet.'); td.colSpan = 4; tr.append(td); tb.replaceChildren(tr); }
   else tb.replaceChildren(...state.events.slice(0, 100).map((e) => { const tr = el('tr'); const st = el('span', `status ${String(e.status).toUpperCase() === 'ALLOW' ? 'ok' : 'warn'}`, String(e.status ?? '').toLowerCase()); const td = el('td'); td.append(st); tr.append(el('td', 'muted', formatTime(e.createdAt)), el('td', null, plainEvent(e).title), el('td', 'muted', e.actorRole || ''), td); return tr; }));
   // Handoffs and checkpoints are owner/admin-only reads; members see a note.
   const note = $('#evidence-note');
@@ -2730,7 +2732,7 @@ function scheduleIntegrationsPreload() {
   if (integrationsPreloadScheduled) return;
   integrationsPreloadScheduled = true;
   const warm = async () => {
-    try { integrationsMod ??= await import('./integrations-view.mjs?v=fbbbbf3a8826c261'); } catch {}
+    try { integrationsMod ??= await import('./integrations-view.mjs?v=40ad6e8dd2e6d871'); } catch {}
   };
   if (typeof requestIdleCallback === 'function') requestIdleCallback(() => { void warm(); }, { timeout: 4000 });
   else setTimeout(() => { void warm(); }, 2000);
@@ -2744,9 +2746,9 @@ async function loadIntegrations() {
   // sections render replaces the line when the reads are in.
   const intBox = $('#integrations');
   if (intBox && !intBox.children.length) intBox.replaceChildren(el('p', 'muted sm', 'Loading integrations…'));
-  integrationsMod ??= await import('./integrations-view.mjs?v=fbbbbf3a8826c261');
-  connectFieldsMod ??= await import('./connect-fields.mjs?v=fbbbbf3a8826c261');
-  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=fbbbbf3a8826c261');
+  integrationsMod ??= await import('./integrations-view.mjs?v=40ad6e8dd2e6d871');
+  connectFieldsMod ??= await import('./connect-fields.mjs?v=40ad6e8dd2e6d871');
+  apiKeyFieldsMod ??= await import('./api-key-fields.mjs?v=40ad6e8dd2e6d871');
   // The state-bearing reads (provider connections, runner
   // presence) get one retry on rejection before any card is
   // derived: a single transient failure used to degrade every
@@ -2959,7 +2961,7 @@ function integrationCard(card) {
 }
 async function drawQr(node, text) {
   try {
-    qrMod ??= (await import('./vendor/qrcode.mjs?v=fbbbbf3a8826c261')).default;
+    qrMod ??= (await import('./vendor/qrcode.mjs?v=40ad6e8dd2e6d871')).default;
     const q = qrMod(0, 'M'); q.addData(text); q.make();
     const n = q.getModuleCount(); const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `-2 -2 ${n + 4} ${n + 4}`); svg.setAttribute('shape-rendering', 'crispEdges');
@@ -3851,7 +3853,7 @@ $('#preview-refresh').onclick = () => loadPreview().catch(() => {});
 let workspaceModule = null;
 async function loadDesktop() {
   wireRail();
-  workspaceModule ??= await import('./envoy-workspace.js?v=fbbbbf3a8826c261');
+  workspaceModule ??= await import('./envoy-workspace.js?v=40ad6e8dd2e6d871');
   // The feed load rides along unawaited (boot-load fix, 2026-11-11):
   // it used to be awaited here, so the whole workspace mount — the
   // Desktop view's first paint — waited on the slowest of the events,
@@ -4443,7 +4445,7 @@ for (const b of acctMenu.querySelectorAll('[data-acct-item]')) {
 // never blocks a workspace.
 async function maestroActivationGate(actor) {
   try {
-    const mod = await import('./maestro-activation.mjs?v=fbbbbf3a8826c261');
+    const mod = await import('./maestro-activation.mjs?v=40ad6e8dd2e6d871');
     await mod.runMaestroActivationGate({ role: actor?.role });
   } catch { /* fail soft: proceed without the ceremony */ }
 }
