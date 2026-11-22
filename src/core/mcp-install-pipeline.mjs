@@ -33,6 +33,8 @@ import {
 } from './mcp-install-ledger.mjs';
 import { buildInstallLibraryReport } from './mcp-library-report.mjs';
 import { buildApprovalBriefing } from './mcp-approval.mjs';
+import { evaluatePackageProvenance, PACKAGE_DECISION } from './package-provenance.mjs';
+import { readdir } from 'node:fs/promises';
 
 export const MANIFEST_FILENAME = 'helmion-candidate.json';
 
@@ -60,6 +62,7 @@ export async function loadDeclaredManifest(root) {
       allowedEnv: parsed.allowedEnv ?? [],
       tools: parsed.tools ?? [],
       name: parsed.name ?? null,
+      pkg: parsed.package ?? null,
       manifestPresent: true,
     };
   } catch (error) {
@@ -69,6 +72,59 @@ export async function loadDeclaredManifest(root) {
       manifestNote: `${MANIFEST_FILENAME} is present but is not valid JSON (${error.message}). Treated as declaring nothing.`,
     };
   }
+}
+
+/**
+ * Build the package descriptor the provenance gate checks, from the
+ * candidate itself: an explicit `package` declaration in the manifest
+ * wins; otherwise an npm candidate's own package.json supplies name,
+ * version, and install scripts. The lockfile text and any .pth files are
+ * read from the candidate root. Returns null when the candidate is not a
+ * registry package at all (a plain local server), in which case the gate
+ * does not apply and says nothing.
+ */
+async function loadPackageDescriptor(candidateRoot, declared) {
+  let pkg = declared?.pkg ?? null;
+  const declaredPackage = pkg != null;
+  let scripts = null;
+  if (!pkg) {
+    const packageJsonText = await readFile(join(candidateRoot, 'package.json'), 'utf8').catch(() => null);
+    if (packageJsonText) {
+      try {
+        const parsed = JSON.parse(packageJsonText);
+        if (parsed.name && parsed.version) {
+          pkg = { ecosystem: 'npm', name: parsed.name, version: parsed.version };
+          scripts = parsed.scripts ?? null;
+        }
+      } catch { /* an unreadable package.json declares no package */ }
+    }
+  }
+  if (!pkg) return null;
+  const ecosystem = pkg.ecosystem ?? 'npm';
+  const lockfileName = ecosystem === 'npm' ? 'package-lock.json' : 'requirements-lock.txt';
+  const lockfileText = await readFile(join(candidateRoot, lockfileName), 'utf8').catch(() => null);
+  const files = [];
+  const walk = async (dir, depth) => {
+    if (depth > 4 || files.length > 50) return;
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) { if (entry.name !== 'node_modules' && entry.name !== '.git') await walk(full, depth + 1); }
+      else if (/\.pth$/i.test(entry.name)) {
+        files.push({ path: full.slice(candidateRoot.length + 1), content: await readFile(full, 'utf8').catch(() => null) });
+      }
+    }
+  };
+  await walk(candidateRoot, 0);
+  return {
+    ecosystem,
+    name: pkg.name,
+    version: pkg.version,
+    lockfileText: pkg.lockfileText ?? lockfileText,
+    scripts: pkg.scripts ?? scripts,
+    files,
+    declaredPackage,
+  };
 }
 
 function configSnippet(serverName, installedPath) {
@@ -104,6 +160,9 @@ export async function runInstallPipeline({
   // Explicit so a caller (notably the test suite) can guarantee no database is
   // touched. Passing null keeps the ledger purely local.
   connectionString = process.env.HELMION_DATABASE_URL,
+  // Injectable lookups for the package provenance gate (tests drive the
+  // advisory and attestation branches offline through these).
+  packageGateOptions = {},
 } = {}) {
   const candidateRoot = resolve(root);
   const declared = await loadDeclaredManifest(candidateRoot);
@@ -170,6 +229,40 @@ export async function runInstallPipeline({
       note: 'Pipeline halted before the sandbox and before any human was asked. Nothing was installed.',
     });
     return report;
+  }
+
+  // ── Stage 2b: package provenance gate ─────────────────────────────────────
+  // When the candidate is (or declares) a registry package, the package
+  // itself is checked before anything runs: advisories (OSV + GHSA),
+  // lockfile integrity, provenance attestations, typosquat screen, and
+  // startup hooks. The gate's decision is written to the ledger either
+  // way — the receipt is the record that the check ran and what it found.
+  const pkgDescriptor = await loadPackageDescriptor(candidateRoot, declared);
+  if (pkgDescriptor) {
+    const gate = await evaluatePackageProvenance({
+      pkg: pkgDescriptor,
+      requireLockfile: pkgDescriptor.declaredPackage === true,
+      ...packageGateOptions,
+    });
+    report.stages.packageProvenance = { stage: 'package-provenance', ...gate };
+    await log('package-provenance', {
+      ecosystem: pkgDescriptor.ecosystem,
+      name: pkgDescriptor.name,
+      version: pkgDescriptor.version,
+      decision: gate.decision,
+      findings: gate.findings,
+      attestation: gate.attestation ? { status: gate.attestation.status, detail: gate.attestation.detail } : null,
+      lockfile: gate.lockfile ? { present: gate.lockfile.present, verified: gate.lockfile.verified, detail: gate.lockfile.detail } : null,
+    });
+    if (gate.decision === PACKAGE_DECISION.BLOCK) {
+      report.finalDecision = 'blocked-by-package-provenance';
+      await log('blocked', {
+        reason: 'package provenance gate',
+        findings: gate.findings.filter((f) => f.severity === 'block'),
+        note: 'Pipeline halted before the sandbox and before any human was asked. Nothing was installed.',
+      });
+      return report;
+    }
   }
 
   // ── Stage 3: sandbox ──────────────────────────────────────────────────────
@@ -254,6 +347,10 @@ export function formatPipelineOutcome(report) {
   if (report.stages.codeRead) {
     const s = report.stages.codeRead.summary;
     lines.push(`  code read: ${report.stages.codeRead.verdict} (critical ${s.critical}, high ${s.high}, medium ${s.medium})`);
+  }
+  if (report.stages.packageProvenance) {
+    lines.push(`  package provenance: ${report.stages.packageProvenance.decision.toUpperCase()}`);
+    for (const f of report.stages.packageProvenance.findings) lines.push(`      ${f.severity}: ${f.detail}`);
   }
   if (report.stages.sandbox) lines.push(`  sandbox:   ${report.stages.sandbox.verdict}`);
   if (report.stages.approval) lines.push(`  approval:  ${report.stages.approval.approved ? 'GRANTED' : 'NOT GRANTED'} — ${report.stages.approval.reason}`);
