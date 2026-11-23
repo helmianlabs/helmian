@@ -74,6 +74,58 @@ export function combineSignals(...signals) {
 }
 
 /**
+ * The tool result recorded for a call whose turn ended before the call
+ * completed (context auto-save study, 2026-11-23). The model reads this
+ * string as the call's outcome, and it has to be unambiguous that the
+ * work did not happen — a dangling call answered with silence would
+ * invite the model to assume it succeeded.
+ */
+export const UNANSWERED_TOOL_MESSAGE =
+  'Error: this tool call never completed — the turn that issued it ended '
+  + 'before its result was recorded. Treat the call as failed; do not '
+  + 'assume it did anything.';
+
+/**
+ * Repair a history in place: every assistant message carrying
+ * tool_calls must be followed by a tool result for each call, or the
+ * providers reject the whole history on the next request and the
+ * session is poisoned for every later turn. A turn that died between
+ * recording its calls and recording their results (a throw, a crash,
+ * a killed process) leaves exactly that dangling shape behind. This
+ * walks the history and answers each unanswered call with
+ * UNANSWERED_TOOL_MESSAGE, inserted with the results that did land.
+ * Returns the number of calls repaired.
+ */
+export function repairDanglingToolCalls(messages) {
+  if (!Array.isArray(messages)) return 0;
+  let repaired = 0;
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
+    if (message?.role !== 'assistant' || !Array.isArray(message.tool_calls) || !message.tool_calls.length) continue;
+    const answered = new Set();
+    let j = i + 1;
+    while (j < messages.length && messages[j]?.role === 'tool') {
+      answered.add(messages[j].tool_call_id);
+      j += 1;
+    }
+    const missing = message.tool_calls.filter((tc) => !answered.has(tc?.id));
+    if (missing.length) {
+      const repairs = missing.map((tc) => ({
+        role: 'tool',
+        tool_call_id: tc.id,
+        name: tc.function?.name ?? tc.name ?? 'tool',
+        content: UNANSWERED_TOOL_MESSAGE,
+      }));
+      messages.splice(j, 0, ...repairs);
+      repaired += repairs.length;
+      j += repairs.length;
+    }
+    i = j - 1;
+  }
+  return repaired;
+}
+
+/**
  * Shared multi-round tool loop used by CLI REPL and the Windows EXE bridge.
  * onEvent({ type, ... }) receives progress for the UI.
  */
@@ -434,6 +486,14 @@ async function runAgentTurnInner({
       onEvent({ type: 'cancelled', reason: 'before the model call', round });
       throw abortError('Cancelled before the model call.');
     }
+    // Before EVERY model call, not once at the door: a previous turn
+    // (or an earlier round, or a killed process) may have left an
+    // assistant message whose tool calls never got their results, and
+    // sending that history as-is gets the whole request rejected —
+    // the session stays broken for every later turn. Repair first;
+    // the call then goes out on a well-formed history.
+    const repaired = repairDanglingToolCalls(messages);
+    if (repaired) onEvent({ type: 'history_repaired', count: repaired, round });
     let choice = pickModel(round);
     announce(choice, round);
 
@@ -503,7 +563,29 @@ async function runAgentTurnInner({
       });
       // The signal goes INTO the tool. This is the line that makes a cancel
       // reach a running child process rather than merely preventing the next one.
-      const result = await runtime.execute(tc.name, tc.arguments, { signal });
+      //
+      // A TOOL ERROR IS A RESULT, NEVER A THROW (context auto-save
+      // study, 2026-11-23): a retrieval tool that throws used to kill
+      // the turn here — after the assistant message carrying its
+      // calls was already in the history and before any result was —
+      // leaving a dangling tool_calls message that poisoned every
+      // later turn of the session. Now the failure comes back as the
+      // call's result string, in the same Error: register the tools
+      // themselves use, and the model reads it and recovers. An abort
+      // is the one exception: it is a cancel, not a tool failure, and
+      // it keeps the cancel path below.
+      let result;
+      try {
+        result = await runtime.execute(tc.name, tc.arguments, { signal });
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        const message = err?.message ?? String(err);
+        onEvent({ type: 'tool_error', name: tc.name, message });
+        result = `Error: the ${tc.name} tool failed before it could answer: ${message}`;
+      }
+      if (typeof result !== 'string') {
+        result = result == null ? '' : (typeof result === 'object' ? JSON.stringify(result) : String(result));
+      }
       const workbenchResult = parseWorkbenchResult(result);
       const clipped = result.length > 12_000
         ? `${result.slice(0, 12_000)}\n…(truncated)`
@@ -557,6 +639,8 @@ async function runAgentTurnInner({
 
   let wrapText = '';
   try {
+    // The wrap-up sends the same history; it gets the same repair.
+    repairDanglingToolCalls(messages);
     messages.push({
       role: 'user',
       content:
