@@ -64,15 +64,13 @@ jobs:
       - name: Root test suite
         run: npm test
 
-  # Informational until the standing-grant client fix lands: the suite
-  # runs 99 of 99 by hand with that fix in the tree, but on main today
-  # the standing-grant e2e leg still fails in the hands client. Kept
-  # visible on every push so the state is never a surprise; flip
-  # continue-on-error off when the suite runs green on main.
+  # Strict (flipped 2026-11-22): the standing-grant tests pass on main
+  # as shipped (10/10), and the suite runs green by hand. The two TIMING
+  # tests measure steady-state scan time after a warm-up call, so the
+  # 100 ms bound judges the scanner, not first-call JIT compilation.
   executive-guard:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -88,16 +86,13 @@ jobs:
       - name: Executive Guard suite
         run: node --test executive-guard/test/*.test.mjs
 
-  # Informational for now: the suite runs green by hand (105/105), but
-  # one scope-reporting test has flaked intermittently under heavy CPU
-  # contention and is not yet characterized. The package's own test
-  # script targets the test/ directory, which fails at load on current
-  # Node, so CI runs the files by glob, the same way the suite is run
-  # by hand.
+  # Strict (flipped 2026-11-22): the suite runs green by hand (105/105)
+  # across repeated runs. The package's own test script targets the
+  # test/ directory, which fails at load on current Node, so CI runs
+  # the files by glob, the same way the suite is run by hand.
   hands:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
