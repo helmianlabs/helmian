@@ -338,6 +338,7 @@ test('TIMING: the A1 sentence padded to 144 KB scans in bounded time', () => {
   const filler = 'lorem ipsum dolor sit amet, consectetur adipiscing elit. ';
   const padded = `${ATTACK_CASES[0].text} ${filler.repeat(Math.ceil((144 * 1024) / filler.length))}`;
   assert.ok(padded.length >= 144 * 1024);
+  scanInjection(padded); // warm-up: the bound measures steady-state scan time, not first-call JIT compilation
   const started = performance.now();
   const result = scanInjection(padded);
   const elapsed = performance.now() - started;
@@ -351,6 +352,7 @@ test('TIMING: a hostile near-miss built to invite backtracking scans in bounded 
   const hostile = `ignore ${'the very nearly almost previous '.repeat(1200)}instruction manual for the office. `
     + `disregard ${'your own private personal '.repeat(1200)}notes. `
     + 'x'.repeat(64 * 1024);
+  scanInjection(hostile); // warm-up, as above
   const started = performance.now();
   scanInjection(hostile);
   const elapsed = performance.now() - started;
