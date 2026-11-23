@@ -89,7 +89,7 @@ globalThis.fetch = async (url, init = {}) => {
     if (pcListStatus !== 200) return textResponse(pcListStatus, '');
     return textResponse(200, JSON.stringify({ approvals: pcList }));
   }
-  if (u.includes('connect.helmian.cloud')) return textResponse(200, doorPage);
+  if (u.includes('scribe.dairyforge.com')) return textResponse(200, doorPage);
   throw new Error(`unscripted fetch: ${u}`);
 };
 
@@ -164,7 +164,7 @@ function rawItem(id, summary) {
 async function seedDoor(count) {
   const items = Array.from({ length: count }, (_, i) => ({ id: `d${i}`, summary: 'Door', meta: '', csrf: 'x' }));
   await storage.set(APPROVALS_STATE_KEY, {
-    doorUrl: 'https://connect.helmian.cloud', session: 'in', items, count,
+    doorUrl: 'https://scribe.dairyforge.com', session: 'in', items, count,
     flash: '', lastError: '', updatedAt: 0, nextAt: Date.now() + 3600_000, errors: 0, badgeOwned: false,
   });
 }
@@ -196,7 +196,7 @@ test('the PC alarm drives the PC poll: state fills and the badge lights', async 
 test('the door alarm still drives the door poll alongside the PC poll', async () => {
   resetWorld();
   await storage.set(APPROVALS_STATE_KEY, {
-    doorUrl: 'https://connect.helmian.cloud', session: 'in', items: [], count: 0,
+    doorUrl: 'https://scribe.dairyforge.com', session: 'in', items: [], count: 0,
     flash: '', lastError: '', updatedAt: 0, nextAt: 0, errors: 0, badgeOwned: false,
   });
   doorPage = '<div class="req"><form method="POST" action="/approvals/d1/decide">'

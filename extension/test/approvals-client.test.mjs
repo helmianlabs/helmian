@@ -115,3 +115,15 @@ test('a forced poll runs inside the error backoff and folds the fresh page', asy
   assert.equal(s.nextAt, NOW + 2 * POLL_S * 1000, 'a successful poll returns to the 60 s cadence');
   assert.ok(ERROR_BACKOFF_S > POLL_S, 'the backoff the force broke was the long one');
 });
+
+test('a stored doorUrl naming the retired door is treated as unset and the poll goes to the current door', async () => {
+  // Older builds seeded their default into stored state, and that default
+  // was the pre-separation door, which no longer answers. A stored value
+  // naming it must not strand the client on a dead address.
+  const storage = seedSignedIn({ doorUrl: 'https://connect.helmian.cloud' });
+  const { fetchImpl, calls } = fakeFetch([{ status: 200, text: EMPTY_PAGE }]);
+  const r = await pollApprovals(storage, { fetchImpl, now: NOW, force: true });
+  assert.equal(r.ok, true);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].url.startsWith('https://scribe.dairyforge.com/'), `poll went to ${calls[0].url}`);
+});
