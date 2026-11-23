@@ -116,11 +116,11 @@ test('it asks for exactly the permissions 0.7.0 declares, and the list cannot qu
   // alerts, identity for the Scribe sign-in).
   assert.deepEqual(manifest.optional_permissions, ['notifications', 'identity']);
   // Host permissions: the findings upload's helmian.cloud, plus
-  // connect.helmian.cloud, the door the Executive Guard approvals and
-  // Scribe clients talk to. Pinned to exactly these two hosts.
+  // scribe.dairyforge.com, Scribe's own door, which the Scribe approvals
+  // client talks to. Pinned to exactly these two hosts.
   assert.deepEqual(manifest.host_permissions, [
     'https://helmian.cloud/*',
-    'https://connect.helmian.cloud/*',
+    'https://scribe.dairyforge.com/*',
   ]);
   // Optional host permissions, requested only when a feature needs them:
   // https for user-approved local policy endpoints, http for localhost

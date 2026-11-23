@@ -1,7 +1,7 @@
 // Scribe approvals in the toolbar pop-up (0.7.0).
 //
-// The approvals PAGE belongs to Scribe itself: the helmian-door app serves it
-// at https://connect.helmian.cloud/approvals, Troy signs in with his Scribe
+// The approvals PAGE belongs to Scribe itself: Scribe's own door serves it
+// at https://scribe.dairyforge.com/approvals, Troy signs in with his Scribe
 // passphrase, and the door — holding its own Executive Guard approver
 // credential, which never reaches a browser — lists what the Guard is holding
 // and forwards his decisions. This module is the extension's client for that
@@ -50,7 +50,7 @@
 
 export const APPROVALS_STATE_KEY = 'helmion.approvals.state';
 export const APPROVALS_ALARM = 'helmion-approvals-poll';
-export const DEFAULT_DOOR_URL = 'https://connect.helmian.cloud';
+export const DEFAULT_DOOR_URL = 'https://scribe.dairyforge.com';
 export const POLL_S = 60;
 export const ERROR_BACKOFF_S = 300;
 const TIMEOUT_MS = 8000;
@@ -66,8 +66,15 @@ export function isAllowedDoorUrl(value) {
   }
 }
 
+// The pre-separation door was retired in the 2026-11-21 cutover and no
+// longer answers at all. A state saved by an older build can still carry
+// it as its doorUrl (the old default was seeded into stored state), so it
+// is treated as unset and the current default takes over.
+const RETIRED_DOOR_URL = 'https://connect.helmian.cloud';
+
 function doorBase(state) {
-  const raw = state && typeof state.doorUrl === 'string' ? state.doorUrl : DEFAULT_DOOR_URL;
+  const stored = state && typeof state.doorUrl === 'string' ? state.doorUrl.replace(/\/+$/, '') : '';
+  const raw = stored && stored !== RETIRED_DOOR_URL ? stored : DEFAULT_DOOR_URL;
   return (isAllowedDoorUrl(raw) ? raw : DEFAULT_DOOR_URL).replace(/\/+$/, '');
 }
 

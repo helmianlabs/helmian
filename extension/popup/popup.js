@@ -344,7 +344,7 @@ refreshFlagsSettings().then((s) => { if (s && s.enabled) refreshAlerts(false); }
 
 
 // ─── Scribe approvals pop-up ────────────────────────────────────────────────
-// The list and the decisions belong to the door (connect.helmian.cloud); this
+// The list and the decisions belong to the door (scribe.dairyforge.com); this
 // only renders what the worker reports and sends back the one tap. The
 // passphrase is read from the field, handed to the worker in one message and
 // cleared from the field immediately — it is never stored anywhere.
@@ -352,7 +352,7 @@ function requestDoorPermission() {
   return new Promise((resolve) => {
     try {
       if (!chrome.permissions || typeof chrome.permissions.request !== 'function') { resolve(true); return; }
-      const r = chrome.permissions.request({ origins: ['https://connect.helmian.cloud/*'] }, (g) => { void chrome.runtime.lastError; resolve(Boolean(g)); });
+      const r = chrome.permissions.request({ origins: ['https://scribe.dairyforge.com/*'] }, (g) => { void chrome.runtime.lastError; resolve(Boolean(g)); });
       if (r && typeof r.then === 'function') r.then((g) => resolve(Boolean(g)), () => resolve(false));
     } catch { resolve(false); }
   });
