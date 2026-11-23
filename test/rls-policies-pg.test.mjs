@@ -39,6 +39,27 @@ const RLS_TABLES_096 = [
   'workspace_write_leases',
 ];
 
+// The sql/097 set: tables that had no tenant_id column and gained one
+// (nullable) so the same policy shape could name them.
+const RLS_TABLES_097 = [
+  'projects',
+  'maestro_leases',
+  'maestro_handoffs',
+  'maestro_operations',
+  'project_checkpoints',
+  'blockers',
+  'autonomy_rules',
+  'context_entries',
+  'governance_actions',
+  'telemetry_events',
+  'advisory_reviews',
+  'as2_outbound',
+  'human_handoff_confirmations',
+  'billing_entitlements',
+  'billing_events',
+  'human_identity_keys',
+];
+
 async function makePool(connectionString) {
   const { default: pg } = await import('pg');
   return new pg.Pool({ connectionString: connectionString ?? pgUrl });
@@ -51,23 +72,71 @@ function probeUrl(role, password) {
   return u.toString();
 }
 
-test('sql/096 tables all carry row-level security and a tenant policy', { skip: pgSkip }, async () => {
+test('sql/096 and sql/097 tables all carry row-level security and a tenant policy', { skip: pgSkip }, async () => {
   const pool = await makePool();
+  const ALL = [...RLS_TABLES_096, ...RLS_TABLES_097];
   try {
     const r = await pool.query(
       `select c.relname as table_name, c.relrowsecurity as rls_on,
               (select count(*) from pg_policy p where p.polrelid = c.oid) as policies
          from pg_class c join pg_namespace n on n.oid = c.relnamespace
         where n.nspname = 'helmion' and c.relname = any($1)`,
-      [RLS_TABLES_096],
+      [ALL],
     );
-    assert.equal(r.rows.length, RLS_TABLES_096.length, 'every sql/096 table exists');
+    assert.equal(r.rows.length, ALL.length, 'every sql/096 and sql/097 table exists');
     for (const row of r.rows) {
       assert.equal(row.rls_on, true, `${row.table_name} has row-level security on`);
       assert.ok(Number(row.policies) >= 1, `${row.table_name} carries at least one policy`);
     }
   } finally {
     await pool.end();
+  }
+});
+
+test('a sql/097 table binds stamped rows to their tenant and hides unstamped rows', { skip: pgSkip }, async () => {
+  const run = randomUUID().slice(0, 8);
+  const A = `ra-${run}`;
+  const B = `rb-${run}`;
+  const role = `rls_probe97_${run.replaceAll('-', '_')}`;
+  const password = `probe-${run}`;
+  const admin = await makePool();
+  const probe = await makePool(probeUrl(role, password));
+  try {
+    await admin.query(`create role ${role} login password '${password}'`);
+    await admin.query(`grant usage on schema helmion to ${role}`);
+    await admin.query(`grant select, insert, update, delete on helmion.context_entries to ${role}`);
+    for (const t of [A, B]) {
+      await admin.query('insert into helmion.tenants(tenant_id, display_name) values ($1,$2)', [t, `RLS97 ${t}`]);
+      await admin.query('insert into helmion.projects(slug, name) values ($1,$2) on conflict (slug) do nothing',
+        [`slug-${t}`, `slug-${t}`]);
+      await admin.query('insert into helmion.context_entries(project_slug, key, value, tenant_id) values ($1,$2,$3,$4)',
+        [`slug-${t}`, `key-${t}`, JSON.stringify(`canary ${t}`), t]);
+    }
+    // One unstamped legacy row: visible to the owner, to nobody else.
+    await admin.query('insert into helmion.projects(slug, name) values ($1,$2) on conflict (slug) do nothing',
+      [`slug-legacy-${run}`, `slug-legacy-${run}`]);
+    await admin.query('insert into helmion.context_entries(project_slug, key, value) values ($1,$2,$3)',
+      [`slug-legacy-${run}`, `key-legacy-${run}`, JSON.stringify('legacy canary')]);
+
+    const client = await probe.connect();
+    try {
+      await client.query("select set_config('helmion.tenant_id', $1, false)", [A]);
+      const r = await client.query('select tenant_id from helmion.context_entries where key in ($1,$2,$3)',
+        [`key-${A}`, `key-${B}`, `key-legacy-${run}`]);
+      assert.deepEqual(r.rows.map((x) => x.tenant_id), [A], 'tenant A sees its stamped row only: not tenant B, not the unstamped row');
+    } finally {
+      client.release();
+    }
+  } finally {
+    await probe.end().catch(() => {});
+    await admin.query(`drop owned by ${role}`).catch(() => {});
+    await admin.query(`drop role if exists ${role}`).catch(() => {});
+    await admin.query('delete from helmion.context_entries where key like $1', [`%${run}%`]).catch(() => {});
+    await admin.query('delete from helmion.projects where slug like $1', [`%${run}%`]).catch(() => {});
+    for (const t of [A, B]) {
+      await admin.query('delete from helmion.tenants where tenant_id=$1', [t]).catch(() => {});
+    }
+    await admin.end();
   }
 });
 
