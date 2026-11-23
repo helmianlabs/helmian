@@ -25,6 +25,7 @@ import {
   curateCandidates,
   endpointVerdict,
   probeEndpoint,
+  probeEndpointCurl,
 } from '../cloud/connector-catalog-mirror.mjs';
 
 const PAGE_LIMIT = 100;
@@ -82,7 +83,10 @@ async function probeAll(rows, probeImpl) {
     while (next < targets.length) {
       const row = targets[next];
       next += 1;
-      const verdict = endpointVerdict(await probeImpl(row.probeTarget));
+      const outcome = await probeImpl(row.probeTarget);
+      // A probe may answer with an outcome (mapped here) or, on the
+      // curl road, with its verdict directly.
+      const verdict = outcome && 'live' in outcome ? outcome : endpointVerdict(outcome);
       row.endpointLive = verdict.live;
       row.endpointDetail = verdict.detail;
     }
@@ -167,7 +171,14 @@ async function upsertServers(pool, rows) {
   }
 }
 
-export async function runCatalogSync({ pool, fetchImpl = globalThis.fetch, probeImpl = probeEndpoint, log = console.log } = {}) {
+export async function runCatalogSync({ pool, fetchImpl = globalThis.fetch, probeImpl = null, log = console.log } = {}) {
+  // Production probing is the curl road (HELMION_CATALOG_PROBE=curl in
+  // the service's environment): every check is a plain curl process on
+  // the server itself. Endpoint checks never run from a workstation —
+  // its outbound connections card the owner per domain touched.
+  const probe = probeImpl ?? (process.env.HELMION_CATALOG_PROBE === 'curl'
+    ? (url) => probeEndpointCurl(url)
+    : (url) => probeEndpoint(url, { fetchImpl }));
   const runInsert = await pool.query(
     `insert into helmion.connector_catalog_sync_runs (bulk_publisher_max) values ($1) returning id`,
     [BULK_PUBLISHER_MAX],
@@ -180,7 +191,7 @@ export async function runCatalogSync({ pool, fetchImpl = globalThis.fetch, probe
     // Re-attach the raw records the upsert needs (record jsonb, icons).
     const rawByName = new Map(entries.map((entry) => [entry.candidate.registryName, entry.raw]));
     for (const row of rows) row.raw = rawByName.get(row.candidate.registryName) ?? {};
-    const liveCount = await probeAll(rows, (url) => probeImpl(url, { fetchImpl }));
+    const liveCount = await probeAll(rows, probe);
     await upsertServers(pool, rows);
     await pool.query(
       `update helmion.connector_catalog_sync_runs set
