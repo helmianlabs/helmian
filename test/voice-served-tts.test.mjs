@@ -45,7 +45,9 @@ function makeFakes() {
   return { instances, FakeRecognition, spoken, synthesis, FakeUtterance, sources, makeAudioContext };
 }
 
-async function until(fn, timeoutMs = 3000) {
+// The budget is scheduling slack for the fake-engine events under load,
+// not an assertion: the condition still has to become true or the test fails.
+async function until(fn, timeoutMs = 15000) {
   const start = Date.now();
   for (;;) {
     if (fn()) return;

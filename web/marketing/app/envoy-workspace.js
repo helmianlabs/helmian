@@ -1,20 +1,20 @@
 // Envoy workspace for the Desktop view: channels | chat | guard | workbench.
 // app.js calls mountWorkspace(ctx) each time the Desktop view opens; wiring
 // happens once, data refreshes every time.
-import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=fdf6ab246c3e9e36';
-import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=fdf6ab246c3e9e36';
-import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, isConnectorOn, level1Model, level2Model, librarySeat, manageModel, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=fdf6ab246c3e9e36';
-import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=fdf6ab246c3e9e36';
-import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=fdf6ab246c3e9e36';
-import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=fdf6ab246c3e9e36';
-import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=fdf6ab246c3e9e36';
-import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=fdf6ab246c3e9e36';
-import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=fdf6ab246c3e9e36';
-import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=fdf6ab246c3e9e36';
-import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=fdf6ab246c3e9e36';
-import { createConnectFields } from './connect-fields.mjs?v=fdf6ab246c3e9e36';
-import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=fdf6ab246c3e9e36';
-import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=fdf6ab246c3e9e36';
+import { CHARACTERS, COLORS, avatarFor, defaultChoice, sanitizeChoice } from './avatars.mjs?v=a750d5a7c1b688b7';
+import { UPLOAD_NOTE, addAttachment, addSkillAttach, attachmentKey, buildMessageRequest, fileRefusalReason, pluginsReportStaleNote, removeAttachment, removeSkillAttach } from './composer-picker.mjs?v=a750d5a7c1b688b7';
+import { armedConnectorPairs, armedStateFromConfig, connectorsForTurn, isConnectorOn, level1Model, level2Model, librarySeat, manageModel, providerForSeat, seatForProvider, seatName, toggleConnector } from './connector-panel.mjs?v=a750d5a7c1b688b7';
+import { collectCatalogEntryIds, dedupePanelConnectorRows, menuForSeat, walkMenuItems } from './connector-menu.mjs?v=a750d5a7c1b688b7';
+import { confirmToolAccessRefresh, loadToolAccess, pickToolAccessEntry, previewToolAccessRefresh, toolAccessEntries, writeToolAccessPosture, writeToolAccessTool } from './connector-tool-access.mjs?v=a750d5a7c1b688b7';
+import { disconnectKeyEntry, isNeedsCredentialAnswer, keyEntryKey, keyFormModel, noteConnectAnswer, opensKeyFormFromSeed, seedKnownKeyEntries, submitKeyForm } from './connector-key-form.mjs?v=a750d5a7c1b688b7';
+import { fetchPairStatus, isNeedsTenantPairAnswer, pairFormModel, submitPairForm } from './connector-tenant-pair-form.mjs?v=a750d5a7c1b688b7';
+import { customFormModel, submitCustomForm } from './connector-custom-form.mjs?v=a750d5a7c1b688b7';
+import { customRemoveModel, submitCustomRemove } from './connector-custom-remove.mjs?v=a750d5a7c1b688b7';
+import { moveSlashHighlight, slashInsertValue, slashMenuModel, slashPickList, slashSkillScopeModel, slashTokenOf } from './slash-menu.mjs?v=a750d5a7c1b688b7';
+import { applySkillPaste, emptySkillDraft, skillDraftFromRecord, skillDraftId, skillSavePayload, validateSkillDraft } from './skill-editor.mjs?v=a750d5a7c1b688b7';
+import { createConnectFields } from './connect-fields.mjs?v=a750d5a7c1b688b7';
+import { AGENT_FACE_DEFAULTS, EMOJI_MAP, emojiAssetSlug, emojiAssetUrl } from './emoji-map.mjs?v=a750d5a7c1b688b7';
+import { LIBRARY_FACES, LIBRARY_REACTIONS, isLibraryFaceToken, parseLibraryFaceToken, libraryFaceToken, libraryFaceStillUrl, libraryFaceClipUrl, libraryReaction, libraryReactionSlug, libraryReactionName, libraryReactionStillUrl } from './face-library.mjs?v=a750d5a7c1b688b7';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -6209,7 +6209,7 @@ async function openPhoneCloneModal() {
   const cloneUrl = `https://helmian.cloud/app${ws.channelId ? `?channel=${encodeURIComponent(ws.channelId)}` : ''}#desktop`;
   const qrBox = h('div', { class: 'int-qr', style: 'margin:0 auto;' }, 'Generating QR…');
   try {
-    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=fdf6ab246c3e9e36');
+    const { default: qrcode } = await import('./vendor/qrcode.mjs?v=a750d5a7c1b688b7');
     const qr = qrcode(0, 'M');
     qr.addData(cloneUrl);
     qr.make();
