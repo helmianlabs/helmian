@@ -814,6 +814,22 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
    (align-items:start) so a resting card is its own 60–72px, never
    stretched by a taller neighbour. */
 .int-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(232px, 1fr)); gap:8px; align-items:start; }
+/* Connector catalog (bite 2): cards ride the integrations grid; the
+   catalog card is a plain read-only listing — name, vendor, what it
+   does, its live-fetched tools — with no action on it. */
+.cat-head { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.cat-seat { font-size:13px; color:var(--faint); display:flex; gap:6px; align-items:center; }
+.cat-card { border:1px solid var(--border); background:var(--panel); border-radius:14px; padding:12px; display:flex; flex-direction:column; gap:6px; }
+.cat-card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.cat-card-head h4 { margin:0; font-size:14px; }
+.cat-chip { font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); border:1px solid var(--border); border-radius:999px; padding:2px 7px; }
+.cat-vendor { margin:0; font-size:12px; color:var(--faint); font-weight:600; }
+.cat-line { margin:0; font-size:13px; }
+.cat-meta, .cat-state { margin:0; font-size:12px; color:var(--faint); }
+.cat-tools { border-top:1px solid var(--border); padding-top:6px; }
+.cat-tools-count { margin:0 0 4px; font-size:12px; font-weight:600; }
+.cat-tools-list { margin:0; padding-left:16px; font-size:12px; display:flex; flex-direction:column; gap:2px; }
+.cat-source { font-size:12px; margin-top:auto; }
 .int-card { border:1px solid var(--border); background:var(--panel); border-radius:14px; padding:12px; display:flex; flex-direction:column; gap:8px; transition:border-color .15s, transform .15s var(--ease); animation:ew-in .22s var(--ease); }
 .int-card:hover { border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); transform:translateY(-1px); }
 .int-card.wide { grid-column:span 2; }
