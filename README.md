@@ -405,11 +405,12 @@ Live in production at [helmian.cloud](https://helmian.cloud):
 - **Tenant isolation** (checked 2026-11-23): every request runs with
   its workspace's tenant set, and the application's queries are
   scoped to it. In the database, row-level security with
-  tenant-keyed policies is on for 65 of the 95 tables in the
-  workspace schema, the tenant, membership, and audit tables among
-  them. Row-level security across the remaining tables, the channel
-  and message tables among them, and per-tenant containers are the
-  hardening steps still ahead (see Honest boundary, below).
+  tenant-keyed policies is on for 68 of the 95 tables in the
+  workspace schema, the tenant, membership, audit, and channel and
+  message tables among them. Row-level security across the
+  remaining tables, the Guard findings, projects, and lease tables
+  among them, and per-tenant containers are the hardening steps
+  still ahead (see Honest boundary, below).
 - **Guard approvals door** (fixed 2026-11-23): the Helmian Guard
   extension's Scribe approvals sign-in now talks to Scribe's own
   door at scribe.dairyforge.com. It previously pointed at the
@@ -506,12 +507,13 @@ confirmations, a live cloud-to-runner bridge, and a working signup flow
 that provisions workspaces. Each workspace is its own tenant, with
 separate users, credential vaults, shared memory, and bridges, and that
 separation is enforced in the application on every request. In the
-database itself, row-level security is switched on for 65 of the 95
-tables in the workspace schema, the tenant, membership, and audit
-tables among them, each policy keyed to the tenant the request runs
-as. Two hardening steps are still ahead and named plainly: row-level
-security across the remaining tables, the channel and message tables
-among them, and per-tenant containers. Paid plans are built and
+database itself, row-level security is switched on for 68 of the 95
+tables in the workspace schema, the tenant, membership, audit, and
+channel and message tables among them, each policy keyed to the
+tenant the request runs as. Two hardening steps are still ahead and
+named plainly: row-level security across the remaining tables, the
+Guard findings, projects, and lease tables among them, and
+per-tenant containers. Paid plans are built and
 in testing; checkout is not open yet. All ten channel seats answer in
 the live channel, as noted above; the Muse seat waits only
 on its key. This is a working system with real users, in daily use.
