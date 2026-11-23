@@ -2722,6 +2722,11 @@ async function loadEvidence() {
   note.textContent = denied ? 'Handoffs and checkpoints are visible to owners and admins.' : '';
 }
 let integrationsMod = null; let qrMod = null; let connectFieldsMod = null; let apiKeyFieldsMod = null;
+let catalogMod = null;
+async function loadCatalog() {
+  catalogMod ??= await import('./catalog-view.mjs?v=a750d5a7c1b688b7');
+  catalogMod.initCatalogPanel({ root: document.getElementById('catalog-panel'), fetchJson: (path) => api(path) });
+}
 // Integrations preload (speed fix 2, 2026-11-09): the first
 // Integrations open paid the first-visit module fetch cold —
 // integrations-view, ~0.5–1.5 s of the cold open. Once the
@@ -4173,7 +4178,7 @@ async function loadGuardCreateList() {
   } catch { if (!list.children.length) status.textContent = 'Could not load.'; }
 }
 
-const loaders = { home: loadHome, desktop: loadDesktop, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, organization: loadOrganization, approvals: loadApprovals, upcoming: loadUpcoming, integrations: loadIntegrations, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
+const loaders = { home: loadHome, desktop: loadDesktop, console: () => Promise.all([loadConsole(), loadSteps()]), overview: loadOverview, workspace: loadProjects, devices: loadDevices, settings: loadSettings, activity: loadActivity, evidence: loadEvidence, organization: loadOrganization, approvals: loadApprovals, upcoming: loadUpcoming, integrations: loadIntegrations, catalog: loadCatalog, agents: () => Promise.all([loadAgents(), loadAgentSessions()]), release: loadRelease };
 const panelLoaders = { browser: null, canvas: loadCanvas, preview: loadPreview, create: loadCreate };
 
 // ---- empty states: a new account sees what to do next, never a bare title ----

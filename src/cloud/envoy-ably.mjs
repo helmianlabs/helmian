@@ -19,6 +19,7 @@ import { handleProfileSyncRoute } from './profile-sync.mjs';
 import { handleCredentialConnectRoute } from './credential-connect.mjs';
 import { handleToolConnectionsRoute } from './tool-connections-read.mjs';
 import { handleConnectorLibraryRoute } from './connector-library-read-route.mjs';
+import { handleConnectorCatalogRoute } from './connector-catalog-route.mjs';
 import { handleConnectorLibraryWriteRoute } from './connector-library-write-route.mjs';
 import { handleSkillLibraryRoute } from './skill-library-route.mjs';
 import { handlePluginLibraryRoute } from './plugin-library-route.mjs';
@@ -288,6 +289,7 @@ export async function handleEnvoyAblyRoute({
   }
   if (await handleToolConnectionsRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleConnectorLibraryRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
+  if (await handleConnectorCatalogRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError })) return true;
   if (await handleConnectorLibraryWriteRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handleSkillLibraryRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
   if (await handlePluginLibraryRoute({ request, response, requestUrl, activeTenantActor, send, TenantAuthorizationError, readJson })) return true;
