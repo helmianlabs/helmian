@@ -9,7 +9,9 @@ import {
   countPublishers,
   curateCandidates,
   endpointVerdict,
+  endpointVerdictFromCurl,
   probeEndpoint,
+  probeEndpointCurl,
   publisherOf,
   sourceKindOf,
 } from '../src/cloud/connector-catalog-mirror.mjs';
@@ -130,4 +132,25 @@ test('walkRegistry pages to exhaustion and normalizes with the shared client log
   assert.equal(entries[0].candidate.registryName, 'a.one/first');
   assert.equal(entries[0].candidate.remoteUrl, 'https://x.example.com/mcp');
   assert.match(calls[1], /cursor=a\.one%2Ffirst%3A1\.0\.0/);
+});
+
+test('curl verdicts: any HTTP status is live, 000 and curl errors are dead', () => {
+  assert.deepEqual(endpointVerdictFromCurl({ exitCode: 0, httpCode: '401' }), { live: true, detail: 'curl HTTP 401' });
+  assert.deepEqual(endpointVerdictFromCurl({ exitCode: 0, httpCode: '200' }), { live: true, detail: 'curl HTTP 200' });
+  assert.deepEqual(endpointVerdictFromCurl({ exitCode: 6, httpCode: '000' }), { live: false, detail: 'curl exit 6' });
+  assert.deepEqual(endpointVerdictFromCurl({ exitCode: 28, httpCode: '000' }), { live: false, detail: 'curl exit 28' });
+});
+
+test('curl probe shells curl with the initialize body and maps the answer', async () => {
+  const seen = [];
+  const execFileImpl = (cmd, args, opts, cb) => { seen.push([cmd, args]); cb(null, '403'); };
+  const verdict = await probeEndpointCurl('https://x.example.com/mcp', { execFileImpl });
+  assert.deepEqual(verdict, { live: true, detail: 'curl HTTP 403' });
+  assert.equal(seen[0][0], 'curl');
+  assert.ok(seen[0][1].includes('https://x.example.com/mcp'));
+  assert.ok(seen[0][1].some((a) => a.includes('"initialize"')));
+  const dead = await probeEndpointCurl('https://gone.example.com/mcp', {
+    execFileImpl: (cmd, args, opts, cb) => cb(Object.assign(new Error('exit 6'), { code: 6 }), '000'),
+  });
+  assert.deepEqual(dead, { live: false, detail: 'curl exit 6' });
 });
