@@ -410,7 +410,10 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   message tables among them. Row-level security across the
   remaining tables, the Guard findings, projects, and lease tables
   among them, and per-tenant containers are the hardening steps
-  still ahead (see Honest boundary, below).
+  still ahead (see Honest boundary, below). The migration covering
+  eleven more tenant-keyed tables, the Guard findings and workspace
+  lease tables among them, is written and tested in this repo
+  (sql/096) and awaits its production application run.
 - **Guard approvals door** (fixed 2026-11-23): the Helmian Guard
   extension's Scribe approvals sign-in now talks to Scribe's own
   door at scribe.dairyforge.com. It previously pointed at the
