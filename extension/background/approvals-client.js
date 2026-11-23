@@ -1,17 +1,19 @@
-// Scribe approvals in the toolbar pop-up (0.7.0).
+// Helmian approvals in the toolbar pop-up (0.7.0).
 //
-// The approvals PAGE belongs to Scribe itself: Scribe's own door serves it
-// at https://scribe.dairyforge.com/approvals, Troy signs in with his Scribe
-// passphrase, and the door — holding its own Executive Guard approver
-// credential, which never reaches a browser — lists what the Guard is holding
-// and forwards his decisions. This module is the extension's client for that
-// door, nothing more: it never talks to the Guard, holds no Guard credential,
-// and cannot decide anything the door would not let the page decide.
+// The approvals PAGE belongs to Helmian itself: Helmian's own door serves
+// it at https://door.helmian.cloud/approvals, Troy signs in with his
+// Helmian passphrase, and the door — holding its own Executive Guard
+// approver credential, which never reaches a browser — lists what the
+// Guard is holding and forwards his decisions. This module is the
+// extension's client for that door, nothing more: it never talks to the
+// Guard, holds no Guard credential, and cannot decide anything the door
+// would not let the page decide. Scribe's approvals live behind Scribe's
+// own door and Scribe's own extension; nothing here points at them.
 //
 // THE CONTRACT IS THE DOOR'S OWN PAGES (helmian-door app/src/approvals.mjs,
 // read line by line for this bite; there is no JSON API):
 //   POST /approvals/login         form field `passphrase`; success sets the
-//                                 `scribe_appr` cookie (HttpOnly, 30 min,
+//                                 `helmian_appr` cookie (HttpOnly, 30 days,
 //                                 fixed expiry, NO renewal, NO logout route)
 //                                 and 302s to /approvals; wrong passphrase is
 //                                 a 401 page with the error in <p class="error">;
@@ -38,7 +40,7 @@
 // simply use credentials:'include' and let the browser attach it. What IS
 // stored here is the session STATE (in/out) and the last list the door
 // rendered, so the pop-up can paint instantly and the badge can be right.
-// The door kills sessions 30 minutes after sign-in no matter what; when a
+// The door kills sessions 30 days after sign-in no matter what; when a
 // poll or a decide comes back as the login page this client flips its state
 // to signed-out and the pop-up asks him to sign in again — in place, in one
 // line. Nothing else in the extension reads this state.
@@ -50,7 +52,7 @@
 
 export const APPROVALS_STATE_KEY = 'helmion.approvals.state';
 export const APPROVALS_ALARM = 'helmion-approvals-poll';
-export const DEFAULT_DOOR_URL = 'https://scribe.dairyforge.com';
+export const DEFAULT_DOOR_URL = 'https://door.helmian.cloud';
 export const POLL_S = 60;
 export const ERROR_BACKOFF_S = 300;
 const TIMEOUT_MS = 8000;
@@ -66,15 +68,17 @@ export function isAllowedDoorUrl(value) {
   }
 }
 
-// The pre-separation door was retired in the 2026-11-21 cutover and no
-// longer answers at all. A state saved by an older build can still carry
-// it as its doorUrl (the old default was seeded into stored state), so it
-// is treated as unset and the current default takes over.
-const RETIRED_DOOR_URL = 'https://connect.helmian.cloud';
+// Two saved addresses are not this extension's door and are treated as
+// unset, so the Helmian default takes over: the pre-separation door
+// (connect.helmian.cloud, retired in the 2026-11-21 cutover and no longer
+// answering at all), and Scribe's door (scribe.dairyforge.com) — Scribe's
+// approvals belong to Scribe's own extension, and a state saved by the
+// short-lived build that pointed this section there heals itself here.
+const FOREIGN_DOOR_URLS = new Set(['https://connect.helmian.cloud', 'https://scribe.dairyforge.com']);
 
 function doorBase(state) {
   const stored = state && typeof state.doorUrl === 'string' ? state.doorUrl.replace(/\/+$/, '') : '';
-  const raw = stored && stored !== RETIRED_DOOR_URL ? stored : DEFAULT_DOOR_URL;
+  const raw = stored && !FOREIGN_DOOR_URLS.has(stored) ? stored : DEFAULT_DOOR_URL;
   return (isAllowedDoorUrl(raw) ? raw : DEFAULT_DOOR_URL).replace(/\/+$/, '');
 }
 

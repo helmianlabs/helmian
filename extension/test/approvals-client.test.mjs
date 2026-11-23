@@ -125,5 +125,18 @@ test('a stored doorUrl naming the retired door is treated as unset and the poll 
   const r = await pollApprovals(storage, { fetchImpl, now: NOW, force: true });
   assert.equal(r.ok, true);
   assert.equal(calls.length, 1);
-  assert.ok(calls[0].url.startsWith('https://scribe.dairyforge.com/'), `poll went to ${calls[0].url}`);
+  assert.ok(calls[0].url.startsWith('https://door.helmian.cloud/'), `poll went to ${calls[0].url}`);
+});
+
+test('a stored doorUrl naming the Scribe door is treated as unset and the poll goes to the Helmian door', async () => {
+  // Scribe's approvals belong to Scribe's own extension. The short-lived
+  // build that pointed this section at Scribe's door seeded that address
+  // into stored state; a stored value naming it must heal to Helmian's
+  // own door, never strand this extension on the other product's page.
+  const storage = seedSignedIn({ doorUrl: 'https://scribe.dairyforge.com' });
+  const { fetchImpl, calls } = fakeFetch([{ status: 200, text: EMPTY_PAGE }]);
+  const r = await pollApprovals(storage, { fetchImpl, now: NOW, force: true });
+  assert.equal(r.ok, true);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].url.startsWith('https://door.helmian.cloud/'), `poll went to ${calls[0].url}`);
 });
