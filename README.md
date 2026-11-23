@@ -391,6 +391,17 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   to end in a live channel on 2026-11-14 (Mistral's screen); the
   remaining browser seats join as their sign-ins are approved.
 - **Auth**: Clerk sign-in with GitHub social login.
+- **Every change is tested, and the tests are green** (2026-11-22):
+  each push to this repo runs three strict jobs on GitHub — the root
+  suite (4,002 tests, its database suites running against a real
+  Postgres service in CI instead of skipping), the Executive Guard
+  suite (105 tests), and the Hands suite (105 tests). No job may fail
+  quietly: the Guard and Hands jobs ran as informational only until
+  their suites passed clean, and were flipped to strict on
+  2026-11-22, the same day the full run went green. The audit trail
+  names an attribute-policy denial as what it is: in the audit
+  export, the events feed, and the Evidence view, a refusal shows as
+  a policy denial, not a generic error.
 
 **On hold as standalone products (November 2026).** **Herald** is
 paused as a product push (the surface itself is built and live at
