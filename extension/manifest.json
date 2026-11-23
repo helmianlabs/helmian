@@ -10,7 +10,7 @@
   ],
   "host_permissions": [
     "https://helmian.cloud/*",
-    "https://scribe.dairyforge.com/*"
+    "https://door.helmian.cloud/*"
   ],
   "background": {
     "service_worker": "background/worker.js",

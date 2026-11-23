@@ -298,7 +298,7 @@ export async function runScribePoll(opts = {}) {
   return result;
 }
 // ─── SCRIBE APPROVALS POP-UP (0.7.0) ───────────────────────────────────────
-// The door (scribe.dairyforge.com/approvals) holds the list and takes the
+// The door (door.helmian.cloud/approvals) holds the list and takes the
 // decisions; this is only its poll + badge + popup plumbing. See
 // background/approvals-client.js for the contract and the rule that the
 // passphrase is never stored. The badge is the whole signal: amber, global,

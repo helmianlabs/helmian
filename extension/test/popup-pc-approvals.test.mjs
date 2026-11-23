@@ -403,11 +403,11 @@ test('the pop-up page carries both sections, PC first, each labelled as its own 
     assert.match(html, new RegExp(`id="${id}"`), `popup.html is missing #${id}`);
   }
   assert.match(html, /<h2>PC approvals<\/h2>/);
-  assert.match(html, /<h2>Approvals through Scribe<\/h2>/,
-    'the Scribe door section is labelled as the Scribe list, not just "Approvals"');
+  assert.match(html, /<h2>Helmian approvals<\/h2>/,
+    'the door section is labelled as the Helmian list (Troy correction, 2026-11-23: Helmian approvals ride the Helmian door, never the Scribe door)');
   assert.ok(
     html.indexOf('id="pcApprovals"') < html.indexOf('id="approvals"'),
-    'the PC approvals section sits above the Scribe section',
+    'the PC approvals section sits above the door section',
   );
   assert.ok(!/<button id="pcWindowBtn"[^>]*\bdisabled\b/.test(html),
     'the approvals window button is live since Bite 5 built the window');
