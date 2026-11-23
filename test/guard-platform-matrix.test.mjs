@@ -14,10 +14,11 @@ test('Chromium and Firefox packages keep the minimal permission boundary', () =>
   assert.deepEqual(chromium.permissions, ['storage', 'alarms', 'idle']);
   assert.deepEqual(firefox.permissions, ['storage', 'alarms', 'idle', 'identity']);
   // Host and optional permissions as shipped in the 0.7.0 landing
-  // (39fbd8c): the Chromium build talks to helmian.cloud and the Scribe
-  // door at connect.helmian.cloud; the Firefox build asks for its host
+  // (39fbd8c): the Chromium build talks to helmian.cloud and Scribe's
+  // own door at scribe.dairyforge.com (repointed from the retired
+  // connect.helmian.cloud door); the Firefox build asks for its host
   // access optionally instead. Both sets stay pinned exactly.
-  assert.deepEqual(chromium.host_permissions, ['https://helmian.cloud/*', 'https://connect.helmian.cloud/*']);
+  assert.deepEqual(chromium.host_permissions, ['https://helmian.cloud/*', 'https://scribe.dairyforge.com/*']);
   assert.deepEqual(chromium.optional_permissions, ['notifications', 'identity']);
   assert.equal(firefox.host_permissions, undefined);
   assert.deepEqual(firefox.optional_permissions, ['notifications', 'https://*/*', 'http://localhost/*', 'http://127.0.0.1/*']);
