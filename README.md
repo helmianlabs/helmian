@@ -405,21 +405,26 @@ Live in production at [helmian.cloud](https://helmian.cloud):
 - **Tenant isolation** (checked 2026-11-23): every request runs with
   its workspace's tenant set, and the application's queries are
   scoped to it. In the database, row-level security with
-  tenant-keyed policies is on for 68 of the 95 tables in the
+  tenant-keyed policies is on for 102 of the 103 tables in the
   workspace schema, the tenant, membership, audit, and channel and
-  message tables among them. Row-level security across the
-  remaining tables, the Guard findings, projects, and lease tables
-  among them, and per-tenant containers are the hardening steps
-  still ahead (see Honest boundary, below). The migration covering
-  eleven more tenant-keyed tables, the Guard findings and workspace
-  lease tables among them, is written and tested in this repo
-  (sql/096) and awaits its production application run.
+  message tables among them; the two credential stores carry no
+  policy at all, which under row-level security leaves them
+  deny-all to any non-owner connection, and the one table without
+  row-level security is the migration ledger itself. The
+  migrations covering the remaining tables (sql/096, sql/097) were
+  applied to production on 2026-11-23 and verified on the database
+  itself. Per-tenant containers are the hardening step still ahead
+  (see Honest boundary, below).
 - **Guard approvals door** (fixed 2026-11-23): the Helmian Guard
-  extension's Scribe approvals sign-in now talks to Scribe's own
-  door at scribe.dairyforge.com. It previously pointed at the
-  retired connect.helmian.cloud door, which no longer answers, so
-  the sign-in went nowhere; installs carrying the old address in
-  their saved settings move over on their own.
+  extension's approvals section is Helmian's own — it signs in at
+  Helmian's own door, door.helmian.cloud, under the Helmian
+  passphrase, and that door asks Helmian's own Guard. It previously
+  pointed first at the retired connect.helmian.cloud door, which
+  no longer answers, and then, briefly, at Scribe's door; installs
+  carrying either old address in their saved settings move over on
+  their own. Scribe's approvals live in Scribe's own extension,
+  under Scribe's passphrase — the two products' approvals never
+  cross.
 
 **On hold as standalone products (November 2026).** **Herald** is
 paused as a product push (the surface itself is built and live at
@@ -510,13 +515,16 @@ confirmations, a live cloud-to-runner bridge, and a working signup flow
 that provisions workspaces. Each workspace is its own tenant, with
 separate users, credential vaults, shared memory, and bridges, and that
 separation is enforced in the application on every request. In the
-database itself, row-level security is switched on for 68 of the 95
-tables in the workspace schema, the tenant, membership, audit, and
-channel and message tables among them, each policy keyed to the
-tenant the request runs as. Two hardening steps are still ahead and
-named plainly: row-level security across the remaining tables, the
-Guard findings, projects, and lease tables among them, and
-per-tenant containers. Paid plans are built and
-in testing; checkout is not open yet. All ten channel seats answer in
+database itself, row-level security is switched on for 102 of the
+103 tables in the workspace schema, the tenant, membership, audit,
+and channel and message tables among them, each policy keyed to
+the tenant the request runs as; the two credential stores hold no
+policy, which leaves them deny-all to any non-owner connection,
+and the one table without row-level security is the migration
+ledger itself. One hardening step is still ahead and named
+plainly: per-tenant containers. The paid plans are published at
+helmian.cloud/pricing — Solo, Team, and the Business tiers — and
+each starts with a free trial or pilot; no card is taken up front.
+All ten channel seats answer in
 the live channel, as noted above; the Muse seat waits only
 on its key. This is a working system with real users, in daily use.
