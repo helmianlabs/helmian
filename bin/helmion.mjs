@@ -1362,6 +1362,11 @@ async function mcpInstall() {
   // it, HELMION_VET_TOKEN authenticates) and a blocked, flagged, or missing
   // vet verdict halts the pipeline before the local sandbox. Asking for
   // --vet without the token is a configuration error, never a silent skip.
+  // When HELMION_GUARD_URL is also set, the submission is Guard-gated
+  // (wiring bite 4b): an Executive Guard decision recorded by the Auto
+  // Approver is obtained for the candidate and presented to the service.
+  // Setting one of HELMION_GUARD_URL / HELMION_GUARD_DEVICE_TOKEN without
+  // the other is a configuration error, never a silent skip either.
   let vet = null;
   if (hasFlag('--vet')) {
     const { DEFAULT_VET_URL } = await import('../src/core/mcp-vet.mjs');
@@ -1370,6 +1375,15 @@ async function mcpInstall() {
       throw new Error('mcp-install review --vet requires HELMION_VET_TOKEN (the cloud vet service token) in the environment');
     }
     vet = { vetUrl: process.env.HELMION_VET_URL ?? DEFAULT_VET_URL, vetToken };
+    const guardUrl = process.env.HELMION_GUARD_URL ?? null;
+    const guardToken = process.env.HELMION_GUARD_DEVICE_TOKEN ?? null;
+    if (guardUrl && !guardToken) {
+      throw new Error('mcp-install review --vet with HELMION_GUARD_URL set requires HELMION_GUARD_DEVICE_TOKEN (the Executive Guard device token) in the environment');
+    }
+    if (!guardUrl && guardToken) {
+      throw new Error('mcp-install review --vet with HELMION_GUARD_DEVICE_TOKEN set requires HELMION_GUARD_URL (the Executive Guard base URL) in the environment');
+    }
+    if (guardUrl) vet.guard = { guardUrl, guardToken };
   }
   const { runInstallPipeline, formatPipelineOutcome } = await import('../src/core/mcp-install-pipeline.mjs');
   const report = await runInstallPipeline({
@@ -1587,7 +1601,7 @@ MCP server install security (never install third-party code unreviewed):
   helmion mcp-install audit <path>                   # stage 2: read every source file
   helmion mcp-install sandbox <path>                 # stage 3: run with no credentials
   helmion mcp-install review <path>                  # all 5 stages, asks you to approve
-  helmion mcp-install review <path> --vet            # stage 3 also submits to the cloud vet service (needs HELMION_VET_TOKEN)
+  helmion mcp-install review <path> --vet            # stage 3 also submits to the cloud vet service (needs HELMION_VET_TOKEN; with HELMION_GUARD_URL + HELMION_GUARD_DEVICE_TOKEN the submission carries an Auto Approver Guard decision)
   helmion mcp-install drift <path> --name <server>   # stage 5: changed since you approved it?
   helmion mcp-install drift <path> --arming-baseline <export.json> --tools-file <tools.json>
                                                      # also: does this tools/list still match the connector library's frozen arming baseline?
