@@ -249,6 +249,152 @@ test('SECURITY: an approved server that CHANGES afterwards is refused again', as
   assert.deepEqual(after.registrations, []);
 });
 
+test('SECURITY: a baseline carrying a clean vet binding is approved, and the binding is reported', async (t) => {
+  const { dir, workspace } = await scratch();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const root = await makePlugin(join(dir, 'connector'), {
+    name: 'connector', mcp: LOCAL_SERVER_DECL,
+  });
+
+  const ledgerDir = defaultLedgerDirectory(workspace);
+  const fingerprint = await computeCandidateFingerprint({ root: join(root, 'server'), declared: {} });
+  await saveBaseline({
+    ledgerDir,
+    serverName: 'sample-server',
+    fingerprint,
+    approvalRecord: { respondedAt: new Date().toISOString(), challenge: 'test-approval' },
+    vet: {
+      runId: 'vet-run-123',
+      verdict: 'clean',
+      finalDecision: 'vetted-clean-awaiting-human',
+      fingerprint: fingerprint.fingerprint,
+    },
+  });
+
+  const plugin = await loadPlugin({ root, workspace });
+  assert.equal(plugin.mcpServers[0].status, MCP_APPROVED);
+  assert.equal(plugin.mcpServers[0].vet.runId, 'vet-run-123');
+  assert.equal(plugin.registrations.length, 1);
+
+  // The same binding also holds on a surface that requires one.
+  const strict = await loadPlugin({ root, workspace, requireVet: true });
+  assert.equal(strict.mcpServers[0].status, MCP_APPROVED);
+});
+
+test('SECURITY: a vet fingerprint that does not match the candidate is refused, even when the code matches its baseline', async (t) => {
+  const { dir, workspace } = await scratch();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const root = await makePlugin(join(dir, 'connector'), {
+    name: 'connector', mcp: LOCAL_SERVER_DECL,
+  });
+
+  // The baseline's own fingerprint matches the code on disk, so the local
+  // drift check passes — but the vet binding names DIFFERENT code (the vet
+  // cleared an earlier version; this baseline was written against it). The
+  // binding must refuse on its own.
+  const ledgerDir = defaultLedgerDirectory(workspace);
+  const fingerprint = await computeCandidateFingerprint({ root: join(root, 'server'), declared: {} });
+  await saveBaseline({
+    ledgerDir,
+    serverName: 'sample-server',
+    fingerprint,
+    approvalRecord: { respondedAt: new Date().toISOString(), challenge: 'test-approval' },
+    vet: {
+      runId: 'vet-run-stale',
+      verdict: 'clean',
+      finalDecision: 'vetted-clean-awaiting-human',
+      fingerprint: '0'.repeat(64),
+    },
+  });
+
+  const plugin = await loadPlugin({ root, workspace });
+  assert.equal(plugin.mcpServers[0].status, MCP_REFUSED);
+  assert.match(plugin.mcpServers[0].reason, /no longer matches the code the cloud vet service cleared/);
+  assert.deepEqual(plugin.registrations, []);
+});
+
+test('SECURITY: a baseline whose vet verdict was flagged is refused', async (t) => {
+  const { dir, workspace } = await scratch();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const root = await makePlugin(join(dir, 'connector'), {
+    name: 'connector', mcp: LOCAL_SERVER_DECL,
+  });
+
+  const ledgerDir = defaultLedgerDirectory(workspace);
+  const fingerprint = await computeCandidateFingerprint({ root: join(root, 'server'), declared: {} });
+  await saveBaseline({
+    ledgerDir,
+    serverName: 'sample-server',
+    fingerprint,
+    approvalRecord: { respondedAt: new Date().toISOString(), challenge: 'test-approval' },
+    vet: {
+      runId: 'vet-run-flagged',
+      verdict: 'flagged',
+      finalDecision: 'flagged-in-sandbox',
+      fingerprint: fingerprint.fingerprint,
+    },
+  });
+
+  const plugin = await loadPlugin({ root, workspace });
+  assert.equal(plugin.mcpServers[0].status, MCP_REFUSED);
+  assert.match(plugin.mcpServers[0].reason, /did not clear this code/);
+  assert.deepEqual(plugin.registrations, []);
+});
+
+test('SECURITY: a baseline whose vet verdict was blocked is refused', async (t) => {
+  const { dir, workspace } = await scratch();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const root = await makePlugin(join(dir, 'connector'), {
+    name: 'connector', mcp: LOCAL_SERVER_DECL,
+  });
+
+  const ledgerDir = defaultLedgerDirectory(workspace);
+  const fingerprint = await computeCandidateFingerprint({ root: join(root, 'server'), declared: {} });
+  await saveBaseline({
+    ledgerDir,
+    serverName: 'sample-server',
+    fingerprint,
+    approvalRecord: { respondedAt: new Date().toISOString(), challenge: 'test-approval' },
+    vet: {
+      runId: 'vet-run-blocked',
+      verdict: 'blocked',
+      finalDecision: 'blocked-by-code-read',
+      fingerprint: fingerprint.fingerprint,
+    },
+  });
+
+  const plugin = await loadPlugin({ root, workspace });
+  assert.equal(plugin.mcpServers[0].status, MCP_REFUSED);
+  assert.match(plugin.mcpServers[0].reason, /did not clear this code/);
+  assert.deepEqual(plugin.registrations, []);
+});
+
+test('SECURITY: a vet-required surface refuses a baseline with no vet binding', async (t) => {
+  const { dir, workspace } = await scratch();
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const root = await makePlugin(join(dir, 'connector'), {
+    name: 'connector', mcp: LOCAL_SERVER_DECL,
+  });
+
+  // A pre-vet baseline: approved, un-drifted, no binding recorded.
+  const ledgerDir = defaultLedgerDirectory(workspace);
+  await saveBaseline({
+    ledgerDir,
+    serverName: 'sample-server',
+    fingerprint: await computeCandidateFingerprint({ root: join(root, 'server'), declared: {} }),
+    approvalRecord: { respondedAt: new Date().toISOString(), challenge: 'test-approval' },
+  });
+
+  // Default surface: behaves exactly as it did before vet mode existed.
+  assert.equal((await loadPlugin({ root, workspace })).mcpServers[0].status, MCP_APPROVED);
+
+  // Vet-required surface: the missing binding fails closed.
+  const strict = await loadPlugin({ root, workspace, requireVet: true });
+  assert.equal(strict.mcpServers[0].status, MCP_REFUSED);
+  assert.match(strict.mcpServers[0].reason, /requires a vet binding/);
+  assert.deepEqual(strict.registrations, []);
+});
+
 test('SECURITY: a server fetched at run time cannot be vetted, so it is refused', async (t) => {
   const { dir, workspace } = await scratch();
   t.after(() => rm(dir, { recursive: true, force: true }));

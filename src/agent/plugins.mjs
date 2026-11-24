@@ -29,7 +29,11 @@
 //      holds an approved, un-drifted baseline for it. There is no second,
 //      ungated install path in this file: `plugin add` of a remote source is
 //      refused outright and points at `helmion mcp-install`, which is the only
-//      thing that can produce an approval.
+//      thing that can produce an approval. When the baseline carries a cloud
+//      vet binding (the install ran `mcp-install review --vet`), the gate
+//      ALSO requires the candidate to still match the fingerprint the vet
+//      service cleared, under a clean vet verdict — and a caller that sets
+//      `requireVet` refuses baselines with no vet binding at all.
 //
 // HONEST SEAM: Helmion's agent has no MCP client today — `mcpServers` appears
 // nowhere in src/agent/ and nothing in the turn loop spawns an external server
@@ -185,6 +189,61 @@ async function ledgerApi(override) {
   return import('../core/mcp-install-ledger.mjs');
 }
 
+/** Lazily reach the pipeline's declared-manifest reader. The gate must
+ *  fingerprint a candidate with the SAME declared surface the pipeline used
+ *  when it wrote the baseline — the manifest in the candidate's own root —
+ *  or no fingerprint (local baseline or vet binding) will ever line up for
+ *  a candidate that declares anything. The reader itself never throws: a
+ *  missing or malformed manifest reads as "declared nothing". */
+async function declaredManifest(root, override) {
+  if (override) return override(root);
+  const { loadDeclaredManifest } = await import('../core/mcp-install-pipeline.mjs');
+  return loadDeclaredManifest(root);
+}
+
+/**
+ * THE VET BINDING (wiring bite 3). When an install ran in vet mode, its
+ * baseline carries the cloud vet run id, the service's verdict, and the
+ * fingerprint the service computed over the candidate it received. That
+ * verdict binds HERE, at registration:
+ *
+ *   - binding present, verdict not clean      → REFUSE (a flagged or blocked
+ *     vet run can never become a registration, however the baseline got here);
+ *   - binding present, no fingerprint recorded → REFUSE (an uncheckable
+ *     binding is not a binding);
+ *   - binding present, candidate fingerprint ≠ vet fingerprint → REFUSE
+ *     (the code that would be registered is not the code the vet cleared);
+ *   - no binding, caller requires one (`requireVet`) → REFUSE;
+ *   - no binding, not required → the baseline behaves exactly as it did
+ *     before vet mode existed.
+ *
+ * Returns a refusal reason, or null when the binding holds / does not apply.
+ */
+export function vetBindingRefusal({ baseline, current, serverName, requireVet = false }) {
+  const binding = baseline?.vet ?? null;
+  if (!binding) {
+    if (!requireVet) return null;
+    return `"${serverName}" was approved without a cloud vet run, and this surface requires a vet binding. `
+      + `Run: helmion mcp-install review <path> --vet`;
+  }
+  if (binding.verdict !== 'clean') {
+    return `"${serverName}" has an approved baseline, but the cloud vet service did not clear this code `
+      + `(vet verdict: ${binding.verdict ?? 'unrecorded'}${binding.runId ? `, run ${binding.runId}` : ''}). `
+      + `Only a clean vet verdict can bind a baseline. Re-run: helmion mcp-install review <path> --vet`;
+  }
+  if (typeof binding.fingerprint !== 'string' || binding.fingerprint.length === 0) {
+    return `"${serverName}" has a vet binding with no fingerprint recorded (vet run ${binding.runId ?? 'unknown'}), `
+      + `so the cleared code cannot be checked against the candidate. Re-run: helmion mcp-install review <path> --vet`;
+  }
+  if (binding.fingerprint !== current?.fingerprint) {
+    return `"${serverName}" no longer matches the code the cloud vet service cleared `
+      + `(vet run ${binding.runId ?? 'unknown'}): the baseline's vet fingerprint is ${binding.fingerprint.slice(0, 12)}…, `
+      + `the candidate now fingerprints as ${String(current?.fingerprint ?? 'unknown').slice(0, 12)}…. `
+      + `Re-vet the changed code: helmion mcp-install review <path> --vet`;
+  }
+  return null;
+}
+
 /**
  * THE GATE. Decide whether one declared MCP server may be registered.
  *
@@ -200,6 +259,8 @@ export async function evaluateMcpDeclaration({
   pluginName,
   ledgerDir,
   ledger = null,
+  requireVet = false,
+  loadDeclared = null,
 }) {
   const refuse = (reason, detail = {}) => ({
     name: serverName,
@@ -229,13 +290,24 @@ export async function evaluateMcpDeclaration({
     return refuse(`Cannot read the install ledger, so nothing can be approved (${error.message}).`);
   }
 
+  // Fingerprint with the candidate's own declared manifest, the same surface
+  // the pipeline fingerprinted when it wrote the baseline. Passing an empty
+  // declaration here would make every manifest-declaring candidate read as
+  // drifted (purpose alone differs) and no vet fingerprint could ever match.
+  let declared;
+  try {
+    declared = await declaredManifest(localRoot, loadDeclared);
+  } catch (error) {
+    return refuse(`Cannot read the declared manifest for "${serverName}", so its fingerprint cannot be checked (${error.message}).`);
+  }
+
   let drift;
   try {
     drift = await api.checkForDrift({
       ledgerDir,
       serverName,
       root: localRoot,
-      declared: {},
+      declared,
     });
   } catch (error) {
     return refuse(`Ledger check failed for "${serverName}" (${error.message}).`);
@@ -255,13 +327,25 @@ export async function evaluateMcpDeclaration({
     );
   }
 
+  // The code matches its approved baseline. If that baseline was bound to a
+  // cloud vet run, the candidate must also still be the code the vet cleared.
+  const vetRefusal = vetBindingRefusal({
+    baseline: drift.baseline, current: drift.current, serverName, requireVet,
+  });
+  if (vetRefusal) {
+    return refuse(vetRefusal, { localRoot, vet: drift.baseline?.vet ?? null });
+  }
+
   return {
     name: serverName,
     plugin: pluginName,
     status: MCP_APPROVED,
-    reason: drift.message,
+    reason: drift.baseline?.vet
+      ? `${drift.message} Cloud vet binding holds (run ${drift.baseline.vet.runId ?? 'unknown'}).`
+      : drift.message,
     localRoot,
     declaration,
+    vet: drift.baseline?.vet ?? null,
   };
 }
 
@@ -278,6 +362,8 @@ export async function loadPlugin({
   workspace,
   ledgerDir = null,
   ledger = null,
+  requireVet = false,
+  loadDeclared = null,
   name: nameHint = null,
 }) {
   const absolute = resolve(root);
@@ -318,6 +404,8 @@ export async function loadPlugin({
       pluginName: name,
       ledgerDir: resolvedLedgerDir,
       ledger,
+      requireVet,
+      loadDeclared,
     }));
   }
 
@@ -359,7 +447,7 @@ async function writeRegistry(workspace, registry) {
  * Register a LOCAL plugin directory. Remote specs are refused before any
  * network call is even considered — this function has no fetch path at all.
  */
-export async function addPlugin({ workspace, spec, ledgerDir = null, ledger = null }) {
+export async function addPlugin({ workspace, spec, ledgerDir = null, ledger = null, requireVet = false, loadDeclared = null }) {
   const kind = classifySource(spec);
   if (kind === 'remote') throw new RemoteSourceRefusedError(spec);
   if (kind === 'invalid') throw new Error('plugin add requires a directory path.');
@@ -368,7 +456,7 @@ export async function addPlugin({ workspace, spec, ledgerDir = null, ledger = nu
   const isDir = await stat(absolute).then((s) => s.isDirectory()).catch(() => false);
   if (!isDir) throw new Error(`Not a directory: ${absolute}`);
 
-  const plugin = await loadPlugin({ root: absolute, workspace, ledgerDir, ledger });
+  const plugin = await loadPlugin({ root: absolute, workspace, ledgerDir, ledger, requireVet, loadDeclared });
   const registry = await readRegistry(workspace);
   const existing = registry.plugins.findIndex((p) => p.name === plugin.name);
   const entry = {
@@ -394,7 +482,7 @@ export async function removePlugin({ workspace, name }) {
 
 /** Load every enabled plugin in the registry. A missing directory is reported,
  *  not thrown — one deleted plugin must not stop a session from starting. */
-export async function loadEnabledPlugins({ workspace, ledgerDir = null, ledger = null } = {}) {
+export async function loadEnabledPlugins({ workspace, ledgerDir = null, ledger = null, requireVet = false, loadDeclared = null } = {}) {
   let registry;
   try {
     registry = await readRegistry(workspace);
@@ -407,7 +495,7 @@ export async function loadEnabledPlugins({ workspace, ledgerDir = null, ledger =
     if (entry.enabled === false) continue;
     try {
       plugins.push(await loadPlugin({
-        root: entry.path, workspace, ledgerDir, ledger, name: entry.name,
+        root: entry.path, workspace, ledgerDir, ledger, requireVet, loadDeclared, name: entry.name,
       }));
     } catch (error) {
       errors.push({ name: entry.name, message: error.message });

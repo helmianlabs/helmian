@@ -390,7 +390,21 @@ export async function runInstallPipeline({
   }
 
   const fingerprint = await computeCandidateFingerprint({ root: candidateRoot, declared });
-  const baseline = await saveBaseline({ ledgerDir, serverName: name, fingerprint, approvalRecord: approval });
+  // Bind the vet verdict to the install (wiring bite 3). In vet mode only a
+  // clean verdict can reach this line — blocked, flagged, and missing
+  // verdicts all halted in stage 3 — so the baseline records which vet run
+  // cleared THIS candidate and the fingerprint the service computed over
+  // the copy it received. The plugins gate later refuses registration if
+  // the candidate no longer matches that vet fingerprint.
+  const vetBinding = report.stages.vet
+    ? {
+      runId: report.stages.vet.runId,
+      verdict: report.stages.vet.verdict,
+      finalDecision: report.stages.vet.finalDecision,
+      fingerprint: report.stages.vet.fingerprint,
+    }
+    : null;
+  const baseline = await saveBaseline({ ledgerDir, serverName: name, fingerprint, approvalRecord: approval, vet: vetBinding });
 
   report.installedPath = installedPath;
   report.configSnippet = configSnippet(name, installedPath);
@@ -409,6 +423,8 @@ export async function runInstallPipeline({
     fingerprint: fingerprint.fingerprint,
     permissionsHash: fingerprint.permissionsHash,
     approvalChallenge: approval.challenge,
+    vetRunId: vetBinding?.runId ?? null,
+    vetFingerprint: vetBinding?.fingerprint ?? null,
     libraryEntryId: report.libraryReport?.entryId ?? null,
     note: 'Global MCP config was NOT modified. The config snippet must be added by the human.',
   });
