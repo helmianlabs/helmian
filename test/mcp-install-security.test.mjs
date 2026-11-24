@@ -11,7 +11,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -45,11 +45,13 @@ import {
   computeCandidateFingerprint,
   compareFingerprints,
   checkForDrift,
+  loadBaseline,
   recordDecision,
   readLedger,
   saveBaseline,
   LEDGER_DECISIONS,
 } from '../src/core/mcp-install-ledger.mjs';
+import { loadPlugin, MCP_APPROVED, MCP_REFUSED } from '../src/agent/plugins.mjs';
 import {
   discoverMcpServers,
   provenanceNotes,
@@ -839,7 +841,7 @@ test('the installed server is materialized without the global MCP config being t
 // the live service itself is exercised separately, on the box.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function fakeVetService({ finalDecision = 'vetted-clean-awaiting-human', runId = 'vet-run-test-1', busyOnce = false } = {}) {
+function fakeVetService({ finalDecision = 'vetted-clean-awaiting-human', runId = 'vet-run-test-1', busyOnce = false, fingerprint = 'fingerprint-test' } = {}) {
   const calls = [];
   let posts = 0;
   const fetchImpl = async (url, options = {}) => {
@@ -851,14 +853,14 @@ function fakeVetService({ finalDecision = 'vetted-clean-awaiting-human', runId =
         status: 200, ok: true,
         json: async () => ({
           runId, serverName: 'unit-converter-mcp', finalDecision,
-          fingerprint: 'fingerprint-test', exitCode: 0, runContainerDestroyed: true,
+          fingerprint, exitCode: 0, runContainerDestroyed: true,
           codeRead: { verdict: 'clean', summary: { critical: 0, high: 0, medium: 0 } },
           sandbox: { verdict: 'no-observed-misbehaviour' },
         }),
       };
     }
     if (String(url).includes(`/runs/${runId}`)) {
-      return { status: 200, ok: true, json: async () => ({ runId, finalDecision, stages: {}, fingerprint: { fingerprint: 'fingerprint-test' } }) };
+      return { status: 200, ok: true, json: async () => ({ runId, finalDecision, stages: {}, fingerprint: { fingerprint } }) };
     }
     return { status: 404, ok: false, json: async () => ({}) };
   };
@@ -994,6 +996,125 @@ test('the candidate tarball is a real .tar.gz carrying the candidate source', as
   assert.ok(raw.includes('helmion-candidate.json'));
   assert.ok(raw.includes('index.mjs'));
   assert.ok(raw.includes('unit-converter-mcp'));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VET BINDING (wiring bite 3) — the vet verdict is recorded in the saved
+// baseline, and the plugins gate enforces it at registration time.
+// The stub vet is told the fingerprint the real service computes for this
+// candidate: the pipeline's own fingerprint of the same tree with the same
+// declared manifest (bite 2 proved live that the service's fingerprint is
+// byte-identical across submissions of the same candidate).
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function installBenignInVetMode(scratch) {
+  const declared = await loadDeclaredManifest(BENIGN);
+  const expected = await computeCandidateFingerprint({ root: BENIGN, declared });
+  const { fetchImpl } = fakeVetService({ fingerprint: expected.fingerprint });
+  const ledgerDir = join(scratch, 'ledger');
+  const report = await runInstallPipeline({
+    root: BENIGN,
+    ledgerDir,
+    installRoot: join(scratch, 'servers'),
+    connectionString: null,
+    vet: { vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl },
+    approve: async () => ({
+      stage: 'approval', approved: true, challenge: 'test-phrase',
+      respondedAt: new Date().toISOString(), reason: 'test harness approved',
+    }),
+  });
+  return { report, ledgerDir, expected };
+}
+
+test('vet binding: an install in vet mode records the vet run id and fingerprint in the saved baseline', async () => {
+  const scratch = await scratchDir();
+  try {
+    const { report, ledgerDir, expected } = await installBenignInVetMode(scratch);
+    assert.equal(report.finalDecision, 'installed');
+
+    const baseline = await loadBaseline({ ledgerDir, serverName: 'unit-converter-mcp' });
+    assert.ok(baseline, 'no baseline was saved');
+    assert.equal(baseline.fingerprint, expected.fingerprint);
+    assert.ok(baseline.vet, 'the baseline carries no vet binding');
+    assert.equal(baseline.vet.runId, 'vet-run-test-1');
+    assert.equal(baseline.vet.verdict, 'clean');
+    assert.equal(baseline.vet.finalDecision, 'vetted-clean-awaiting-human');
+    assert.equal(baseline.vet.fingerprint, expected.fingerprint);
+    assert.equal(report.stages.baseline.vet.runId, 'vet-run-test-1');
+
+    const ledger = await readLedger({ ledgerDir });
+    const installed = ledger.find((e) => e.decision === 'installed');
+    assert.equal(installed.detail.vetRunId, 'vet-run-test-1');
+    assert.equal(installed.detail.vetFingerprint, expected.fingerprint);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('vet binding: an install without vet mode saves a baseline with no vet field', async () => {
+  const scratch = await scratchDir();
+  try {
+    const ledgerDir = join(scratch, 'ledger');
+    const report = await runInstallPipeline({
+      root: BENIGN,
+      ledgerDir,
+      installRoot: join(scratch, 'servers'),
+      connectionString: null,
+      approve: async () => ({
+        stage: 'approval', approved: true, challenge: 'test-phrase',
+        respondedAt: new Date().toISOString(), reason: 'test harness approved',
+      }),
+    });
+    assert.equal(report.finalDecision, 'installed');
+    const baseline = await loadBaseline({ ledgerDir, serverName: 'unit-converter-mcp' });
+    assert.ok(baseline, 'no baseline was saved');
+    assert.equal(baseline.vet, undefined, 'a non-vet install must not gain a vet binding');
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('vet binding: the plugins gate registers a vet-installed server, then refuses it after one byte changes', async () => {
+  const scratch = await scratchDir();
+  try {
+    const { report, ledgerDir } = await installBenignInVetMode(scratch);
+    assert.equal(report.finalDecision, 'installed');
+    const installedPath = report.installedPath;
+
+    // A plugin declaring the installed server, exactly as a real plugin would.
+    const pluginRoot = join(scratch, 'plugin');
+    await mkdir(join(pluginRoot, '.helmion-plugin'), { recursive: true });
+    await writeFile(
+      join(pluginRoot, '.helmion-plugin', 'plugin.json'),
+      `${JSON.stringify({ name: 'vet-bound', version: '1.0.0' }, null, 2)}\n`,
+    );
+    await writeFile(
+      join(pluginRoot, '.mcp.json'),
+      `${JSON.stringify({
+        mcpServers: { 'unit-converter-mcp': { command: 'node', args: [join(installedPath, 'index.mjs')] } },
+      }, null, 2)}\n`,
+    );
+
+    const before = await loadPlugin({ root: pluginRoot, workspace: scratch, ledgerDir });
+    assert.equal(before.mcpServers.length, 1);
+    assert.equal(before.mcpServers[0].status, MCP_APPROVED);
+    assert.equal(before.mcpServers[0].vet.runId, 'vet-run-test-1');
+    assert.equal(before.registrations.length, 1);
+
+    // One byte of the installed copy changes.
+    const target = join(installedPath, 'index.mjs');
+    const bytes = await readFile(target);
+    const flipped = Buffer.from(bytes);
+    flipped[flipped.length - 1] = flipped[flipped.length - 1] === 0x0a ? 0x20 : 0x0a;
+    await writeFile(target, flipped);
+
+    const after = await loadPlugin({ root: pluginRoot, workspace: scratch, ledgerDir });
+    assert.equal(after.mcpServers[0].status, MCP_REFUSED);
+    assert.match(after.mcpServers[0].reason, /changed since it was approved/);
+    assert.deepEqual(after.registrations, []);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

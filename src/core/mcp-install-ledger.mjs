@@ -222,7 +222,7 @@ export async function loadBaseline({ ledgerDir, serverName }) {
   }
 }
 
-export async function saveBaseline({ ledgerDir, serverName, fingerprint, approvalRecord }) {
+export async function saveBaseline({ ledgerDir, serverName, fingerprint, approvalRecord, vet = null }) {
   await mkdir(join(ledgerDir, 'baselines'), { recursive: true });
   const record = {
     serverName,
@@ -230,6 +230,23 @@ export async function saveBaseline({ ledgerDir, serverName, fingerprint, approva
     approvalChallenge: approvalRecord?.challenge ?? null,
     ...fingerprint,
   };
+  if (vet) {
+    // THE VET BINDING (wiring bite 3): when the install ran in vet mode, the
+    // baseline records WHICH cloud vet run cleared this code and the
+    // fingerprint the service computed over the candidate it received. The
+    // plugins gate (src/agent/plugins.mjs) refuses registration when a
+    // baseline carries this binding and the candidate no longer matches the
+    // vet fingerprint, or the recorded verdict is anything but clean. A
+    // baseline written by a non-vet install has no `vet` field and behaves
+    // exactly as it always has.
+    record.vet = {
+      runId: vet.runId ?? null,
+      verdict: vet.verdict ?? null,
+      finalDecision: vet.finalDecision ?? null,
+      fingerprint: vet.fingerprint ?? null,
+      boundAt: new Date().toISOString(),
+    };
+  }
   await writeFile(baselinePath(ledgerDir, serverName), `${JSON.stringify(record, null, 2)}\n`);
   return record;
 }
