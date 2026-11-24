@@ -29,7 +29,7 @@ if (!connectionString) {
   console.error('HELMION_DATABASE_URL is required (the app\'s Neon pooled URL).');
   process.exit(2);
 }
-const pool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 1 });
+const pool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 1, connectionTimeoutMillis: 5_000 });
 const store = createMuseConnectorKeyStore(pool);
 try {
   const disableId = get('--disable');
