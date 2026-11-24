@@ -37,6 +37,19 @@ export const ENVOY_ABLY_TOKEN_PATH = '/api/admin/envoy/ably-token';
 export const ENVOY_ABLY_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 min; the bridge client auto-renews
 const ENVOY_ABLY_REST = 'https://rest.ably.io';
 
+// The sync-profile route's pool: a module singleton, like every other
+// cloud pool. It used to be created inside the request handler and
+// ended in a finally — a fresh pool per request, which defeats client
+// reuse and, behind a transaction pooler, connection consolidation.
+let sharedSyncProfilePool = null;
+async function getSyncProfilePool(cs) {
+  if (!sharedSyncProfilePool) {
+    const { Pool } = await import('pg');
+    sharedSyncProfilePool = new Pool({ connectionString: cs, ssl: cs.includes('sslmode=disable') ? false : undefined, max: 2, connectionTimeoutMillis: 5_000 });
+  }
+  return sharedSyncProfilePool;
+}
+
 // Ably channel names: keep alphanumerics plus : _ . - ; anything else
 // becomes a dash so a tenant id can never break the name.
 export function envoyChannelName(tenantId, channelId) {
@@ -225,7 +238,6 @@ export async function handleEnvoyAblyRoute({
       const { createRunnerPresenceStore } = await import('./runner-presence.mjs');
       const { createProfileSyncJobStore, PROFILE_SYNC_NO_DESKTOP_CODE, PROFILE_SYNC_NO_DESKTOP_MESSAGE } = await import('./profile-sync.mjs');
       const { PROFILE_SYNC_STAMP_PROVIDERS } = await import('../core/agent-os.mjs');
-      const { Pool } = await import('pg');
       const cs = String(process.env.HELMION_DATABASE_URL ?? '').trim();
       // The stamp set is the installer's write set, shared with the
       // presence route — exactly the providers the sync writes files
@@ -235,37 +247,33 @@ export async function handleEnvoyAblyRoute({
         send(response, 503, JSON.stringify({ valid: false, error: 'database not configured' }));
         return true;
       }
-      const pool = new Pool({ connectionString: cs, ssl: cs.includes('sslmode=disable') ? false : undefined, max: 2 });
+      const pool = await getSyncProfilePool(cs);
       let job;
-      try {
-        // Press truth (2026-11-10): same rule as the presence route —
-        // with no desktop linked, no job is queued and no provider is
-        // stamped; the press answers with the fact.
-        const jobStore = createProfileSyncJobStore(pool);
-        if (!(await jobStore.desktopLinked(actor.tenantId))) {
-          send(response, 409, JSON.stringify({ valid: false, code: PROFILE_SYNC_NO_DESKTOP_CODE, error: PROFILE_SYNC_NO_DESKTOP_MESSAGE }));
-          return true;
-        }
-        const store = createRunnerPresenceStore(pool);
-        for (const p of syncedProviders) {
-          // A sync connects nothing, for any caller: stamp the sync
-          // time and leave the device's connected claim untouched.
-          // This route used to write report(p, true) for all seven
-          // providers, manufacturing a connected state out of a
-          // member's "Sync now" click. (Honest-connection fix,
-          // 2026-11-01 — same contract as the presence route.)
-          await store.markSynced(actor.tenantId, p).catch(() => {});
-        }
-        // The real work (S1, 2026-11-05): enqueue a profile-sync job
-        // for the tenant's device. This route used to answer with a
-        // hardcoded syncedFiles list of files it never wrote; it now
-        // returns the job and an empty list — the only file list a
-        // surface may render is the device's report, read back through
-        // the profile-sync route.
-        job = await createProfileSyncJobStore(pool).enqueue(actor.tenantId, { requestedBy: actor.subject ?? null });
-      } finally {
-        await pool.end().catch(() => {});
+      // Press truth (2026-11-10): same rule as the presence route —
+      // with no desktop linked, no job is queued and no provider is
+      // stamped; the press answers with the fact.
+      const jobStore = createProfileSyncJobStore(pool);
+      if (!(await jobStore.desktopLinked(actor.tenantId))) {
+        send(response, 409, JSON.stringify({ valid: false, code: PROFILE_SYNC_NO_DESKTOP_CODE, error: PROFILE_SYNC_NO_DESKTOP_MESSAGE }));
+        return true;
       }
+      const store = createRunnerPresenceStore(pool);
+      for (const p of syncedProviders) {
+        // A sync connects nothing, for any caller: stamp the sync
+        // time and leave the device's connected claim untouched.
+        // This route used to write report(p, true) for all seven
+        // providers, manufacturing a connected state out of a
+        // member's "Sync now" click. (Honest-connection fix,
+        // 2026-11-01 — same contract as the presence route.)
+        await store.markSynced(actor.tenantId, p).catch(() => {});
+      }
+      // The real work (S1, 2026-11-05): enqueue a profile-sync job
+      // for the tenant's device. This route used to answer with a
+      // hardcoded syncedFiles list of files it never wrote; it now
+      // returns the job and an empty list — the only file list a
+      // surface may render is the device's report, read back through
+      // the profile-sync route.
+      job = await createProfileSyncJobStore(pool).enqueue(actor.tenantId, { requestedBy: actor.subject ?? null });
       send(response, 202, JSON.stringify({
         valid: true,
         ok: true,
