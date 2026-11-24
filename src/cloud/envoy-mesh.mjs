@@ -1376,7 +1376,17 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             const gateAllows = (p) => {
               if (gate.has(p)) return true;
               const c = customByHandle.get(p);
-              return Boolean(c && gate.has(c.provider));
+              if (!c) return false;
+              if (gate.has(c.provider)) return true;
+              // The gate is built in the provider vocabulary while a
+              // custom's stored provider is its engine's name. The two
+              // agree on every standard name except the local seat,
+              // whose engine is 'ollama' and whose provider name is
+              // 'qwen' — so an ollama custom was withheld even with
+              // her engine's presence connected. Resolve the engine
+              // through the provider vocabulary too, the same mapping
+              // the answer stamp uses (answeredEngineFor above).
+              return gate.has(normalizeProvider(c.provider) ?? '');
             };
             for (const p of due) if (!gateAllows(p)) withheld.set(p, state.reason ?? 'no-provider');
             due = due.filter(gateAllows);
