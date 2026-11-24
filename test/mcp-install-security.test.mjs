@@ -57,6 +57,8 @@ import {
   DiscoveryError,
 } from '../src/core/mcp-discovery.mjs';
 import { runInstallPipeline, loadDeclaredManifest } from '../src/core/mcp-install-pipeline.mjs';
+import { submitCandidateToVet, buildCandidateTarball } from '../src/core/mcp-vet.mjs';
+import { gunzipSync } from 'node:zlib';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
@@ -829,6 +831,169 @@ test('the installed server is materialized without the global MCP config being t
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VET-BACKED STAGE 3 — the pipeline's vet mode against a stub vet service.
+// The stub speaks the real wire contract (POST /vet, then GET /runs/<id>);
+// the live service itself is exercised separately, on the box.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function fakeVetService({ finalDecision = 'vetted-clean-awaiting-human', runId = 'vet-run-test-1', busyOnce = false } = {}) {
+  const calls = [];
+  let posts = 0;
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method ?? 'GET', headers: options.headers ?? {}, body: options.body });
+    if (String(url).endsWith('/vet')) {
+      posts += 1;
+      if (busyOnce && posts === 1) return { status: 409, ok: false, json: async () => ({ error: 'a vet run is already in progress' }) };
+      return {
+        status: 200, ok: true,
+        json: async () => ({
+          runId, serverName: 'unit-converter-mcp', finalDecision,
+          fingerprint: 'fingerprint-test', exitCode: 0, runContainerDestroyed: true,
+          codeRead: { verdict: 'clean', summary: { critical: 0, high: 0, medium: 0 } },
+          sandbox: { verdict: 'no-observed-misbehaviour' },
+        }),
+      };
+    }
+    if (String(url).includes(`/runs/${runId}`)) {
+      return { status: 200, ok: true, json: async () => ({ runId, finalDecision, stages: {}, fingerprint: { fingerprint: 'fingerprint-test' } }) };
+    }
+    return { status: 404, ok: false, json: async () => ({}) };
+  };
+  return { fetchImpl, calls };
+}
+
+test('vet mode: a clean vet verdict folds into the report and the local sandbox still runs as the second layer', async () => {
+  const scratch = await scratchDir();
+  try {
+    const { fetchImpl, calls } = fakeVetService({});
+    const ledgerDir = join(scratch, 'ledger');
+    const report = await runInstallPipeline({
+      root: BENIGN,
+      ledgerDir,
+      installRoot: join(scratch, 'servers'),
+      connectionString: null,
+      vet: { vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl },
+      approve: async () => ({
+        stage: 'approval', approved: true, challenge: 'test-phrase',
+        respondedAt: new Date().toISOString(), reason: 'test harness approved',
+      }),
+    });
+
+    assert.equal(report.finalDecision, 'installed');
+    assert.equal(report.stages.vet.verdict, 'clean');
+    assert.equal(report.stages.vet.runId, 'vet-run-test-1');
+    assert.equal(report.stages.vet.report.finalDecision, 'vetted-clean-awaiting-human');
+    assert.equal(report.stages.sandbox.verdict, 'no-observed-misbehaviour', 'the local observer run did not stay as the second layer');
+    assert.equal(report.stages.briefing.vetRunId, 'vet-run-test-1');
+
+    // The submission spoke the service's wire contract.
+    const post = calls.find((c) => c.url.endsWith('/vet'));
+    assert.equal(post.headers.authorization, 'Bearer test-token');
+    assert.equal(post.headers['x-vet-intent'], 'execute-foreign-code');
+    assert.equal(post.headers['x-vet-candidate-kind'], 'mcp-server');
+    assert.equal(post.headers['content-type'], 'application/gzip');
+    assert.ok(Buffer.isBuffer(post.body) && post.body.length > 0);
+
+    const ledger = await readLedger({ ledgerDir });
+    const vetEntry = ledger.find((e) => e.decision === 'sandboxed' && e.detail.layer === 'cloud-vet');
+    assert.ok(vetEntry, 'no cloud-vet ledger line recorded');
+    assert.equal(vetEntry.detail.vetRunId, 'vet-run-test-1');
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('vet mode: a blocked vet verdict halts before the local sandbox and before any human', async () => {
+  const scratch = await scratchDir();
+  try {
+    const { fetchImpl } = fakeVetService({ finalDecision: 'blocked-by-code-read', runId: 'vet-run-blocked' });
+    let approveCalled = false;
+    const report = await runInstallPipeline({
+      root: BENIGN,
+      ledgerDir: join(scratch, 'ledger'),
+      installRoot: join(scratch, 'servers'),
+      connectionString: null,
+      vet: { vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl },
+      approve: async () => { approveCalled = true; return { approved: true }; },
+    });
+    assert.equal(report.finalDecision, 'blocked-by-vet');
+    assert.equal(report.stages.vet.runId, 'vet-run-blocked');
+    assert.equal(report.stages.sandbox, undefined, 'the candidate was run locally after the vet blocked it');
+    assert.equal(approveCalled, false);
+    assert.equal(existsSync(join(scratch, 'servers')), false);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('vet mode: a flagged vet verdict halts before any human', async () => {
+  const scratch = await scratchDir();
+  try {
+    const { fetchImpl } = fakeVetService({ finalDecision: 'flagged-in-sandbox', runId: 'vet-run-flagged' });
+    let approveCalled = false;
+    const report = await runInstallPipeline({
+      root: BENIGN,
+      ledgerDir: join(scratch, 'ledger'),
+      installRoot: join(scratch, 'servers'),
+      connectionString: null,
+      vet: { vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl },
+      approve: async () => { approveCalled = true; return { approved: true }; },
+    });
+    assert.equal(report.finalDecision, 'flagged-by-vet');
+    assert.equal(report.stages.sandbox, undefined);
+    assert.equal(approveCalled, false);
+    assert.equal(existsSync(join(scratch, 'servers')), false);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('vet mode: an unreachable vet service is evidence-missing, never a clean run', async () => {
+  const scratch = await scratchDir();
+  try {
+    const fetchImpl = async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:8197'); };
+    let approveCalled = false;
+    const report = await runInstallPipeline({
+      root: BENIGN,
+      ledgerDir: join(scratch, 'ledger'),
+      installRoot: join(scratch, 'servers'),
+      connectionString: null,
+      vet: { vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl },
+      approve: async () => { approveCalled = true; return { approved: true }; },
+    });
+    assert.equal(report.finalDecision, 'vet-evidence-missing');
+    assert.equal(report.stages.vet.verdict, 'evidence-missing');
+    assert.match(report.stages.vet.error, /unreachable/);
+    assert.equal(approveCalled, false, 'a human was asked with no vet evidence in hand');
+    assert.equal(existsSync(join(scratch, 'servers')), false);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('vet mode: a busy (409) vet service is retried inside the deadline', async () => {
+  const { fetchImpl, calls } = fakeVetService({ busyOnce: true, runId: 'vet-run-after-busy' });
+  const stage = await submitCandidateToVet({
+    root: BENIGN, vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl, deadlineMs: 30000,
+  });
+  assert.equal(stage.verdict, 'clean');
+  assert.equal(stage.runId, 'vet-run-after-busy');
+  assert.equal(calls.filter((c) => c.url.endsWith('/vet')).length, 2);
+});
+
+test('the candidate tarball is a real .tar.gz carrying the candidate source', async () => {
+  const { tarball, fileCount, skipped } = await buildCandidateTarball({ root: BENIGN });
+  assert.equal(fileCount, 3);
+  assert.deepEqual(skipped, []);
+  assert.equal(tarball[0], 0x1f);
+  assert.equal(tarball[1], 0x8b);
+  const raw = gunzipSync(tarball).toString('utf8');
+  assert.ok(raw.includes('helmion-candidate.json'));
+  assert.ok(raw.includes('index.mjs'));
+  assert.ok(raw.includes('unit-converter-mcp'));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

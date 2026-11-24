@@ -92,7 +92,7 @@ export function assertInteractiveTerminal({ stdin = process.stdin, stdout = proc
  * Turn the machine-readable stage reports into something a person can act on
  * in fifteen seconds: what it is, what it wants, what was found.
  */
-export function buildApprovalBriefing({ discovery = {}, audit = {}, sandbox = {} } = {}) {
+export function buildApprovalBriefing({ discovery = {}, audit = {}, sandbox = {}, vet = null } = {}) {
   const critical = (audit.findings ?? []).filter((f) => f.severity === AUDIT_SEVERITY.CRITICAL);
   const high = (audit.findings ?? []).filter((f) => f.severity === AUDIT_SEVERITY.HIGH);
   const observed = sandbox.observed ?? {};
@@ -122,6 +122,11 @@ export function buildApprovalBriefing({ discovery = {}, audit = {}, sandbox = {}
   if (sandbox.verdict === 'evidence-missing') {
     found.push('THE SANDBOX PRODUCED NO TRUSTWORTHY RECORD. This is not a clean run; it is a run with no evidence.');
   }
+  if (vet) {
+    // Only a clean vet verdict can reach a briefing — blocked, flagged, and
+    // evidence-missing vet stages halt the pipeline before stage 4.
+    found.push(`THE CLOUD VET SERVICE also ran it in a disposable container (run ${vet.runId}): ${vet.finalDecision}. That service never approves and never installs; its full report is folded into the pipeline report.`);
+  }
   if (!found.length) found.push('Nothing above INFO was flagged by the code read, and nothing misbehaved in the sandbox run.');
 
   return {
@@ -135,11 +140,16 @@ export function buildApprovalBriefing({ discovery = {}, audit = {}, sandbox = {}
     found,
     codeReadVerdict: audit.verdict ?? 'unknown',
     sandboxVerdict: sandbox.verdict ?? 'unknown',
+    vetRunId: vet?.runId ?? null,
+    vetVerdict: vet?.finalDecision ?? null,
     limitations: [
       ...(audit.limitations ?? []),
       sandbox.isolation
         ? `Sandbox isolation was ${sandbox.isolation.achieved}. It is NOT ${sandbox.isolation.isNot}.`
         : 'No sandbox run was performed.',
+      ...(vet
+        ? [`The cloud vet verdict (${vet.finalDecision}, run ${vet.runId}) covers one observed run in a disposable container; it is not a guarantee about any other run, host, or inputs.`]
+        : []),
     ],
   };
 }

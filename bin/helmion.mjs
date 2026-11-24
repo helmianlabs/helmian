@@ -1357,6 +1357,20 @@ async function mcpInstall() {
   }
 
   // review — the full five-stage pipeline. Stage 4 requires a real terminal.
+  // --vet adds the cloud vet service as stage 3's first layer: the candidate
+  // is submitted to the service (loopback by design; HELMION_VET_URL moves
+  // it, HELMION_VET_TOKEN authenticates) and a blocked, flagged, or missing
+  // vet verdict halts the pipeline before the local sandbox. Asking for
+  // --vet without the token is a configuration error, never a silent skip.
+  let vet = null;
+  if (hasFlag('--vet')) {
+    const { DEFAULT_VET_URL } = await import('../src/core/mcp-vet.mjs');
+    const vetToken = process.env.HELMION_VET_TOKEN ?? null;
+    if (!vetToken) {
+      throw new Error('mcp-install review --vet requires HELMION_VET_TOKEN (the cloud vet service token) in the environment');
+    }
+    vet = { vetUrl: process.env.HELMION_VET_URL ?? DEFAULT_VET_URL, vetToken };
+  }
   const { runInstallPipeline, formatPipelineOutcome } = await import('../src/core/mcp-install-pipeline.mjs');
   const report = await runInstallPipeline({
     root: candidateRoot,
@@ -1364,6 +1378,7 @@ async function mcpInstall() {
     ledgerDir,
     projectSlug: option('--project', null),
     haltOnCritical: !hasFlag('--review-blocked-candidate'),
+    vet,
   });
   process.stdout.write(asJson ? `${JSON.stringify(report, null, 2)}\n` : `${formatPipelineOutcome(report)}\n`);
   // Anything short of an installed server exits non-zero, so a caller that only
@@ -1572,6 +1587,7 @@ MCP server install security (never install third-party code unreviewed):
   helmion mcp-install audit <path>                   # stage 2: read every source file
   helmion mcp-install sandbox <path>                 # stage 3: run with no credentials
   helmion mcp-install review <path>                  # all 5 stages, asks you to approve
+  helmion mcp-install review <path> --vet            # stage 3 also submits to the cloud vet service (needs HELMION_VET_TOKEN)
   helmion mcp-install drift <path> --name <server>   # stage 5: changed since you approved it?
   helmion mcp-install drift <path> --arming-baseline <export.json> --tools-file <tools.json>
                                                      # also: does this tools/list still match the connector library's frozen arming baseline?
