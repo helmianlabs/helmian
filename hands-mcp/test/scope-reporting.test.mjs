@@ -193,7 +193,8 @@ test('buildScopeSummary: verified grants are listed; tampered ones are not', asy
   // Tamper with the stored envelope: the folder drops out of the summary,
   // exactly as it drops out of enforcement.
   const stored = JSON.parse(await readFile(grantsPath, 'utf8'));
-  stored.grants[0].envelope.signature = `${stored.grants[0].envelope.signature.slice(0, -2)}AA`;
+  const sig0 = stored.grants[0].envelope.signature;
+  stored.grants[0].envelope.signature = `${sig0[0] === 'A' ? 'B' : 'A'}${sig0.slice(1)}`;
   await writeFile(grantsPath, JSON.stringify(stored));
   const after = await buildScopeSummary({ roots: ['E:\\Helmion'], rootGrantsPath: grantsPath, guardPublicKeyX: guard.x, deviceId: 'pc-test' });
   assert.deepEqual(after.grants, []);
