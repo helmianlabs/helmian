@@ -324,6 +324,16 @@ export function parseConfig(body) {
   } catch { return null; }
 }
 
+// The stored-config size bound (hardening step 1, sql/098): channel
+// config no longer lives only in an envoy_messages body, whose
+// sql/009 CHECK caps it at 4,000 chars — the cap that made
+// MAX_CHANNEL_AGENTS unreachable in one channel. The dedicated
+// helmion.envoy_channel_configs table (envoy-config-store.mjs)
+// carries bodies up to this bound; serializeConfig enforces the
+// same bound so a config too large for the table fails here, at
+// the one serialization point, instead of at the database.
+export const MAX_CONFIG_BODY_CHARS = 65_536;
+
 export function serializeConfig(config) {
   const joined = {}; for (const p of config.agents ?? []) if (config.joined?.[p]) joined[p] = config.joined[p];
   const stored = { format: CONFIG_FORMAT, agents: config.agents ?? [], joined, discord: config.discord ?? null, pendingLink: config.pendingLink ?? null };
@@ -361,7 +371,7 @@ export function serializeConfig(config) {
   // armedConnectors discipline above).
   if (config.toolAccess === 'keep-loaded') stored.toolAccess = 'keep-loaded';
   const body = JSON.stringify(stored);
-  if (body.length > 4000) throw new Error('channel config is too large');
+  if (body.length > MAX_CONFIG_BODY_CHARS) throw new Error('channel config is too large');
   return body;
 }
 

@@ -50,6 +50,10 @@ function makeFakePool({ missingTable = false } = {}) {
       if (missingTable) { const e = new Error('missing'); e.code = '42P01'; throw e; }
       if (text === 'begin' || text === 'commit') return {};
       if (text.includes('set_config')) return { rows: [], rowCount: 0 };
+      // This fake's database predates sql/098: the channel-config
+      // table is absent, and the config store degrades to the
+      // config messages below on exactly this error.
+      if (text.includes('helmion.envoy_channel_configs')) { const e = new Error('missing'); e.code = '42P01'; throw e; }
       if (text.includes('helmion.tenant_memberships')) {
         const role = memberships.get(`${params[0]}|${params[1]}`);
         return role ? { rows: [{ role }], rowCount: 1 } : { rows: [], rowCount: 0 };

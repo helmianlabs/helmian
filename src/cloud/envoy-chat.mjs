@@ -664,11 +664,8 @@ export function createEnvoyStore(pool) {
         await requireActiveTenantMembership(client, context);
         const result = await client.query('select id, slug, title, kind, created_by_subject, created_at from helmion.envoy_channels where tenant_id=$1 order by created_at, id', [context.tenantId]);
         const channels = result.rows.map((row) => Object.freeze({ id: String(row.id), slug: String(row.slug), title: String(row.title), kind: String(row.kind), createdBySubject: String(row.created_by_subject), createdAt: row.created_at }));
-        const configs = await client.query(
-          'select distinct on (channel_id) channel_id, body from helmion.envoy_messages where tenant_id=$1 and author_subject=$2 order by channel_id, created_at desc, id desc',
-          [context.tenantId, CONFIG_SUBJECT],
-        );
-        const configsByChannelId = new Map(configs.rows.map((row) => [String(row.channel_id), parseConfig(row.body)]));
+        const configs = await readTenantConfigBodies(client, context.tenantId);
+        const configsByChannelId = new Map(configs.map((row) => [String(row.channel_id), parseConfig(row.body)]));
         return { channels: attachChannelLinks(channels, configsByChannelId), discordBot: discordBotStatus(), slackBot: slackBotStatus() };
       });
     },
@@ -905,6 +902,7 @@ import { appendAuditEvent } from './audit-event-repository.mjs';
 import { tenantAgentStateOn } from './tenant-agent-state.mjs';
 import { CONFIG_SUBJECT, describeAuthor, normalizeMessageMetadata, parseConfig, roleAddresseeIn } from './envoy-agents.mjs';
 import { createLibrarianStore } from './envoy-librarian.mjs';
+import { readTenantConfigBodies } from './envoy-config-store.mjs';
 import { discordBotStatus, slackBotStatus } from './bot-status.mjs';
 import { postHelmKbAnswerIfNeeded } from './helm-kb.mjs';
 import { postMaestroAssignmentIfNeeded } from './envoy-assignments.mjs';
