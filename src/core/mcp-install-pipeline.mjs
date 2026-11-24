@@ -4,6 +4,11 @@
 //   1. DISCOVERY  — mcp-discovery.mjs      find a candidate, record provenance
 //   2. CODE READ  — mcp-code-audit.mjs     read every source file, never the README
 //   3. SANDBOX    — mcp-sandbox.mjs        run it with no credentials and watch
+//                   + mcp-vet.mjs          when vet mode is on, the candidate is
+//                                          FIRST submitted to the cloud vet
+//                                          service (disposable container); the
+//                                          local observer run stays as the
+//                                          second, independent layer
 //   4. APPROVAL   — mcp-approval.mjs       a human types a challenge phrase
 //   5. LEDGER     — mcp-install-ledger.mjs permanent record + baseline fingerprint
 //
@@ -23,6 +28,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { auditCandidate, AUDIT_SEVERITY } from './mcp-code-audit.mjs';
 import { runSandboxedCandidate } from './mcp-sandbox.mjs';
+import { submitCandidateToVet } from './mcp-vet.mjs';
 import { requestInstallApproval, ApprovalRefusedError } from './mcp-approval.mjs';
 import {
   computeCandidateFingerprint,
@@ -157,6 +163,14 @@ export async function runInstallPipeline({
   store = null,
   discovery = null,
   runSandbox = true,
+  // Vet mode: `{ vetUrl, vetToken, deadlineMs?, fetchImpl? }` submits the
+  // candidate to the cloud vet service as stage 3's first layer. Default
+  // null = the pipeline exactly as before; vet mode is always opt-in,
+  // because the service holds an execution authority (a standing token)
+  // that a caller must name deliberately. In vet mode a blocked, flagged,
+  // or missing vet verdict halts the pipeline before the local sandbox and
+  // before any human is asked — the same halt a local critical audit gets.
+  vet = null,
   // Explicit so a caller (notably the test suite) can guarantee no database is
   // touched. Passing null keeps the ledger purely local.
   connectionString = process.env.HELMION_DATABASE_URL,
@@ -266,6 +280,66 @@ export async function runInstallPipeline({
   }
 
   // ── Stage 3: sandbox ──────────────────────────────────────────────────────
+  // In vet mode the candidate goes to the cloud vet service FIRST: it runs
+  // the same stages in a disposable container with an OS boundary the local
+  // run does not have. A blocked or flagged vet verdict halts here — the
+  // candidate is not then run locally, and no human is asked. A missing
+  // verdict (service unreachable, refused, busy past the deadline) halts
+  // too: vet mode was asked for, so its absence is evidence-missing, and
+  // evidence-missing is never a clean run. Only a clean vet verdict lets
+  // the pipeline continue to the local observer run, which stays as the
+  // second, independent layer.
+  if (vet) {
+    const vetStage = await submitCandidateToVet({
+      root: candidateRoot,
+      vetUrl: vet.vetUrl,
+      vetToken: vet.vetToken,
+      fetchImpl: vet.fetchImpl,
+      deadlineMs: vet.deadlineMs,
+    });
+    report.stages.vet = vetStage;
+    if (vetStage.verdict === 'blocked') {
+      report.finalDecision = 'blocked-by-vet';
+      await log('blocked', {
+        reason: 'cloud vet service blocked the candidate at its code read',
+        layer: 'cloud-vet',
+        vetRunId: vetStage.runId,
+        vetFinalDecision: vetStage.finalDecision,
+        note: 'Pipeline halted before the local sandbox and before any human was asked. Nothing was installed.',
+      });
+      return report;
+    }
+    if (vetStage.verdict === 'flagged') {
+      report.finalDecision = 'flagged-by-vet';
+      await log('flagged', {
+        reason: 'cloud vet service flagged the candidate in its sandbox run',
+        layer: 'cloud-vet',
+        vetRunId: vetStage.runId,
+        vetFinalDecision: vetStage.finalDecision,
+        fingerprint: vetStage.fingerprint,
+        note: 'Pipeline halted before the local sandbox and before any human was asked. Nothing was installed.',
+      });
+      return report;
+    }
+    if (vetStage.verdict !== 'clean') {
+      report.finalDecision = 'vet-evidence-missing';
+      await log('flagged', {
+        reason: 'cloud vet service produced no verdict; failing closed',
+        layer: 'cloud-vet',
+        vetError: vetStage.error ?? null,
+        note: 'Vet mode was requested and no vet evidence exists. Missing evidence is never a clean run, so the pipeline halted before the local sandbox and before any human was asked. Nothing was installed.',
+      });
+      return report;
+    }
+    await log('sandboxed', {
+      layer: 'cloud-vet',
+      verdict: vetStage.finalDecision,
+      vetRunId: vetStage.runId,
+      fingerprint: vetStage.fingerprint,
+      runContainerDestroyed: vetStage.runContainerDestroyed,
+    });
+  }
+
   if (runSandbox) {
     const sandbox = await runSandboxedCandidate({ root: candidateRoot, declared, ...sandboxOptions });
     report.stages.sandbox = sandbox;
@@ -282,6 +356,7 @@ export async function runInstallPipeline({
     discovery: { ...report.stages.discovery, declared, name },
     audit,
     sandbox: report.stages.sandbox ?? {},
+    vet: report.stages.vet ?? null,
   });
   report.stages.briefing = briefing;
 
@@ -353,6 +428,12 @@ export function formatPipelineOutcome(report) {
     for (const f of report.stages.packageProvenance.findings) lines.push(`      ${f.severity}: ${f.detail}`);
   }
   if (report.stages.sandbox) lines.push(`  sandbox:   ${report.stages.sandbox.verdict}`);
+  if (report.stages.vet) {
+    const v = report.stages.vet;
+    lines.push(v.runId
+      ? `  vet:       ${v.finalDecision} (cloud vet run ${v.runId})`
+      : `  vet:       NO VERDICT — ${v.error ?? 'evidence missing'}`);
+  }
   if (report.stages.approval) lines.push(`  approval:  ${report.stages.approval.approved ? 'GRANTED' : 'NOT GRANTED'} — ${report.stages.approval.reason}`);
   if (report.stages.drift?.status === 'drift-detected') lines.push(`  DRIFT:     ${report.stages.drift.message}`);
   if (report.finalDecision === 'installed') {
