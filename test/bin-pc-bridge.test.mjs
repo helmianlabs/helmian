@@ -847,3 +847,68 @@ test('bridge presence claims only what this PC actually holds — never mistral/
     assert.ok(!claimed.includes(stock), `${stock} is never claimed without a real local check passing`);
   }
 });
+
+// ---- Spin-up bite 1: persona binding for custom agents ----
+// A custom agent's seat id is its handle, but the agent child can only
+// run a provider ENGINE. The bridge must resolve the seat against the
+// work item's customAgents: configure the child with the custom's
+// engine, compose the prompt WITH customAgents (name + job line), and
+// still post the reply under the handle. Two customs on the SAME
+// engine in one channel must answer as themselves, with distinct
+// job-shaped content, and the built-in seat must answer as itself.
+
+test('agent members: two custom agents on one engine answer under their own handles in their own job voices', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'pc-bridge-customs-'));
+  const cloud = makeFakeCloud();
+  const orig = cloud.fetchImpl;
+  const posted = [];
+  const atlas = { id: 'atlas', handle: 'atlas', name: 'Atlas', emoji: '🧭', provider: 'claude', authMode: 'password_session', jobTitle: 'Codeword keeper A', jobPrompt: 'Your codeword is ZEPHYR. When asked for your codeword, answer with it.' };
+  const bea = { id: 'bea', handle: 'bea', name: 'Bea', emoji: '🐝', provider: 'claude', authMode: 'password_session', jobTitle: 'Codeword keeper B', jobPrompt: 'Your codeword is QUARTZ. When asked for your codeword, answer with it.' };
+  const human = { id: '44444444-4444-4444-8444-444444444444', channelId: 'ch-1', authorSubject: 'user-1', authorKind: 'human', authorName: 'Troy', source: 'helmian', body: '@all state your codeword', createdAt: 't' };
+  cloud.fetchImpl = async (url, opts = {}) => {
+    const u = new URL(url);
+    const json = (obj) => ({ ok: true, status: 200, json: async () => obj, text: async () => JSON.stringify(obj) });
+    if (u.pathname === '/api/admin/envoy/channel-config') return json({ valid: true, configured: true, config: { agents: ['claude'], customAgents: [atlas, bea] } });
+    if (u.pathname === '/api/admin/envoy/agent-work') {
+      // The bridge polls with the ENGINE it serves — never with handles.
+      assert.deepEqual(u.searchParams.get('providers').split(','), ['claude']);
+      const work = posted.length ? [] : [{ channel: { id: 'ch-1', slug: 'team', title: 'Team' }, members: ['claude'], customAgents: [atlas, bea], message: human, agents: ['claude', 'atlas', 'bea'], context: [human] }];
+      return json({ valid: true, work });
+    }
+    if (u.pathname === '/api/admin/envoy/agent-messages') { posted.push(JSON.parse(opts.body)); return json({ valid: true, receipt: { replayed: false } }); }
+    return orig(url, opts);
+  };
+  const kids = [];
+  const handle = await runBridge(bridgeDeps(tmp, cloud, { noAbly: true, agents: 'claude', spawnImpl: () => { const k = makeFakeChild(); kids.push(k); return k.child; } }));
+  t.after(() => handle.stop());
+  for (let i = 0; i < 100 && posted.length < 3; i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(posted.length, 3, 'all three seats posted a reply');
+
+  // Replies are authored under each seat's own identity: the built-in
+  // provider id for Claude, the HANDLE for each custom agent.
+  assert.deepEqual(posted.map((p) => p.provider), ['claude', 'atlas', 'bea']);
+  assert.ok(posted.every((p) => p.replyTo === human.id && p.channelId === 'ch-1'));
+
+  const [claudePost, atlasPost, beaPost] = posted;
+  // The fake child echoes its prompt, so each post shows the persona
+  // and job line its turn was composed with.
+  assert.ok(claudePost.body.includes('You are Claude'), 'built-in seat answers as itself');
+  assert.ok(!claudePost.body.includes('ZEPHYR') && !claudePost.body.includes('QUARTZ'), 'built-in seat carries no custom job line');
+  assert.ok(atlasPost.body.includes('You are 🧭 Atlas (@atlas)'), 'atlas turn is composed as Atlas');
+  assert.ok(atlasPost.body.includes('Your assigned job: Codeword keeper A'), 'atlas job title reaches its prompt');
+  assert.ok(atlasPost.body.includes('ZEPHYR'), 'atlas answers with its own codeword');
+  assert.ok(!atlasPost.body.includes('QUARTZ'), 'atlas never sees bea\u2019s codeword');
+  assert.ok(beaPost.body.includes('You are 🐝 Bea (@bea)'), 'bea turn is composed as Bea');
+  assert.ok(beaPost.body.includes('Your assigned job: Codeword keeper B'), 'bea job title reaches its prompt');
+  assert.ok(beaPost.body.includes('QUARTZ'), 'bea answers with its own codeword');
+  assert.ok(!beaPost.body.includes('ZEPHYR'), 'bea never sees atlas\u2019s codeword');
+
+  // The child was only ever configured with the ENGINE — a handle
+  // reaching the child is the 'Unknown provider' death this bite fixes.
+  const configures = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'configure').map((c) => c.provider);
+  assert.ok(configures.length >= 3, 'child configured per job');
+  assert.ok(configures.every((p) => p === 'claude'), `child configured only with the engine, got: ${configures.join(', ')}`);
+  const turns = kids[0].written.map((w) => JSON.parse(w)).filter((c) => c.cmd === 'turn');
+  assert.equal(turns.length, 3, 'one turn per seat');
+  await handle.stop();
+});

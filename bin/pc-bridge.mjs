@@ -577,14 +577,26 @@ export async function runBridge(overrides = {}) {
       agentJobs.delete(key);
       return;
     }
-    const runProvider = provider;
+    // Persona binding (spin-up bite 1): a custom agent's seat id is its
+    // HANDLE, but the child can only run a provider ENGINE — a handle
+    // reaches resolveProvider as an unknown name and the turn dies
+    // there. The work item carries the channel's customAgents
+    // (envoy-mesh), so resolve the seat here: the child is configured
+    // with the custom's engine, the prompt below is composed with
+    // customAgents so the agent's name and job line reach it, and the
+    // reply still posts under the handle (the mesh accepts
+    // agent:<handle> via agentSubject). A built-in seat resolves to
+    // itself, exactly as before.
+    const custom = (Array.isArray(item.customAgents) ? item.customAgents : [])
+      .find((a) => a && (a.handle || a.id) === provider) ?? null;
+    const runProvider = custom ? custom.provider : provider;
     try {
       log(`agent ${provider} (${runProvider}) answering ${item.message.id} in #${item.channel.slug}`);
       await sendAndWait(child, { cmd: 'configure', provider: runProvider, workspace: deps.workspace, permission: deps.toolsMode === 'read-only' ? (process.env.HELMION_BRIDGE_AGENT_TOOLS || 'full') : deps.toolsMode }, 'ready');
       await sendAndWait(child, { cmd: 'reset' }, 'ready');
       const prepared = await expandAgentWorkBody(String(item.message?.body ?? ''));
       const message = prepared.body === String(item.message?.body ?? '') ? item.message : { ...item.message, body: prepared.body };
-      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source, notebook: item.notebook ?? null, slice: item.slice ?? null });
+      const text = agentPrompt({ provider, channelTitle: item.channel.title || item.channel.slug, members: item.members, context: item.context, message, source: item.message.source, customAgents: item.customAgents ?? [], notebook: item.notebook ?? null, slice: item.slice ?? null });
       // The person's connector connections ride the work item when the
       // cloud supplies them ([{seatId, entryId, refreshTokenRef, state}]
       // — vault references only, never values) so the child's arming
