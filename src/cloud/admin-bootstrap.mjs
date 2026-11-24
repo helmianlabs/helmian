@@ -20,7 +20,7 @@ export async function bootstrapHelmianAdminOwner(input, {
   const subject = required(input?.subject, 'subject');
   if (input?.confirmed !== true) throw new Error('Explicit confirmed=true is required');
   const ownsPool = !suppliedPool;
-  const pool = suppliedPool ?? new (await import('pg')).Pool({ connectionString, max: 1 });
+  const pool = suppliedPool ?? new (await import('pg')).Pool({ connectionString, max: 1, connectionTimeoutMillis: 5_000 });
   const client = await pool.connect();
   try {
     await client.query('begin');

@@ -6,7 +6,7 @@ import { createConsoleCommandWorker } from '../src/cloud/console-command-worker.
 
 const url = process.env.HELMION_DATABASE_URL;
 if (!url) { console.error('HELMION_DATABASE_URL is required'); process.exit(2); }
-const pool = new pg.Pool({ connectionString: url, max: 2 });
+const pool = new pg.Pool({ connectionString: url, max: 2, connectionTimeoutMillis: 5_000 });
 const worker = createConsoleCommandWorker({ pool, workerId: process.env.HELMION_WORKER_ID || 'worker:cloud-console', log: (m) => console.log(new Date().toISOString(), m) });
 if (process.argv.includes('--once')) {
   const done = await worker.runOnce();

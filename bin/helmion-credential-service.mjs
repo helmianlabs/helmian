@@ -31,7 +31,7 @@ if (!connectionString || !masterKey || !serviceToken) {
   process.exit(2);
 }
 
-const pool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 3, idleTimeoutMillis: 10_000 });
+const pool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 3, connectionTimeoutMillis: 5_000, idleTimeoutMillis: 10_000 });
 const auditLog = createCredentialServiceAuditLog({ path: String(env.HELMION_CREDENTIAL_AUDIT_PATH ?? '/var/lib/helmian-credential-service/audit.jsonl') });
 const guardGate = env.HELMION_GUARD_URL && env.HELMION_GUARD_DEVICE_TOKEN
   ? createGuardApprovalGate({ guardUrl: env.HELMION_GUARD_URL, deviceToken: env.HELMION_GUARD_DEVICE_TOKEN })
