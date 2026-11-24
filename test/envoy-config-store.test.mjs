@@ -1,4 +1,4 @@
-// Envoy channel config store (hardening step 1, sql/098): the
+// Envoy channel config store (hardening step 1, sql/099): the
 // dual-read / dual-write discipline against an in-memory stub of
 // the two tables. The Postgres end-to-end (a real 50-rich-agent
 // channel) is the twin proof, not this suite.
@@ -15,10 +15,10 @@ const CHAN = '11111111-2222-4333-8444-555555555555';
 const CHAN2 = '22222222-3333-4444-8555-666666666666';
 
 // In-memory stub: messages[] is the append-only log, configs is
-// the sql/098 table keyed tenant|channel. A shared tick clock
+// the sql/099 table keyed tenant|channel. A shared tick clock
 // stamps every write so newest-wins is deterministic. With
 // `table: false` every configs query throws 42P01, the shape a
-// database without sql/098 applied gives the real client.
+// database without sql/099 applied gives the real client.
 function stubClient({ table = true } = {}) {
   const state = { messages: [], configs: new Map(), tick: 1_700_000_000_000, tableQueries: 0 };
   const stamp = () => new Date(state.tick += 1000);
@@ -153,7 +153,7 @@ test('message mode never touches the table (the rollback is exact)', async () =>
   assert.equal(client.state.configs.size, 0);
 });
 
-test('a missing table (sql/098 not applied) degrades to the message road', async () => {
+test('a missing table (sql/099 not applied) degrades to the message road', async () => {
   const client = stubClient({ table: false });
   await writeConfigBody(client, { tenantId: TENANT, channelId: CHAN, body: bodyOf('pre98') }, {});
   assert.equal(client.state.messages.length, 1, 'the message write still lands');

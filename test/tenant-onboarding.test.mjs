@@ -184,7 +184,7 @@ function harnessTables() {
   const msg = (tenant_id, channel_id, author_subject, author_kind, body, id, minsAgo = 5) => ({
     id, tenant_id, channel_id, author_subject, author_kind, body, idempotency_key: `key-${id}`, created_at: past(minsAgo * 60_000), metadata: null,
   });
-  return {
+  const tables = {
     tenant_memberships: [
       { tenant_id: A, subject: 'user_a', role: 'owner', active: true },
       { tenant_id: B, subject: 'user_b', role: 'owner', active: true },
@@ -220,7 +220,19 @@ function harnessTables() {
     ],
     provider_connections: [],
     envoy_work_claims: [],
+    envoy_channel_configs: [],
   };
+  // sql/099's backfill, as the migration itself runs it: the configs
+  // table starts as each channel's newest config message, stamped
+  // with that message's created_at. This fake's database is migrated,
+  // so the table exists and the config store's dual reads see it.
+  for (const r of tables.envoy_messages) {
+    if (r.author_subject !== CONFIG_SUBJECT) continue;
+    const cur = tables.envoy_channel_configs.find((x) => x.tenant_id === r.tenant_id && x.channel_id === r.channel_id);
+    if (!cur) tables.envoy_channel_configs.push({ tenant_id: r.tenant_id, channel_id: r.channel_id, body: r.body, updated_at: r.created_at });
+    else if (r.created_at > cur.updated_at) { cur.body = r.body; cur.updated_at = r.created_at; }
+  }
+  return tables;
 }
 
 function harnessPool(tables) {
@@ -271,6 +283,44 @@ function harnessPool(tables) {
         const rows = tables.provider_connections.filter((r) => r.tenant_id === vals[0]);
         return { rows, rowCount: rows.length };
       }
+      if (sql.includes('insert into helmion.envoy_channel_configs')) {
+        // The config store's dual write: upsert keyed tenant|channel.
+        const [tenant_id, channel_id, body] = vals;
+        const existing = tables.envoy_channel_configs.find((r) => r.tenant_id === tenant_id && r.channel_id === channel_id);
+        if (existing) { existing.body = body; existing.updated_at = new Date().toISOString(); }
+        else tables.envoy_channel_configs.push({ tenant_id, channel_id, body, updated_at: new Date().toISOString() });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.includes('from helmion.envoy_channel_configs') && sql.includes('union all')) {
+        // The config store's bulk scans: newest body per channel
+        // across BOTH stores, the table winning an exact stamp tie
+        // (src 0 sorts before src 1), exactly as the SQL orders it.
+        const allTenants = sql.includes('distinct on (tenant_id, channel_id)');
+        const subject = allTenants ? vals[0] : vals[1];
+        const candidates = [
+          ...tables.envoy_channel_configs.map((r) => ({ ...r, stamp: r.updated_at, src: 0 })),
+          ...tables.envoy_messages.filter((r) => r.author_subject === subject).map((r) => ({ ...r, stamp: r.created_at, src: 1 })),
+        ].filter((r) => allTenants || r.tenant_id === vals[0]);
+        const best = new Map();
+        for (const r of candidates) {
+          const k = allTenants ? `${r.tenant_id}|${r.channel_id}` : r.channel_id;
+          const cur = best.get(k);
+          if (!cur || r.stamp > cur.stamp || (r.stamp === cur.stamp && r.src < cur.src)) best.set(k, r);
+        }
+        const rows = [...best.values()].map((r) => (allTenants
+          ? { tenant_id: r.tenant_id, channel_id: r.channel_id, body: r.body }
+          : { channel_id: r.channel_id, body: r.body }));
+        return { rows, rowCount: rows.length };
+      }
+      if (sql.includes('select body, updated_at from helmion.envoy_channel_configs')) {
+        const row = tables.envoy_channel_configs.find((r) => r.tenant_id === vals[0] && r.channel_id === vals[1]);
+        return row ? { rows: [{ body: row.body, updated_at: row.updated_at }], rowCount: 1 } : { rows: [], rowCount: 0 };
+      }
+      if (sql.includes('select distinct tenant_id, channel_id from helmion.envoy_channel_configs')) {
+        const needle = String(vals[0]).replaceAll('%', '');
+        const rows = tables.envoy_channel_configs.filter((r) => r.body.includes(needle)).map((r) => ({ tenant_id: r.tenant_id, channel_id: r.channel_id }));
+        return { rows, rowCount: rows.length };
+      }
       if (sql.includes('distinct on (channel_id)')) {
         const byChannel = new Map();
         for (const r of tables.envoy_messages.filter((x) => x.tenant_id === vals[0] && x.author_subject === vals[1])) {
@@ -309,7 +359,7 @@ function harnessPool(tables) {
       }
       if (sql.includes('from helmion.envoy_messages') && sql.includes('author_subject=$3')) {
         const rows = tables.envoy_messages.filter((r) => r.tenant_id === vals[0] && r.channel_id === vals[1] && r.author_subject === vals[2]).sort((x, y) => y.created_at.localeCompare(x.created_at) || y.id.localeCompare(x.id));
-        return { rows: rows.slice(0, 1).map((r) => ({ body: r.body })), rowCount: Math.min(rows.length, 1) };
+        return { rows: rows.slice(0, 1).map((r) => ({ body: r.body, created_at: r.created_at })), rowCount: Math.min(rows.length, 1) };
       }
       if (sql.includes('from helmion.envoy_messages')) {
         const rows = tables.envoy_messages

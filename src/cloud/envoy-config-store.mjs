@@ -4,7 +4,7 @@
 // A channel config used to exist ONLY as a message in
 // helmion.envoy_messages, which capped the serialized config at the
 // messages body CHECK (1..4000 chars, sql/009) — about 26 rich custom
-// agents per channel. sql/098 adds helmion.envoy_channel_configs
+// agents per channel. sql/099 adds helmion.envoy_channel_configs
 // (body up to 65,536 chars) as the primary store.
 //
 // Read/write contract:
@@ -15,14 +15,14 @@
 //     copies (table updated_at vs message created_at), so flipping
 //     the mode back and forth can never resurrect a stale config.
 //     Single-channel reads ask the message store first with the
-//     pre-098 query verbatim, then the table; the bulk scans are one
+//     pre-099 query verbatim, then the table; the bulk scans are one
 //     UNION query over both stores (newest per channel), keeping the
 //     worker poll's round-trip count exactly where it was.
 //   - Message mode (HELMION_CONFIG_STORE=message): the rollback. All
 //     reads and writes use the config messages only, exactly as
-//     before sql/098. A body past 4,000 chars cannot be stored in
+//     before sql/099. A body past 4,000 chars cannot be stored in
 //     this mode (the messages CHECK) and writeConfigBody throws.
-//   - A database without sql/098 applied (error 42P01 on the table)
+//   - A database without sql/099 applied (error 42P01 on the table)
 //     degrades to the message store on every path, so the code is
 //     safe to deploy ahead of the migration.
 
@@ -41,7 +41,7 @@ function stampMs(value) {
   return Number.isFinite(ms) ? ms : 0;
 }
 
-// The configs table may legitimately not exist yet (pre-098
+// The configs table may legitimately not exist yet (pre-099
 // database). That one error degrades to the message store; anything
 // else is a real failure and propagates.
 async function tableQuery(client, sql, params) {
