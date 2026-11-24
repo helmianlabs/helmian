@@ -290,6 +290,8 @@ export async function createNeonStore(
     pool = new Pool({
       connectionString,
       ssl: connectionString.includes('sslmode=disable') ? false : undefined,
+      max: 10,
+      connectionTimeoutMillis: 5_000,
     });
   }
 
