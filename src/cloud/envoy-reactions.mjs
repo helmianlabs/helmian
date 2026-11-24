@@ -35,6 +35,7 @@ import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { withTenantTransaction, requireActiveTenantMembership } from '../core/tenant-context.mjs';
 import { CONFIG_SUBJECT, agentSubject, describeAuthor, normalizeCustomHandle, normalizeProvider, parseConfig } from './envoy-agents.mjs';
+import { readConfigBody } from './envoy-config-store.mjs';
 import { envoyChannelName, parseAblyApiKey } from './envoy-ably.mjs';
 import { EMOJI_MAP, emojiAssetSlug } from '../../web/marketing/app/emoji-map.mjs';
 import { LIBRARY_REACTIONS, LIBRARY_REACTION_PACK, LIBRARY_REACTION_PREFIX } from '../../web/marketing/app/face-library.mjs';
@@ -201,14 +202,11 @@ export function createEnvoyReactionsStore(pool, { publishImpl = null } = {}) {
     return r.rows[0];
   };
 
-  // The channel's newest config row, the same rows the mesh reads: the
+  // The channel's newest config, the same store the mesh reads: the
   // roster (agents + customAgents) an agent reaction is checked against.
   const readConfig = async (client, tenantId, channelId) => {
-    const r = await client.query(
-      'select body from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject=$3 order by created_at desc, id desc limit 1',
-      [tenantId, channelId, CONFIG_SUBJECT],
-    );
-    return r.rowCount ? parseConfig(r.rows[0].body) : null;
+    const body = await readConfigBody(client, tenantId, channelId);
+    return body !== null ? parseConfig(body) : null;
   };
 
   // The target must be a real, visible message in this channel: config

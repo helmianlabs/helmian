@@ -56,7 +56,8 @@
 import { Pool } from 'pg';
 import { createSkillLibraryStore, SKILL_ID_PATTERN } from './skill-library.mjs';
 import { LIVE_SEATS } from './connector-catalog.mjs';
-import { CONFIG_SUBJECT, parseConfig } from './envoy-agents.mjs';
+import { parseConfig } from './envoy-agents.mjs';
+import { readTenantConfigBodies } from './envoy-config-store.mjs';
 import { parseFrontmatter } from '../agent/commands.mjs';
 
 export const SKILLS_PATH = '/api/admin/skills';
@@ -127,13 +128,8 @@ async function productionKnownSeats(pool, actor) {
   try {
     await client.query('begin');
     await client.query(`select set_config('helmion.tenant_id', $1, true)`, [actor.tenantId]);
-    const r = await client.query(
-      `select distinct on (channel_id) body from helmion.envoy_messages
-        where tenant_id=$1 and author_subject=$2
-        order by channel_id, created_at desc, id desc`,
-      [actor.tenantId, CONFIG_SUBJECT],
-    );
-    for (const row of r.rows) {
+    const rows = await readTenantConfigBodies(client, actor.tenantId);
+    for (const row of rows) {
       const config = parseConfig(row.body);
       for (const agent of config?.customAgents ?? []) {
         const handle = agent?.handle || agent?.id;

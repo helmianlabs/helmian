@@ -20,10 +20,13 @@
 //   routes above are the legacy shape the deployed bridges and the
 //   Discord MCP reader still use; they take the shared token only.
 //
-// Storage needs no new migration: a channel's config is an append-only
-// author_kind='system' row in helmion.envoy_messages (author CONFIG_SUBJECT,
-// hidden from chat reads); the newest row wins. Every change also writes a
-// visible notice ("Claude joined the channel").
+// Storage: a channel's config lives in helmion.envoy_channel_configs
+// (sql/098) with the append-only author_kind='system' config rows in
+// helmion.envoy_messages (author CONFIG_SUBJECT, hidden from chat
+// reads) as the dual-read fallback — envoy-config-store.mjs is the
+// one road in and out, and HELMION_CONFIG_STORE=message rolls back
+// to the message-only store. Every change also writes a visible
+// notice ("Claude joined the channel").
 //
 // Provider keys never reach this server (rule 019). Agents run on the user's
 // own runner (PC bridge) and post their replies here.
@@ -38,6 +41,7 @@ import {
 } from './envoy-agents.mjs';
 import { claimGateFor, tenantAgentStateOn } from './tenant-agent-state.mjs';
 import { classifySeatAskThread } from './envoy-actions.mjs';
+import { readConfigBody, readTenantConfigBodies, readAllConfigBodies, findConfigChannelsByBodyLike, writeConfigBody } from './envoy-config-store.mjs';
 import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
 import { createGuardStore } from './guard-findings.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
@@ -273,11 +277,8 @@ export function maestroPartPlan(assignment, { members = [], joined = null, answe
 }
 
 async function readConfig(client, tenantId, channelId) {
-  const r = await client.query(
-    `select body from helmion.envoy_messages where tenant_id=$1 and channel_id=$2 and author_subject=$3 order by created_at desc, id desc limit 1`,
-    [tenantId, channelId, CONFIG_SUBJECT],
-  );
-  return r.rowCount ? parseConfig(r.rows[0].body) : null;
+  const body = await readConfigBody(client, tenantId, channelId);
+  return body !== null ? parseConfig(body) : null;
 }
 
 async function insertMessage(client, { tenantId, channelId, subject, kind, body, key, metadata = null }) {
@@ -343,7 +344,7 @@ export async function claimWorkItems(client, { tenantId, claimedBy, at, items })
 }
 
 async function writeConfig(client, tenantId, channelId, config) {
-  await insertMessage(client, { tenantId, channelId, subject: CONFIG_SUBJECT, kind: 'system', body: serializeConfig(config), key: `cfg:${randomUUID()}` });
+  await writeConfigBody(client, { tenantId, channelId, body: serializeConfig(config) });
 }
 
 async function notice(client, tenantId, channelId, text) {
@@ -966,12 +967,9 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         // own runners resolve credentials locally); its claiming is
         // exactly what it was before this gate existed.
         const state = await (agentStateImpl ?? tenantAgentStateOn)(client, actor.tenantId);
-        const cfgRows = await client.query(
-          `select distinct on (channel_id) channel_id, body from helmion.envoy_messages where tenant_id=$1 and author_subject=$2 order by channel_id, created_at desc, id desc`,
-          [actor.tenantId, CONFIG_SUBJECT],
-        );
+        const cfgRows = await readTenantConfigBodies(client, actor.tenantId);
         const seating = [];
-        for (const cfgRow of cfgRows.rows) {
+        for (const cfgRow of cfgRows) {
           const config = parseConfig(cfgRow.body);
           if (!config) continue;
           const customByHandle = new Map((config.customAgents ?? []).map((a) => [a.handle || a.id, a]));
@@ -2034,13 +2032,10 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
     // ---- Bridge services (Discord + Slack) ----
     async bridgeLinks() {
       return raw(async (client) => {
-        const r = await client.query(
-          `select distinct on (tenant_id, channel_id) tenant_id, channel_id, body from helmion.envoy_messages where author_subject=$1 order by tenant_id, channel_id, created_at desc, id desc`,
-          [CONFIG_SUBJECT],
-        );
+        const rows = await readAllConfigBodies(client);
         const links = [];
         const slackLinks = [];
-        for (const row of r.rows) {
+        for (const row of rows) {
           const config = parseConfig(row.body);
           if (config?.discord) links.push({ tenantId: String(row.tenant_id), envoyChannelId: String(row.channel_id), guildId: config.discord.guildId, discordChannelId: config.discord.channelId, agents: config.agents });
           if (config?.slack) slackLinks.push({ tenantId: String(row.tenant_id), envoyChannelId: String(row.channel_id), teamId: config.slack.teamId, slackChannelId: config.slack.channelId, agents: config.agents });
@@ -2058,11 +2053,12 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
         const hash = sha256(code);
         let posted = null; let tenantId = null;
         const result = await raw(async (client) => {
-          const r = await client.query(
-            `select distinct on (tenant_id, channel_id) tenant_id, channel_id, body from helmion.envoy_messages where author_subject=$1 and body like $2 order by tenant_id, channel_id, created_at desc, id desc`,
-            [CONFIG_SUBJECT, `%${hash}%`],
-          );
-          const hit = r.rows.map((row) => ({ row, config: parseConfig(row.body) })).find((x) => x.config?.pendingLink?.codeHash === hash && Date.parse(x.config.pendingLink.expiresAt) > now());
+          const candidates = await findConfigChannelsByBodyLike(client, `%${hash}%`);
+          let hit = null;
+          for (const row of candidates) {
+            const config = parseConfig(await readConfigBody(client, String(row.tenant_id), String(row.channel_id)));
+            if (config?.pendingLink?.codeHash === hash && Date.parse(config.pendingLink.expiresAt) > now()) { hit = { row, config }; break; }
+          }
           if (!hit) throw fail(404, 'ENVOY_LINK_CODE_UNKNOWN');
           // The newest config for that channel must still be the one holding this code.
           tenantId = String(hit.row.tenant_id);
@@ -2087,11 +2083,12 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       const hash = sha256(code);
       let posted = null; let tenantId = null;
       const result = await raw(async (client) => {
-        const r = await client.query(
-          `select distinct on (tenant_id, channel_id) tenant_id, channel_id, body from helmion.envoy_messages where author_subject=$1 and body like $2 order by tenant_id, channel_id, created_at desc, id desc`,
-          [CONFIG_SUBJECT, `%${hash}%`],
-        );
-        const hit = r.rows.map((row) => ({ row, config: parseConfig(row.body) })).find((x) => x.config?.pendingLink?.codeHash === hash && Date.parse(x.config.pendingLink.expiresAt) > now());
+        const candidates = await findConfigChannelsByBodyLike(client, `%${hash}%`);
+        let hit = null;
+        for (const row of candidates) {
+          const config = parseConfig(await readConfigBody(client, String(row.tenant_id), String(row.channel_id)));
+          if (config?.pendingLink?.codeHash === hash && Date.parse(config.pendingLink.expiresAt) > now()) { hit = { row, config }; break; }
+        }
         if (!hit) throw fail(404, 'ENVOY_LINK_CODE_UNKNOWN');
         // The newest config for that channel must still be the one holding this code.
         tenantId = String(hit.row.tenant_id);
