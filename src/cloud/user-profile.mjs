@@ -10,7 +10,7 @@ import { parseLibraryFaceToken } from '../../web/marketing/app/face-library.mjs'
 let _pool = null;
 const pool = {
   query: (...args) => {
-    if (!_pool) _pool = new pg.Pool({ connectionString: process.env.HELMION_DATABASE_URL || process.env.DATABASE_URL, max: 3 });
+    if (!_pool) _pool = new pg.Pool({ connectionString: process.env.HELMION_DATABASE_URL || process.env.DATABASE_URL, max: 3, connectionTimeoutMillis: 5_000 });
     return _pool.query(...args);
   },
 };

@@ -174,7 +174,7 @@ function getPool() {
   if (!sharedPool) {
     const connectionString = String(process.env.HELMION_DATABASE_URL ?? '').trim();
     if (!connectionString) throw Object.assign(new Error('database not configured'), { status: 503 });
-    sharedPool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 3 });
+    sharedPool = new Pool({ connectionString, ssl: connectionString.includes('sslmode=disable') ? false : undefined, max: 3, connectionTimeoutMillis: 5_000 });
   }
   return sharedPool;
 }

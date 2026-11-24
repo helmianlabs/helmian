@@ -18,7 +18,7 @@ function getPool() {
   if (pool) return pool;
   const url = process.env.HELMION_DATABASE_URL;
   if (!url) throw Object.assign(new Error('database not configured'), { status: 503 });
-  pool = new Pool({ connectionString: url, max: 3, idleTimeoutMillis: 10_000 });
+  pool = new Pool({ connectionString: url, max: 3, connectionTimeoutMillis: 5_000, idleTimeoutMillis: 10_000 });
   return pool;
 }
 

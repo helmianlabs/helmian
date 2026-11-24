@@ -63,6 +63,7 @@ function getPool() {
       connectionString,
       ssl: connectionString.includes('sslmode=disable') ? false : undefined,
       max: 3,
+      connectionTimeoutMillis: 5_000,
     });
   }
   return sharedPool;
