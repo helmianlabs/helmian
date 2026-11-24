@@ -217,6 +217,41 @@ const attempts = new Map();
 const inFlight = new Set();
 let lastPollError = '';
 
+// Completed turns, keyed `${provider}|${messageId}` like the in-flight
+// set: a job whose reply POST landed is remembered for the rest of the
+// cloud's work window (envoy-mesh WORK_WINDOW_MS, 30 min — the cloud
+// never offers a message older than that, so an entry can safely age
+// out with it). Why this exists (hardening bite 5): the cloud's
+// answered set is a snapshot taken when a poll's read starts, so a
+// reply that commits while that poll is in flight is not in the
+// snapshot — the poll hands the SAME seat the SAME ask again after its
+// first turn already finished, when the in-flight mark is already
+// gone. Only the reply's idempotency key kept the duplicate off the
+// channel; the duplicate turn itself still ran, and with a real
+// provider a duplicate turn is a paid turn. Measured in bite 2: one
+// seat was re-handed its ask 37 s after answering it, on a poll whose
+// read began 46 ms before its reply committed. The worker is the only
+// party that knows it already ran the turn, so the worker remembers:
+// a completed (provider, message) is never dispatched again. Only a
+// landed reply completes a key — a failed or empty job is governed by
+// the attempts backoff above and stays re-offerable, exactly as
+// before.
+const COMPLETED_TTL_MS = 30 * 60 * 1000;
+const completedJobs = new Map();
+function markCompleted(key) {
+  completedJobs.set(key, Date.now());
+}
+function isCompleted(key) {
+  const at = completedJobs.get(key);
+  if (at === undefined) return false;
+  if (Date.now() - at > COMPLETED_TTL_MS) { completedJobs.delete(key); return false; }
+  return true;
+}
+function pruneCompleted() {
+  const cutoff = Date.now() - COMPLETED_TTL_MS;
+  for (const [key, at] of completedJobs) if (at < cutoff) completedJobs.delete(key);
+}
+
 // Park logging must not spam every 12s poll. One line per park episode.
 const _parkLoggedFor = new Map();
 function logOncePerPark(provider, line) {
@@ -291,6 +326,11 @@ async function runJob(item, provider) {
     body: { channelId: item.channel.id, provider, replyTo: item.message.id, body },
   });
   attempts.delete(item.message.id);
+  // The reply landed: this (provider, message) is complete. A poll
+  // whose snapshot predates the reply can still offer it — poll()
+  // now refuses to dispatch a completed key again (see completedJobs
+  // above).
+  markCompleted(`${provider}|${item.message.id}`);
   log(`job done: provider=${provider} message=${item.message.id} channel=#${item.channel.slug} reply posted (${body.length} chars)`);
 }
 
@@ -348,11 +388,15 @@ async function poll() {
     if (msg !== lastPollError) { log('poll failed:', msg); lastPollError = msg; }
     return;
   }
+  pruneCompleted();
   for (const item of res?.work ?? []) {
     for (const provider of item.agents ?? []) {
       if (!SERVED.has(provider)) { log(`skipped: provider not served (${provider}) message=${item.message.id}`); continue; }
       const key = `${provider}|${item.message.id}`;
       if (inFlight.has(key)) continue;
+      // A turn this worker already completed is never run twice,
+      // however fresh the offering poll's snapshot is (bite 5).
+      if (isCompleted(key)) continue;
       // PARK GATE (park-fix): a quota-dead provider stays parked until its
       // window resets. Skip without failing the job — it is picked up
       // again on a later poll once the park expires.
