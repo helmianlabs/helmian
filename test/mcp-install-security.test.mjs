@@ -59,7 +59,10 @@ import {
   DiscoveryError,
 } from '../src/core/mcp-discovery.mjs';
 import { runInstallPipeline, loadDeclaredManifest } from '../src/core/mcp-install-pipeline.mjs';
-import { submitCandidateToVet, buildCandidateTarball } from '../src/core/mcp-vet.mjs';
+import {
+  submitCandidateToVet, buildCandidateTarball,
+  buildVetGuardAction, vetGuardActionHash, canonicalJson, sha256Hex,
+} from '../src/core/mcp-vet.mjs';
 import { gunzipSync } from 'node:zlib';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1112,6 +1115,180 @@ test('vet binding: the plugins gate registers a vet-installed server, then refus
     assert.equal(after.mcpServers[0].status, MCP_REFUSED);
     assert.match(after.mcpServers[0].reason, /changed since it was approved/);
     assert.deepEqual(after.registrations, []);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VET GUARD DECISION (wiring bite 4b) — the requester obtains an Executive
+// Guard decision recorded by the Auto Approver and presents it on the vet
+// submission. The stub Guard speaks the real decision wire shapes (POST
+// /v1/decisions → 202 + approvalId → GET /v1/approvals/:id) and mints the
+// envelope the way the Guard's signer does, minus a real signature — the
+// client never verifies signatures (the service pins the key and does);
+// what is proved here is the flow: the right action is asked, the envelope
+// is checked and carried, and a denial or a silent Guard stops the
+// submission before the vet service is ever called.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GUARD_BASE = 'http://guard.invalid';
+
+function fakeGuardAndVet({ guardMode = 'approve' } = {}) {
+  const vet = fakeVetService({});
+  const calls = [];
+  let approvalId = null;
+  let askedAction = null;
+  let askedNonce = null;
+  const fetchImpl = async (url, options = {}) => {
+    const text = String(url);
+    calls.push({ url: text, method: options.method ?? 'GET', headers: options.headers ?? {}, body: options.body });
+    if (text === `${GUARD_BASE}/v1/decisions`) {
+      const body = JSON.parse(options.body);
+      askedAction = body.action;
+      askedNonce = body.nonce;
+      assert.equal(options.headers.authorization, 'Bearer guard-test-token');
+      approvalId = 'appr-vet-test-1';
+      return { status: 202, ok: true, json: async () => ({ verdict: 'ask', approvalId }) };
+    }
+    if (text === `${GUARD_BASE}/v1/approvals/${approvalId}`) {
+      if (guardMode === 'never') return { status: 200, ok: true, json: async () => ({ status: 'pending' }) };
+      if (guardMode === 'deny') return { status: 200, ok: true, json: async () => ({ status: 'denied', decidedBy: 'auto-approve' }) };
+      const claims = {
+        aud: 'helmian-executive-guard-decision-v1',
+        decisionId: 'decision-vet-test-1',
+        verdict: 'allow',
+        ruleId: 'destructive-needs-approval',
+        actionHash: vetGuardActionHash(askedAction),
+        deviceId: 'vet-test-requester',
+        nonce: askedNonce,
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 300,
+        approvalId,
+        decidedBy: 'auto-approve',
+      };
+      const envelope = {
+        payload: Buffer.from(canonicalJson(claims), 'utf8').toString('base64url'),
+        signature: 'test-signature-not-verified-client-side',
+        keyId: 'test-key',
+      };
+      return { status: 200, ok: true, json: async () => ({ status: 'approved', decision: envelope, decidedBy: 'auto-approve' }) };
+    }
+    return vet.fetchImpl(url, options);
+  };
+  return {
+    fetchImpl,
+    calls,
+    vetCalls: vet.calls,
+    get askedAction() { return askedAction; },
+    get approvalId() { return approvalId; },
+  };
+}
+
+const BENIGN_FINGERPRINT = async () => {
+  const declared = await loadDeclaredManifest(BENIGN);
+  return (await computeCandidateFingerprint({ root: BENIGN, declared })).fingerprint;
+};
+
+test('vet guard: an Auto Approver decision is obtained for the candidate and presented on the submission', async () => {
+  const fingerprint = await BENIGN_FINGERPRINT();
+  const stub = fakeGuardAndVet({});
+  const stage = await submitCandidateToVet({
+    root: BENIGN, vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl: stub.fetchImpl,
+    guard: { guardUrl: GUARD_BASE, guardToken: 'guard-test-token', pollMs: 10 },
+    fingerprint,
+    candidateName: 'unit-converter-mcp',
+  });
+  assert.equal(stage.verdict, 'clean');
+  // The ask the Guard received binds this candidate's fingerprint.
+  assert.equal(stub.askedAction.kind, 'vet-submission');
+  assert.equal(stub.askedAction.site, 'helmian-vet-sandbox');
+  assert.equal(
+    stub.askedAction.contentHash,
+    sha256Hex(canonicalJson({ fingerprint, candidateKind: 'mcp-server', source: 'upload' })),
+  );
+  // The submission carried the envelope, and the stage records the decision.
+  const post = stub.vetCalls.find((c) => c.url.endsWith('/vet'));
+  assert.ok(post.headers['x-vet-guard-decision'], 'the vet submission carried no Guard decision header');
+  const envelope = JSON.parse(Buffer.from(post.headers['x-vet-guard-decision'], 'base64').toString('utf8'));
+  const claims = JSON.parse(Buffer.from(envelope.payload, 'base64url').toString('utf8'));
+  assert.equal(claims.decidedBy, 'auto-approve');
+  assert.equal(claims.actionHash, vetGuardActionHash(stub.askedAction));
+  assert.equal(stage.guardDecision.approvalId, stub.approvalId);
+  assert.equal(stage.guardDecision.decisionId, 'decision-vet-test-1');
+  assert.equal(stage.guardDecision.decidedBy, 'auto-approve');
+});
+
+test('vet guard: a Guard denial halts before the vet service is ever called', async () => {
+  const fingerprint = await BENIGN_FINGERPRINT();
+  const stub = fakeGuardAndVet({ guardMode: 'deny' });
+  const stage = await submitCandidateToVet({
+    root: BENIGN, vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl: stub.fetchImpl,
+    guard: { guardUrl: GUARD_BASE, guardToken: 'guard-test-token', pollMs: 10 },
+    fingerprint,
+    candidateName: 'unit-converter-mcp',
+  });
+  assert.equal(stage.verdict, 'evidence-missing');
+  assert.equal(stage.guardOutcome, 'denied');
+  assert.match(stage.error, /denied in Guard/);
+  assert.equal(stub.vetCalls.filter((c) => c.url.endsWith('/vet')).length, 0, 'the candidate was submitted after a Guard denial');
+});
+
+test('vet guard: an unanswered Guard ask times out and the vet service is never called', async () => {
+  const fingerprint = await BENIGN_FINGERPRINT();
+  const stub = fakeGuardAndVet({ guardMode: 'never' });
+  const stage = await submitCandidateToVet({
+    root: BENIGN, vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl: stub.fetchImpl,
+    guard: { guardUrl: GUARD_BASE, guardToken: 'guard-test-token', pollMs: 20, waitMs: 300 },
+    fingerprint,
+    candidateName: 'unit-converter-mcp',
+  });
+  assert.equal(stage.verdict, 'evidence-missing');
+  assert.equal(stage.guardOutcome, 'timeout');
+  assert.match(stage.error, /no Guard decision within/);
+  assert.equal(stub.vetCalls.filter((c) => c.url.endsWith('/vet')).length, 0, 'the candidate was submitted with no Guard decision');
+});
+
+test('vet guard: guard configured without a fingerprint fails closed before any network call', async () => {
+  const stub = fakeGuardAndVet({});
+  const stage = await submitCandidateToVet({
+    root: BENIGN, vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl: stub.fetchImpl,
+    guard: { guardUrl: GUARD_BASE, guardToken: 'guard-test-token', pollMs: 10 },
+    candidateName: 'unit-converter-mcp',
+  });
+  assert.equal(stage.verdict, 'evidence-missing');
+  assert.equal(stage.guardOutcome, 'no-fingerprint');
+  assert.equal(stub.calls.length, 0, 'a network call was made for an unbindable Guard ask');
+});
+
+test('vet guard: the pipeline computes the fingerprint and the submission carries the decision', async () => {
+  const scratch = await scratchDir();
+  try {
+    const stub = fakeGuardAndVet({});
+    const ledgerDir = join(scratch, 'ledger');
+    const fingerprint = await BENIGN_FINGERPRINT();
+    const report = await runInstallPipeline({
+      root: BENIGN,
+      ledgerDir,
+      installRoot: join(scratch, 'servers'),
+      connectionString: null,
+      approve: async () => ({
+        stage: 'approval', approved: true, challenge: 'test-phrase',
+        respondedAt: new Date().toISOString(), reason: 'test harness approved',
+      }),
+      vet: {
+        vetUrl: 'http://127.0.0.1:8197', vetToken: 'test-token', fetchImpl: stub.fetchImpl,
+        guard: { guardUrl: GUARD_BASE, guardToken: 'guard-test-token', pollMs: 10 },
+      },
+    });
+    assert.equal(report.stages.vet.verdict, 'clean');
+    assert.equal(
+      stub.askedAction.contentHash,
+      sha256Hex(canonicalJson({ fingerprint, candidateKind: 'mcp-server', source: 'upload' })),
+      'the pipeline did not bind the decision to the fingerprint it computes',
+    );
+    const post = stub.vetCalls.find((c) => c.url.endsWith('/vet'));
+    assert.ok(post.headers['x-vet-guard-decision'], 'the pipeline vet submission carried no Guard decision header');
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

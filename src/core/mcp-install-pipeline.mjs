@@ -290,12 +290,25 @@ export async function runInstallPipeline({
   // the pipeline continue to the local observer run, which stays as the
   // second, independent layer.
   if (vet) {
+    // Guard-gated submissions (wiring bite 4b) bind the Guard decision to
+    // the candidate fingerprint, so it is computed before the submission
+    // when a Guard is configured. (Stage 5 computes it again for the
+    // baseline; the two computations are the same function over the same
+    // tree, and bite 3's binding compares the service's own fingerprint
+    // against the baseline's.)
+    let guardFingerprint = null;
+    if (vet.guard) {
+      guardFingerprint = (await computeCandidateFingerprint({ root: candidateRoot, declared })).fingerprint;
+    }
     const vetStage = await submitCandidateToVet({
       root: candidateRoot,
       vetUrl: vet.vetUrl,
       vetToken: vet.vetToken,
       fetchImpl: vet.fetchImpl,
       deadlineMs: vet.deadlineMs,
+      guard: vet.guard ?? null,
+      fingerprint: guardFingerprint,
+      candidateName: name,
     });
     report.stages.vet = vetStage;
     if (vetStage.verdict === 'blocked') {
