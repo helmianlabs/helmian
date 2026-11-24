@@ -36,6 +36,8 @@
 import { Pool } from 'pg';
 import { PROVIDER_KEY_ENV } from '../runner/vault.mjs';
 import { connectionProvider } from './tenant-agent-state.mjs';
+import { normalizeCustomHandle, normalizeEngine, normalizeProvider, parseConfig } from './envoy-agents.mjs';
+import { readTenantConfigBodies } from './envoy-config-store.mjs';
 import { createProfileSyncJobStore, PROFILE_SYNC_NO_DESKTOP_CODE, PROFILE_SYNC_NO_DESKTOP_MESSAGE } from './profile-sync.mjs';
 import { PROFILE_SYNC_STAMP_PROVIDERS } from '../core/agent-os.mjs';
 
@@ -199,6 +201,11 @@ function getPool() {
 // pick A) while the seat herself reports, syncs, and stamps answers
 // under her own name. Before this split the store rejected 'qwen'
 // outright, so her answers could never stamp her presence row.
+// Custom agents stand in the same relation to their engine as qwen
+// does to hers, one level further out: a custom has no row of its
+// own at all, so the store resolves a reported custom handle through
+// the reporting tenant's own channel configs and records the fact
+// under the custom's engine (see resolveProviderName in the store).
 const PRESENCE_ONLY_PROVIDERS = Object.freeze(['qwen']);
 const PROVIDERS = new Set([...Object.keys(PROVIDER_KEY_ENV), ...PRESENCE_ONLY_PROVIDERS]);
 
@@ -223,6 +230,45 @@ export function createRunnerPresenceStore(pool) {
       throw error;
     } finally {
       client.release();
+    }
+  };
+
+  // Resolve a reported name to a presence-vocabulary provider. A name
+  // already in the vocabulary resolves to itself. A name outside it
+  // may still be one of the tenant's own custom agents: a runner
+  // serving named agents reports the seats it actually holds, and a
+  // custom has no presence row of its own — its presence is its
+  // engine's, the same doctrine the answer stamp already follows
+  // (envoy-mesh's answeredEngineFor stamps the engine's row when a
+  // custom answers). Before this resolution a custom's heartbeat was
+  // refused as an unknown provider, so a runner serving only customs
+  // could never raise the engine presence the claim gate asks for,
+  // and an all-custom channel got no dispatch (hardening bite 5).
+  // The lookup reads only the reporting tenant's own channel configs,
+  // inside the tenant transaction, so a handle can never resolve
+  // through another tenant's roster; a handle that is not the
+  // tenant's own custom, or whose engine has no presence row, stays
+  // an unknown provider exactly as before. Fail-soft: a config read
+  // that fails resolves nothing rather than failing the report.
+  const resolveProviderName = async (tenantId, raw) => {
+    const p = String(raw || '').toLowerCase();
+    if (PROVIDERS.has(p)) return p;
+    const handle = normalizeCustomHandle(p);
+    if (!handle) return null;
+    try {
+      const engine = await withTenant(tenantId, async (client) => {
+        const bodies = await readTenantConfigBodies(client, tenantId);
+        for (const { body } of bodies) {
+          const cfg = parseConfig(body);
+          const entry = (cfg?.customAgents ?? []).find((a) => (a.handle || a.id) === handle);
+          if (entry) return entry.provider;
+        }
+        return null;
+      });
+      const resolved = engine ? (normalizeProvider(engine) ?? normalizeEngine(engine)) : null;
+      return resolved && PROVIDERS.has(resolved) ? resolved : null;
+    } catch {
+      return null;
     }
   };
 
@@ -285,8 +331,8 @@ export function createRunnerPresenceStore(pool) {
 
     // Upsert presence for one provider. Called by the bridge (device token).
     async report(tenantId, provider, connected) {
-      const p = String(provider || '').toLowerCase();
-      if (!PROVIDERS.has(p)) throw Object.assign(new Error('unknown provider'), { status: 400 });
+      const p = await resolveProviderName(tenantId, provider);
+      if (!p) throw Object.assign(new Error('unknown provider'), { status: 400 });
       try {
         await withTenant(tenantId, async (client) => {
           await upsert(client, `insert into helmion.runner_provider_presence(tenant_id, provider_name, connected, updated_at)
@@ -307,8 +353,8 @@ export function createRunnerPresenceStore(pool) {
     // its updated_at moves. Surfaces read that row as "Synced", never as
     // "Connected".
     async markSynced(tenantId, provider) {
-      const p = String(provider || '').toLowerCase();
-      if (!PROVIDERS.has(p)) throw Object.assign(new Error('unknown provider'), { status: 400 });
+      const p = await resolveProviderName(tenantId, provider);
+      if (!p) throw Object.assign(new Error('unknown provider'), { status: 400 });
       try {
         await withTenant(tenantId, async (client) => {
           await upsert(client, `insert into helmion.runner_provider_presence(tenant_id, provider_name, connected, updated_at)
@@ -331,8 +377,8 @@ export function createRunnerPresenceStore(pool) {
     // signals. The boolean is untouched: answering does not by itself
     // rewrite the device's connection claim either.
     async markAnswered(tenantId, provider) {
-      const p = String(provider || '').toLowerCase();
-      if (!PROVIDERS.has(p)) throw Object.assign(new Error('unknown provider'), { status: 400 });
+      const p = await resolveProviderName(tenantId, provider);
+      if (!p) throw Object.assign(new Error('unknown provider'), { status: 400 });
       try {
         if (!(await hasAnsweredColumn())) return { ok: true, provider: p, answered: false, unavailable: true };
         return await withTenant(tenantId, async (client) => {
