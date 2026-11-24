@@ -59,6 +59,15 @@ const POLL_MS = 12_000;
 const PRESENCE_MS = 60_000;
 const JOB_TIMEOUT_MS = 660_000; // run-gemini.sh caps the CLI at 600s
 const MAX_ATTEMPTS = 3;
+// Hardening step 2: poll() dispatches jobs onto a bounded pool
+// instead of awaiting each one, so a single slow job (up to
+// JOB_TIMEOUT_MS) no longer stalls the rest of the batch — or the
+// next poll's fresh work. Claims are taken at dispatch time, so a
+// queued job is already claimed and in-flight, exactly as a running
+// one was; re-polls stay safe. Rollback: HELMION_WORKER_BATCH_AWAIT=1
+// restores the pre-pool behaviour (poll awaits every job in turn).
+const JOB_CONCURRENCY = Math.max(1, Number.parseInt(process.env.HELMION_WORKER_JOB_CONCURRENCY ?? '', 10) || 4);
+const BATCH_AWAIT = process.env.HELMION_WORKER_BATCH_AWAIT === '1';
 
 function log(...args) {
   const line = `${new Date().toISOString()} [agent-worker] ${args.map((a) => String(a)).join(' ')}`;
@@ -285,6 +294,50 @@ async function runJob(item, provider) {
   log(`job done: provider=${provider} message=${item.message.id} channel=#${item.channel.slug} reply posted (${body.length} chars)`);
 }
 
+// One guarded job run: the failure discipline (quota park, attempt
+// backoff) wrapped around runJob, with the claim and the in-flight
+// mark released only when the job actually finishes — in pool mode
+// that can be long after the poll that dispatched it has returned.
+async function runGuardedJob(item, provider, key) {
+  try {
+    await runJob(item, provider);
+  } catch (err) {
+    const errText = String(err?.message ?? err);
+    if (isQuotaError(errText)) {
+      // QUOTA (park-fix): park the provider, do NOT count a retry, do
+      // NOT mark the job dead. Retrying a dead quota is what cloned
+      // three Gemini runs on 2026-10-24 — the job stays pending and
+      // the park gate in poll() holds it until the window resets.
+      const until = parkProvider(provider, errText);
+      log(`quota-class failure for ${provider}; parked until ${until.toISOString()}; job ${item.message.id} held, not retried`);
+    } else {
+      const att = noteFailure(item.message.id);
+      log(`job failed: provider=${provider} message=${item.message.id} attempt=${att.count}${att.dead ? ' giving up on this message' : ''}:`, err?.message ?? err);
+    }
+  } finally {
+    inFlight.delete(key);
+    releaseClaim(item.message.id);
+  }
+}
+
+// The bounded pool: at most JOB_CONCURRENCY guarded jobs run at
+// once; the rest wait in dispatch order.
+let poolActive = 0;
+const poolQueue = [];
+function poolPump() {
+  while (poolActive < JOB_CONCURRENCY && poolQueue.length > 0) {
+    const task = poolQueue.shift();
+    poolActive += 1;
+    void (async () => {
+      try { await task(); } finally { poolActive -= 1; poolPump(); }
+    })();
+  }
+}
+function poolDispatch(task) {
+  poolQueue.push(task);
+  poolPump();
+}
+
 async function poll() {
   let res;
   try {
@@ -315,30 +368,16 @@ async function poll() {
         continue;
       }
       inFlight.add(key);
-      try {
-        await runJob(item, provider);
-      } catch (err) {
-        const errText = String(err?.message ?? err);
-        if (isQuotaError(errText)) {
-          // QUOTA (park-fix): park the provider, do NOT count a retry, do
-          // NOT mark the job dead. Retrying a dead quota is what cloned
-          // three Gemini runs on 2026-10-24 — the job stays pending and
-          // the park gate above holds it until the window resets.
-          const until = parkProvider(provider, errText);
-          log(`quota-class failure for ${provider}; parked until ${until.toISOString()}; job ${item.message.id} held, not retried`);
-        } else {
-          const att = noteFailure(item.message.id);
-          log(`job failed: provider=${provider} message=${item.message.id} attempt=${att.count}${att.dead ? ' giving up on this message' : ''}:`, err?.message ?? err);
-        }
-      } finally {
-        inFlight.delete(key);
-        releaseClaim(item.message.id);
+      if (BATCH_AWAIT) {
+        await runGuardedJob(item, provider, key);
+      } else {
+        poolDispatch(() => runGuardedJob(item, provider, key));
       }
     }
   }
 }
 
-log(`starting: providers=${PROVIDERS.join(',')} poll=${POLL_MS}ms presence=${PRESENCE_MS}ms cloud=${CLOUD}`);
+log(`starting: providers=${PROVIDERS.join(',')} poll=${POLL_MS}ms presence=${PRESENCE_MS}ms cloud=${CLOUD} jobConcurrency=${BATCH_AWAIT ? 'batch-await (rollback)' : JOB_CONCURRENCY}`);
 await heartbeat();
 await poll();
 setInterval(() => { void heartbeat(); }, PRESENCE_MS);
