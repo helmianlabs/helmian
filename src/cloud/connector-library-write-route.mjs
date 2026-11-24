@@ -193,6 +193,7 @@ function getPool() {
   sharedPool = new Pool({
     connectionString,
     max: 3,
+    connectionTimeoutMillis: 5_000,
     ssl: /sslmode=disable/.test(connectionString) ? false : { rejectUnauthorized: false },
   });
   return sharedPool;

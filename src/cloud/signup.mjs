@@ -28,7 +28,7 @@ function getPool() {
     // Vercel sets HELMION_DATABASE_URL (same as live-admin); DATABASE_URL was never set there.
     const connectionString = process.env.HELMION_DATABASE_URL || process.env.DATABASE_URL;
     if (!connectionString) throw new Error('HELMION_DATABASE_URL not set');
-    _pool = new Pool({ connectionString, max: 3 });
+    _pool = new Pool({ connectionString, max: 3, connectionTimeoutMillis: 5_000 });
   }
   return _pool;
 }
