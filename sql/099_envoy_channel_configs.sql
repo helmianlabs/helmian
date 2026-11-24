@@ -1,4 +1,4 @@
--- 098: dedicated channel-config table (Helmian hardening step 1,
+-- 099: dedicated channel-config table (Helmian hardening step 1,
 -- 2026-11-23).
 --
 -- A channel's config used to live only as an append-only
@@ -21,8 +21,11 @@
 -- reads and writes return to envoy_messages only, no data moves.
 --
 -- Numbering: this base's sql/ ends at 089 and production already
--- owns 090–097, so 098 is the next free number; RE-CHECK at merge
--- time against production main before applying anywhere.
+-- owns 090–097, so 098 was the next free number on the hardening
+-- line; the merge-time re-check this header asked for found 098
+-- taken on production main by the connector catalog migration, so
+-- this migration takes 099 — the runner's ledger keys on the
+-- version number, one file per number.
 -- Independently idempotent (create if not exists, backfill on
 -- conflict do nothing), like its neighbours. NOT applied by the
 -- build; it is applied on the box road, where the migration

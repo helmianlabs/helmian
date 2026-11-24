@@ -21,7 +21,7 @@
 //   Discord MCP reader still use; they take the shared token only.
 //
 // Storage: a channel's config lives in helmion.envoy_channel_configs
-// (sql/098) with the append-only author_kind='system' config rows in
+// (sql/099) with the append-only author_kind='system' config rows in
 // helmion.envoy_messages (author CONFIG_SUBJECT, hidden from chat
 // reads) as the dual-read fallback — envoy-config-store.mjs is the
 // one road in and out, and HELMION_CONFIG_STORE=message rolls back

@@ -17,6 +17,10 @@ const env = {
 function fakePool() {
   const channels = [{ id: 'channel-1', slug: 'ops', title: 'Operations', kind: 'team', created_by_subject: 'user-1', created_at: 'now' }];
   const messages = [];
+  // helmion.envoy_channel_configs (sql/099): this fixture's database
+  // is migrated, so the table exists; it starts empty because no
+  // config message exists for sql/099's backfill to copy.
+  const configs = [];
   const memberships = { 'user-1': { tenant_id: 'org-a', role: 'member' }, 'user-2': { tenant_id: 'org-b', role: 'member' } };
   const client = {
     async query(sql, values = []) {
@@ -32,6 +36,32 @@ function fakePool() {
       }
       if (q.startsWith('select id, slug, title, kind, created_by_subject')) return { rowCount: channels.length, rows: channels };
       if (q.startsWith('select distinct on (channel_id) channel_id, body from helmion.envoy_messages')) return { rowCount: 0, rows: [] };
+      if (q.includes('from helmion.envoy_channel_configs') && q.includes('union all')) {
+        // The config store's dual-mode tenant scan: newest body per
+        // channel across the configs table and the config messages,
+        // the table winning an exact stamp tie, as the SQL orders it.
+        const candidates = [
+          ...configs.filter((row) => row.tenant_id === values[0]).map((row) => ({ channel_id: row.channel_id, body: row.body, stamp: row.updated_at, src: 0 })),
+          ...messages.filter((row) => row.tenant_id === values[0] && row.author_subject === values[1]).map((row) => ({ channel_id: row.channel_id, body: row.body, stamp: row.created_at, src: 1 })),
+        ];
+        const best = new Map();
+        for (const row of candidates) {
+          const cur = best.get(row.channel_id);
+          if (!cur || row.stamp > cur.stamp || (row.stamp === cur.stamp && row.src < cur.src)) best.set(row.channel_id, row);
+        }
+        const rows = [...best.values()].map((row) => ({ channel_id: row.channel_id, body: row.body }));
+        return { rowCount: rows.length, rows };
+      }
+      if (q.startsWith('insert into helmion.envoy_channel_configs')) {
+        const existing = configs.find((row) => row.tenant_id === values[0] && row.channel_id === values[1]);
+        if (existing) { existing.body = values[2]; existing.updated_at = 'now'; }
+        else configs.push({ tenant_id: values[0], channel_id: values[1], body: values[2], updated_at: 'now' });
+        return { rowCount: 1, rows: [] };
+      }
+      if (q.startsWith('select body, updated_at from helmion.envoy_channel_configs')) {
+        const row = configs.find((r) => r.tenant_id === values[0] && r.channel_id === values[1]);
+        return row ? { rowCount: 1, rows: [{ body: row.body, updated_at: row.updated_at }] } : { rowCount: 0, rows: [] };
+      }
       if (q.startsWith('select id from helmion.envoy_channels')) return channels.some((row) => row.id === values[1]) ? { rowCount: 1, rows: [{ id: values[1] }] } : { rowCount: 0, rows: [] };
       if (q.startsWith('insert into helmion.envoy_channels')) {
         const existing = channels.find((row) => row.slug === values[1]);

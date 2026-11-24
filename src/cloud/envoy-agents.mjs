@@ -324,7 +324,7 @@ export function parseConfig(body) {
   } catch { return null; }
 }
 
-// The stored-config size bound (hardening step 1, sql/098): channel
+// The stored-config size bound (hardening step 1, sql/099): channel
 // config no longer lives only in an envoy_messages body, whose
 // sql/009 CHECK caps it at 4,000 chars — the cap that made
 // MAX_CHANNEL_AGENTS unreachable in one channel. The dedicated
