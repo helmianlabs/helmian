@@ -391,11 +391,13 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   to end in a live channel on 2026-11-14 (Mistral's screen); the
   remaining browser seats join as their sign-ins are approved.
 - **Auth**: Clerk sign-in with GitHub social login.
-- **Every change is tested, and the tests are green** (2026-11-22):
+- **Every change is tested, and the tests are green** (2026-11-24):
   each push to this repo runs three strict jobs on GitHub — the root
-  suite (4,002 tests, its database suites running against a real
+  suite (4,066 tests — 3,996 passing, 0 failing, 70 skipped, its
+  database suites running against a real
   Postgres service in CI instead of skipping), the Executive Guard
-  suite (105 tests), and the Hands suite (105 tests). No job may fail
+  suite (105 of 105 passing), and the Hands suite (105 of 105
+  passing). GitHub CI run #38 on this commit is green. No job may fail
   quietly: the Guard and Hands jobs ran as informational only until
   their suites passed clean, and were flipped to strict on
   2026-11-22, the same day the full run went green. The audit trail
