@@ -8,10 +8,10 @@ const res = () => ({ headers: {}, statusCode: 0, body: '', setHeader(k, v) { thi
 test('download cards are free, no $10 price', () => {
   const page = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   assert.doesNotMatch(page, /\$10/u);
-  // No installer is released yet: never show a dead .exe button.
+  // The installer is released (Helmian Desktop 1.0.6): the button points at the GitHub Releases page.
   assert.doesNotMatch(page, /Download for Windows/u);
-  assert.match(page, /Windows app coming soon · Use the web app/u);
-  assert.match(page, /href="\/app" data-download="helmian"/u);
+  assert.match(page, /Download Helmian Desktop 1.0.6 for Windows/u);
+  assert.match(page, /href="https:\/\/github\.com\/helmianlabs\/helmian\/releases" data-download="helmian"/u);
 });
 
 test('checkout route redirects to free sign-up instead of payment', async () => {
