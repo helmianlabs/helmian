@@ -166,7 +166,7 @@ break-even points instead of a spend figure.
 
 ## 3. Thinking Buddy — what it actually is
 
-**Confirmed: `C:\Users\troyh\n8n_Pod_Uploader_jarvis\jarvis` IS Thinking Buddy.**
+**Confirmed: `C:\Users\<you>\n8n_Pod_Uploader_jarvis\jarvis` IS Thinking Buddy.**
 Not the memory vault.
 
 - `index.html:776-777` — `STORAGE_KEY = 'thinkbuddy_user_v1'`, `HISTORY_KEY = 'thinkbuddy_history_v1'`

@@ -31,7 +31,7 @@ must not reimplement proof validation or consensus in route handlers.
 The active local repository is:
 
 ```text
-C:\Users\troyh\dairyforge-monorepo
+C:\Users\<you>\dairyforge-monorepo
 ```
 
 It currently contains unrelated active EDI and schema changes. Integrate

@@ -331,10 +331,10 @@ test('existingDriveRoots probes A: through Z: and keeps only the drives that ans
 });
 
 test('expandRootsForScope: full-pc expands to existing drives only; every other pick changes nothing', () => {
-  const configured = ['C:\\Users\\troyh'];
+  const configured = ['C:\\Users\\someone'];
   const drives = ['C:\\', 'D:\\', 'F:\\'];
-  assert.deepEqual(expandRootsForScope({ roots: configured, scopePick: 'full-pc', driveRoots: drives }), ['C:\\Users\\troyh', 'C:\\', 'D:\\', 'F:\\']);
-  assert.deepEqual(expandRootsForScope({ roots: configured, scopePick: 'full', driveRoots: drives }), ['C:\\Users\\troyh', 'C:\\', 'D:\\', 'F:\\']);
+  assert.deepEqual(expandRootsForScope({ roots: configured, scopePick: 'full-pc', driveRoots: drives }), ['C:\\Users\\someone', 'C:\\', 'D:\\', 'F:\\']);
+  assert.deepEqual(expandRootsForScope({ roots: configured, scopePick: 'full', driveRoots: drives }), ['C:\\Users\\someone', 'C:\\', 'D:\\', 'F:\\']);
   assert.deepEqual(expandRootsForScope({ roots: configured, scopePick: 'folders', driveRoots: drives }), configured);
   assert.deepEqual(expandRootsForScope({ roots: configured, scopePick: 'none', driveRoots: drives }), configured);
   assert.deepEqual(expandRootsForScope({ roots: configured, driveRoots: drives }), configured);

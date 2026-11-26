@@ -1,6 +1,6 @@
 # iPhone-style phone mirror: black letterbox, dark title bar, rounded corners.
 # Move: drag the dark title bar. Resize: drag any edge/corner (keeps phone aspect by default).
-$scrcpyDir = "C:\Users\troyh\AppData\Local\Microsoft\WinGet\Packages\Genymobile.scrcpy_Microsoft.Winget.Source_8wekyb3d8bbwe\scrcpy-win64-v4.1"
+$scrcpyDir = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Genymobile.scrcpy_Microsoft.Winget.Source_8wekyb3d8bbwe\scrcpy-win64-v4.1"
 $adb = Join-Path $scrcpyDir "adb.exe"
 $scrcpy = Join-Path $scrcpyDir "scrcpy.exe"
 Get-Process -Name "scrcpy" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue

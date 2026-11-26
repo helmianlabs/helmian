@@ -2,7 +2,7 @@
 
 Status (2026-10-22): **implemented and deployed** after Troy's "Go yes" (bridge service + remote PC control).
 Code: `hands-mcp/` (server) and `src/hands/pc-spoke.mjs` + `bin/hands-spoke.mjs` (PC). Live at
-`https://hands.5-78-222-178.sslip.io/mcp`. Executive Guard is not live yet, so every mutating tool is denied; read-only
+`https://<hands-host>/mcp`. Executive Guard is not live yet, so every mutating tool is denied; read-only
 tools work once the PC is paired.
 
 Implementation differences from the draft below:
@@ -19,7 +19,7 @@ actions on Troy's PC or on the Hetzner runner: read a file, run an allow-listed 
 open a page in the PC browser. Every call is decided by Executive Guard before anything runs.
 
 ## 2. Placement (mirrors the shared-memory server, spec 2.2/2.6)
-- Host: Hetzner box 5.78.222.178, next to `claude-memory-mcp`. New container `helmian-hands-mcp`, behind the same Caddy
+- Host: Hetzner box <server-host>, next to `claude-memory-mcp`. New container `helmian-hands-mcp`, behind the same Caddy
   (new site block, e.g. `hands.<sslip host>`), listening only on the Docker network. No new public ports beyond 443.
 - Auth: OAuth 2.1 + PKCE + dynamic client registration, consent page on Troy's own server with a passphrase, exactly
   like the memory server. Scopes: `hands.read` (read-only tools) and `hands.act` (state-changing tools). A `hands.act`

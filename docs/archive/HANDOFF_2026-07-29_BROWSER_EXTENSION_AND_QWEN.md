@@ -36,7 +36,7 @@ EVERY CLAIM BELOW IS [UNVERIFIED] FOR YOU UNTIL YOU RE-CHECK IT THIS SESSION.
 1. `E:\Helmion\docs\BROWSER_EXTENSION_DECISION.md` — the build target is a
    **browser extension**. Decided by Troy. The API route is the FALLBACK. Do not
    let a write-up genericize this again; that is exactly how it was lost once.
-2. `~/.claude/projects/C--Users-troyh/memory/reference-2026-07-29-qwen-settings-that-make-it-usable.md`
+2. `~/.claude/projects/C--Users-<you>/memory/reference-2026-07-29-qwen-settings-that-make-it-usable.md`
    — four settings or the local model returns an empty string.
 3. `E:\Helmion\SESSION_BOARD.md` — claim your files before editing. Concurrent
    sessions collide here.
@@ -210,7 +210,7 @@ coordination writes only.
 ### The SOC 2 number
 
 The unstamped copy was not in this repo — it was in Troy's memory index at
-`~/.claude/projects/C--Users-troyh/memory/project-2026-07-29-helmion-gtm-verdict.md:96`,
+`~/.claude/projects/C--Users-<you>/memory/project-2026-07-29-helmion-gtm-verdict.md:96`,
 which every future session inherits as fact. It is now stamped `[UNVERIFIED]`
 there with a note saying nobody has priced it. Actual SOC 2 pricing was **not**
 researched here.

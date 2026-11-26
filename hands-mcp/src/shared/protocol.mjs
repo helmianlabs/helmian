@@ -405,8 +405,8 @@ export const HANDS_GRANT_SCOPES = Object.freeze({
  * (fail safe: no bucket, no grant, a human decides).
  *
  * The shapes are the worker's PC-seat traffic (helmian-agentbox
- * pc-seat-transport.mjs), all under the PC seat root (default
- * C:\Users\troyh\pc-seat):
+ * pc-seat-transport.mjs), all under the PC seat root (ACTION_GRANT_PC_ROOT,
+ * default %USERPROFILE%\pc-seat):
  *   write_file     <root>\jobs\<uuid>.prompt.txt                  jobs-prompt
  *   write_file     <root>\builds\<provider>\<file>                salvage-file
  *   run_powershell run-command launching seat-call.ps1            seat-call
@@ -650,7 +650,27 @@ export function redactSecrets(text) {
 // below; revocation is removing the grant from the spoke's local grants
 // file, the same road as root grants.
 
-export const ACTION_GRANT_PC_ROOT = 'C:\\Users\\troyh\\pc-seat';
+// Machine-specific paths come from the environment, so no user name is
+// baked into the source. On the PC the defaults resolve from the Windows
+// profile:
+//   ACTION_GRANT_PC_ROOT             = HANDS_ACTION_GRANT_PC_ROOT
+//                                      or %USERPROFILE%\pc-seat
+//   ACTION_GRANT_SPOKE_PROTOCOL_PATH = HANDS_PROTOCOL_PATH
+//                                      or %LOCALAPPDATA%\Programs\Helmian\hands-mcp\src\shared\protocol.mjs
+//                                      (%USERPROFILE%\AppData\Local\... when LOCALAPPDATA is unset)
+// For a profile at C:\Users\<name> these equal the values that used to be
+// hardcoded, byte for byte. Where none of the variables is set (e.g. a
+// Linux host) the value is '' and action-grant coverage fails closed: a
+// human decides.
+const HANDS_ENV = (typeof process !== 'undefined' && process && process.env) ? process.env : {};
+const envPath = (name) => (typeof HANDS_ENV[name] === 'string' ? HANDS_ENV[name].trim() : '');
+const winJoin = (base, ...parts) => [String(base).replace(/[\\/]+$/, ''), ...parts].join('\\');
+const HANDS_LOCAL_APPDATA = envPath('LOCALAPPDATA') || (envPath('USERPROFILE') ? winJoin(envPath('USERPROFILE'), 'AppData', 'Local') : '');
+
+export const ACTION_GRANT_PC_ROOT = envPath('HANDS_ACTION_GRANT_PC_ROOT')
+  || (envPath('USERPROFILE') ? winJoin(envPath('USERPROFILE'), 'pc-seat') : '');
+export const ACTION_GRANT_SPOKE_PROTOCOL_PATH = envPath('HANDS_PROTOCOL_PATH')
+  || (HANDS_LOCAL_APPDATA ? winJoin(HANDS_LOCAL_APPDATA, 'Programs', 'Helmian', 'hands-mcp', 'src', 'shared', 'protocol.mjs') : '');
 export const ACTION_GRANT_PROVIDERS = Object.freeze(['grok', 'claude', 'mistral', 'chatgpt']);
 
 const ACTION_GRANT_SCOPES = Object.freeze({
@@ -750,7 +770,7 @@ const SEAT_CALL_RE = new RegExp(
 const OLLAMA_CALL_RE = new RegExp(
   `^start-process powershell -argumentlist @\\('-noprofile','-executionpolicy','bypass','-file','${ACTION_ROOT_RE}\\\\ollama-call\\.ps1','-model','qwen3\\.5:4b','-promptfile','${ACTION_ROOT_RE}\\\\jobs\\\\(${ACTION_UUID_RE})\\.prompt\\.txt','-outfile','${ACTION_ROOT_RE}\\\\jobs\\\\(${ACTION_UUID_RE})\\.out\\.txt'\\) -windowstyle hidden$`,
 );
-const SPOKE_PROTOCOL_RE = new RegExp(`^${escRe(normWin('C:\\Users\\troyh\\AppData\\Local\\Programs\\Helmian\\hands-mcp\\src\\shared\\protocol.mjs'))}$`);
+const SPOKE_PROTOCOL_RE = new RegExp(`^${escRe(normWin(ACTION_GRANT_SPOKE_PROTOCOL_PATH))}$`);
 const SALVAGE_MKDIR_RE = new RegExp(`^new-item -itemtype directory -force -path '${ACTION_ROOT_RE}\\\\builds\\\\${ACTION_PROVIDER_RE}' \\| out-null$`);
 const SALVAGE_FILE_RE = new RegExp(`^${ACTION_ROOT_RE}\\\\builds\\\\${ACTION_PROVIDER_RE}\\\\([^\\\\]+)$`);
 // The transport's own salvage filename rule (writePcSeatFiles): a plain
@@ -774,6 +794,7 @@ export function actionGrantCovers(tool, args, claims) {
     const a = args && typeof args === 'object' ? args : {};
     return claims.actions.some((entry) => {
       if (!isValidActionEntry(entry) || entry.tool !== tool) return false;
+      if (!ACTION_GRANT_PC_ROOT && entry.scope !== 'spoke-protocol') return false; // PC seat root unknown on this host: fail closed
       switch (`${entry.tool}:${entry.scope}`) {
         case 'write_file:jobs-prompt':
           return typeof a.path === 'string' && JOBS_PROMPT_RE.test(normWin(a.path));
@@ -797,7 +818,8 @@ export function actionGrantCovers(tool, args, claims) {
           return command != null && SALVAGE_MKDIR_RE.test(normWin(command));
         }
         case 'edit_file:spoke-protocol':
-          return typeof a.path === 'string' && SPOKE_PROTOCOL_RE.test(normWin(a.path));
+          // Path unknown on this host (no env): fail closed.
+          return !!ACTION_GRANT_SPOKE_PROTOCOL_PATH && typeof a.path === 'string' && SPOKE_PROTOCOL_RE.test(normWin(a.path));
         default:
           return false;
       }

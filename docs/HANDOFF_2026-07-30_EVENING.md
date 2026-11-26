@@ -59,11 +59,11 @@ assumed.
 
 ## TOMORROW — the Banyan demo, 2026-07-31, 1–3pm Mountain
 
-Full runbook: `C:\Users\troyh\aimforge-main\BANYAN_DEMO_2026-07-31.md`
+Full runbook: `C:\Users\<you>\aimforge-main\BANYAN_DEMO_2026-07-31.md`
 
 ```
 fly apps restart aimforge-api          # NOT done until a non-zero load count is ON SCREEN
-node demo_readiness_check.mjs          # from C:\Users\troyh\aimforge-main
+node demo_readiness_check.mjs          # from C:\Users\<you>\aimforge-main
 ```
 Then hard-refresh (service worker serves stale pages — it fooled me twice today).
 
@@ -73,7 +73,7 @@ Then hard-refresh (service worker serves stale pages — it fooled me twice toda
 **Do not open:** `/driver` (a milk-collection workflow, deliberately unfixed),
 `/dispatch-live` (empty).
 
-Login: `owner-email-removed` / `demo-password-removed`
+Login: the demo account credentials are kept outside this repo (ask the owner).
 
 ---
 
@@ -124,7 +124,7 @@ UNTESTED with a live mic.
 
 ## STATE — AimForge
 
-`C:\Users\troyh\aimforge-main`, **all pushed, all deployed.**
+`C:\Users\<you>\aimforge-main`, **all pushed, all deployed.**
 16 real companies removed from the demo DB (Walmart, Amazon, Kroger, Home Depot,
 Lowe's + C.H. Robinson, TQL and 3 more brokers) · the 13-page crawlable dairy
 site at `/mockups/` now 404 · Fleet Status "Creamery"×55 → "Distribution" ·

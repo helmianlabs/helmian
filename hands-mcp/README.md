@@ -3,7 +3,7 @@
 Remote MCP connector that lets an approved AI client (Claude.ai, ChatGPT, Grok, Maestro) act on Troy's PC
 through the Helmian bridge. Design: `docs/hands/HANDS_MCP_CONNECTOR_DESIGN.md`.
 
-**Live:** `https://hands.5-78-222-178.sslip.io/mcp` on the Hetzner box (5.78.222.178), container
+**Live:** `https://<hands-host>/mcp` on the Hetzner box (<server-host>), container
 `helmian-hands-mcp` on `127.0.0.1:8090`, behind the same Caddy as `claude-memory-mcp`.
 
 ## Safety model
@@ -35,12 +35,12 @@ node bin\hands-spoke.mjs revoke-root-grant <grantId>
 
 ## Deploy (on the box)
 ```bash
-git archive HEAD | ssh root@5.78.222.178 'rm -rf /opt/helmian-hands-mcp/src && mkdir -p /opt/helmian-hands-mcp/src && tar -x -C /opt/helmian-hands-mcp/src'
-ssh root@5.78.222.178 /opt/helmian-hands-mcp/src/hands-mcp/deploy.sh
+git archive HEAD | ssh <deploy-user>@<server-host> 'rm -rf /opt/helmian-hands-mcp/src && mkdir -p /opt/helmian-hands-mcp/src && tar -x -C /opt/helmian-hands-mcp/src'
+ssh <deploy-user>@<server-host> /opt/helmian-hands-mcp/src/hands-mcp/deploy.sh
 ```
 Caddy block (in `/etc/caddy/Caddyfile`):
 ```
-hands.5-78-222-178.sslip.io {
+<hands-host> {
 	reverse_proxy 127.0.0.1:8090
 }
 ```

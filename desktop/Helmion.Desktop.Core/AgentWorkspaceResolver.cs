@@ -7,7 +7,7 @@ namespace Helmion.Desktop.Core;
 /// </summary>
 /// <remarks>
 /// Lives in Core rather than in the window so the choice is testable. The bug this guards
-/// against shipped a turn with <c>workspace C:\Users\troyh\.grok</c> under Full tools: a
+/// against shipped a turn with <c>workspace C:\Users\<you>\.grok</c> under Full tools: a
 /// CLI config home had been persisted into <c>.env</c> as <c>WORKSPACE_PATH</c>, every
 /// candidate passed the drive-root-only check, and the app then re-persisted it on each
 /// launch. Rejecting the value at resolve time also lets the next launch overwrite it.

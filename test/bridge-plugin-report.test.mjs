@@ -56,12 +56,12 @@ const DAY = 24 * 60 * 60 * 1000;
 const COMMANDS_PLUGINS = [
   {
     name: 'notes-tools',
-    root: 'C:\\Users\\troyh\\helmian\\plugins\\notes-tools',
+    root: 'C:\\Users\\someone\\helmian\\plugins\\notes-tools',
     version: '1.2.0',
     commands: true,
     approvedMcpServers: ['notes-server'],
     refusedMcpServers: [{ name: 'rogue-server', reason: 'not on the approved list' }],
-    warnings: ['could not read C:\\Users\\troyh\\helmian\\plugins\\notes-tools\\extra.json'],
+    warnings: ['could not read C:\\Users\\someone\\helmian\\plugins\\notes-tools\\extra.json'],
   },
   {
     name: 'plain-one',
@@ -163,7 +163,7 @@ test('ingest: a device-token POST stores the report with roots and paths ABSENT 
   const pool = fakeReportPool();
   const store = createBridgePluginReportStore(pool);
   const h = ingestHarness({ store });
-  const handled = await h.run(BRIDGE_PLUGIN_REPORT_PATH, { body: { type: 'commands', workspace: 'C:\\Users\\troyh\\helmian', plugins: COMMANDS_PLUGINS } });
+  const handled = await h.run(BRIDGE_PLUGIN_REPORT_PATH, { body: { type: 'commands', workspace: 'C:\\Users\\someone\\helmian', plugins: COMMANDS_PLUGINS } });
   assert.equal(handled, true);
   assert.equal(h.sent.length, 1);
   assert.equal(h.sent[0].status, 200);

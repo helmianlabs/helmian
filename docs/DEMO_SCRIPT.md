@@ -16,7 +16,7 @@ known risk on camera, it says so and gives the recovery line.
 
 Your own personal PreToolUse hooks (`hook_block_destructive.ps1`,
 `hook_block_commit_qa.ps1`, `hook_autonomy_boundary.ps1`, registered in
-`C:\Users\troyh\.claude\settings.json`) fire on every Bash/PowerShell call **inside a
+`C:\Users\<you>\.claude\settings.json`) fire on every Bash/PowerShell call **inside a
 Claude Code session**. They blocked three of my own rehearsal commands tonight. They do
 **not** apply to a plain terminal. Open Windows Terminal → PowerShell, and none of them
 will interrupt the take.
@@ -377,7 +377,7 @@ No advisor can clear a schema, production-data, authentication or cross-project 
 | What happens | Why | What you do |
 |---|---|---|
 | **Guard says `allowed:true` on the delete** | You typed the JSON wrong — most likely single `\` instead of `\\` inside the JSON string | **The files get deleted.** They are throwaway invoices in `C:\helmion-demo`, nothing real is lost. Re-run the SETUP block and go again. This is exactly why the demo folder is sacrificial. |
-| **`helmion : command not found`** | npm link is not active | `cd E:\Helmion; npm link` then reopen the terminal. Verified path today: `C:\Users\troyh\AppData\Roaming\npm\helmion.ps1` |
+| **`helmion : command not found`** | npm link is not active | `cd E:\Helmion; npm link` then reopen the terminal. Verified path today: `C:\Users\<you>\AppData\Roaming\npm\helmion.ps1` |
 | **Review hangs past ~20 seconds** | An MCP server is spawning slowly or a model is throttled | Let it run — the timeout is 120s per advisor and they run in parallel (`src/core/advisory-runner.mjs:176`). If you cut, say *"one of them is slow — and notice it isn't blocking me"*, which is the honest read. Ctrl-C and re-run; it was 3.4–11.0s on every run tonight. |
 | **All three advisors return `no verdict`** | Network down, or all three keys exhausted | Output will read `ALLOWED — No advisor was reachable. Nothing was caught, and nothing was checked`. **That is a legitimate beat if you want it**: *"Nothing checked this, and it told me so in those words."* But Beat B is lost — reshoot later. |
 | **Beat B: nobody catches the bug** | Model nondeterminism | Did not happen in 4 runs, but if it does: re-run the same command once. If it passes twice, cut Beat B and do not fake it. |

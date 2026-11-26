@@ -18,7 +18,7 @@ using Helmion.Desktop.Core;
 /// around the construction of a real <see cref="LocalVoiceEngine"/> and asserts
 /// nothing moved. It exists because of a recorded harm: a previous voice attempt
 /// on this machine left Troy's microphone ducked while it spoke
-/// (~/.claude/projects/C--Users-troyh/memory/feedback-2026-07-25-voice-mutes-troys-mic.md).
+/// (~/.claude/projects/C--Users-<you>/memory/feedback-2026-07-25-voice-mutes-troys-mic.md).
 ///
 /// The end-to-end check RUNS helmion-voice.exe and asserts its round trip. It is
 /// skipped with a visible notice when the host has not been built, in the same

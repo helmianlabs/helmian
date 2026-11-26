@@ -3319,7 +3319,7 @@ public partial class MainWindow : Window
     /// `commands` branch (:276) never reads req.workspace and re-scans
     /// <c>state.runtime.root</c> (:94). So a listing taken before the first turn can
     /// describe a different directory — exactly the mismatch that put
-    /// WORKSPACE_PATH=C:\Users\troyh\.grok into a live agent turn.
+    /// WORKSPACE_PATH=C:\Users\<you>\.grok into a live agent turn.
     /// </summary>
     private string? _knownCommandsWorkspace;
 

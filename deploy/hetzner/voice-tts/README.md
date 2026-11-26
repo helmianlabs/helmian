@@ -15,7 +15,7 @@ and its inline copy in `web/marketing/app/app.js`).
 
 ## Deploy steps (parent runs these; the bite staged everything)
 
-1. On the Hetzner box (5.78.222.178):
+1. On the Hetzner box (<server-host>):
    - `mkdir -p /opt/helmian-voice-tts/models /opt/helmian-voice-tts/cache`
    - Copy `voice-tts-server.py`, `requirements.txt`, and
      `helmian-voice-tts.service` (to `/etc/systemd/system/`) up.
@@ -40,7 +40,7 @@ and its inline copy in `web/marketing/app/app.js`).
    then append the Caddy vhost and `systemctl reload caddy`.
 4. Smoke, from the box: `curl -s http://127.0.0.1:8795/health` and a
    timed authorized POST of one ~150-char chunk to
-   `https://voice.5-78-222-178.sslip.io/tts`; record the
+   `https://<voice-host>/tts`; record the
    `X-Voice-Tts-Ms` header and the WAV duration. The reply must be a
    valid WAV at 24 kHz.
 

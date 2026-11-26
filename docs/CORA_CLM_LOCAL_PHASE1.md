@@ -221,7 +221,7 @@ Troy has a config named **"Big Sister (Troy desktop)"** in his Hume dashboard
 (Claude Sonnet 4.5, "Warm Female Assistant" voice, EVI 4-mini). Searching the
 machine found what created it:
 
-**`C:\Users\troyh\gauge-sandbox\scripts\_create_bigsister_config.mjs`** — every
+**`C:\Users\<you>\gauge-sandbox\scripts\_create_bigsister_config.mjs`** — every
 attribute matches, four for four:
 
 | Dashboard shows | Script line |
@@ -251,7 +251,7 @@ here.**
 
 **3. There is already a governance doc for exactly this question**, and it
 constrains the answer:
-`C:\Users\troyh\aimforge\planning\CORA_DESKTOP_VS_MOBILE_SPLIT.md` (365 lines)
+`C:\Users\<you>\aimforge\planning\CORA_DESKTOP_VS_MOBILE_SPLIT.md` (365 lines)
 holds a four-config matrix. Big Sister is row **D**: *"Troy personal / separate
 use · Local voice tooling only — **not** product env · Tools: **None** · temp
 0.6"*. And §6 rules that *"if a Helmion voice surface exists later, it either

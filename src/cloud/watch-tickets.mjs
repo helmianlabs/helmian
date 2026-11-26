@@ -6,7 +6,7 @@
 //
 // The Browser tab asks at the first address before it opens a watch
 // connection to the box's watch service
-// (wss://watch.5-78-222-178.sslip.io). The ticket is short-lived
+// (the watch host, WATCH_URL below). The ticket is short-lived
 // (60 seconds), names ONE seat, and its tenant comes from the
 // signed-in session (activeTenantActor), never from anything the
 // request body claims: a body that carries a tenant selector is

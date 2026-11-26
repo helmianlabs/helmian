@@ -41,12 +41,12 @@ file is built and verified, sitting in scratch, unwritten.**
 
 | | Entries | Size |
 |---|---|---|
-| Live `C:\Users\troyh\.claude\LESSONS.md` | **8 real** + 3 template placeholders | 7,799 B |
+| Live `C:\Users\<you>\.claude\LESSONS.md` | **8 real** + 3 template placeholders | 7,799 B |
 | Recovered bundle | **41 real** | 75,696 B |
 | Merged candidate (staged, NOT applied) | **41**, 0 placeholders | 75,780 B |
 
 Bundle source, verified present this session:
-`C:\Users\troyh\Documents\Codex\2026-07-26\realtime-voice-chat\outputs\HELMION_SOURCE_BUNDLE\LESSONS.md`
+`C:\Users\<you>\Documents\Codex\2026-07-26\realtime-voice-chat\outputs\HELMION_SOURCE_BUNDLE\LESSONS.md`
 
 Merged candidate:
 `…\Temp\claude\E--Helmion\ebf9ba3e-…\scratchpad\LESSONS.merged.md`

@@ -29,7 +29,7 @@
 | O5 | Video adapter | Not in build |
 | O6 | Claude/Grok chat-only @all | Mitigated by REQUIRED write rule — re-test @all bounce |
 | O7 | Room native chat | Local store + Discord WebView; not full Slack |
-| O8 | Full smoke path fix | Suite crashes on wrong `C:\Users\troyh\desktop\...` path mid-run |
+| O8 | Full smoke path fix | Suite crashes on wrong `C:\Users\<you>\desktop\...` path mid-run |
 
 ## Operator QA
 

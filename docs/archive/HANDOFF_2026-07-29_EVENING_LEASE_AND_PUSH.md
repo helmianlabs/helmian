@@ -146,7 +146,7 @@ that deleted the temp workspace mid-race.
 ## Troy's rule files were destroyed today and are restored
 
 `Helmion Pilot` PID 35736, started 14:49:01, rewrote ten files under
-`C:\Users\troyh\.claude` at **14:49:24**. The running exe was built 07-28
+`C:\Users\<you>\.claude` at **14:49:24**. The running exe was built 07-28
 15:47:14; the preserve fix landed 54 minutes later, so every source guard was
 inert in it.
 

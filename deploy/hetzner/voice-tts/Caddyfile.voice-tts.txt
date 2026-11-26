@@ -3,7 +3,7 @@
 # Executive Guard feed receiver vhost: TLS terminates at Caddy, the
 # service itself listens on 127.0.0.1 only, and credential headers are
 # deleted from the access log by config.
-voice.5-78-222-178.sslip.io {
+<voice-host> {
 	request_body {
 		max_size 16KB
 	}

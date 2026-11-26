@@ -894,7 +894,7 @@ finally
 Console.WriteLine("Helmion WORKSPACE_PATH env smoke tests passed.");
 
 // Agent tool workspace is the registered workspace, never a provider CLI home.
-// Pins the live defect: a turn ran as "[Agent · Grok · full · workspace C:\Users\troyh\.grok]"
+// Pins the live defect: a turn ran as "[Agent · Grok · full · workspace C:\Users\<you>\.grok]"
 // because a CLI config home had been persisted as WORKSPACE_PATH and nothing rejected it.
 var workspaceGuardRoot = Path.Combine(
     Path.GetTempPath(),

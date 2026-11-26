@@ -7,7 +7,7 @@ Write-Host ""
 
 $envFile = Join-Path $env:LOCALAPPDATA "Helmion\team-connectors\local-service.team.env"
 $pack = "E:\Helmion\artifacts\Helmion-Pilot-win-x64-self-contained-team-20260802"
-$scrcpyDir = "C:\Users\troyh\AppData\Local\Microsoft\WinGet\Packages\Genymobile.scrcpy_Microsoft.Winget.Source_8wekyb3d8bbwe\scrcpy-win64-v4.1"
+$scrcpyDir = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\Genymobile.scrcpy_Microsoft.Winget.Source_8wekyb3d8bbwe\scrcpy-win64-v4.1"
 
 if (-not (Test-Path $pack)) { throw "Missing pilot pack: $pack" }
 if (-not (Test-Path "$scrcpyDir\scrcpy.exe")) { throw "Missing scrcpy at $scrcpyDir" }
