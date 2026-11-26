@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Helmian hands: PC spoke.
-//   node bin/hands-spoke.mjs pair [--url https://hands.5-78-222-178.sslip.io] [--roots "E:\Helmion;D:\work"]
+//   node bin/hands-spoke.mjs pair [--url https://<hands-host>] [--roots "D:\work"]
 //       asks for the hands passphrase (the same one as the memory connector) and saves
 //       %APPDATA%\Helmian\hands-spoke.json. Run once. The passphrase is never stored.
 //   node bin/hands-spoke.mjs pair --code ABCD-EFGH

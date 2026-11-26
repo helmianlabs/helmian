@@ -8,7 +8,7 @@ POSTs one sentence-sized chunk at a time here and only plays the WAV
 that comes back, through its one ordered playback queue
 (web/shared/voice-dictation.mjs, served engine).
 
-Road: Caddy (voice.5-78-222-178.sslip.io) -> 127.0.0.1:8795 -> here.
+Road: Caddy (<voice-host>) -> 127.0.0.1:8795 -> here.
 Same sslip.io + Caddy pattern as the Executive Guard feed receiver.
 
 Design points that matter:

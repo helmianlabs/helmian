@@ -137,7 +137,7 @@ Arming the hotkey does not open a capture device.
 On 2026-07-25 a previous voice attempt on this machine left Troy's microphone
 ducked while it spoke, so he could not tell he was being heard and lost whole
 sentences
-(`~/.claude/projects/C--Users-troyh/memory/feedback-2026-07-25-voice-mutes-troys-mic.md`).
+(`~/.claude/projects/C--Users-<you>/memory/feedback-2026-07-25-voice-mutes-troys-mic.md`).
 
 How this stack is different, and how each claim is checked:
 

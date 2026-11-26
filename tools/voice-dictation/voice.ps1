@@ -52,8 +52,8 @@ $queueDir     = Join-Path $env:LOCALAPPDATA 'Helmion\speak-queue'
 # "on" is a THIRD value meaning the old Edge TTS path; this script never writes
 # it, because that path is a network call with a voice map CLAUDE.md rule 0.26
 # pins by name.
-$stateFile    = 'C:\Users\troyh\.claude\voice_enabled.txt'
-$stopFile     = 'C:\Users\troyh\.claude\_voice\STOP'
+$stateFile    = Join-Path $env:USERPROFILE '.claude\voice_enabled.txt'
+$stopFile     = Join-Path $env:USERPROFILE '.claude\_voice\STOP'
 $dictationLog = Join-Path $env:LOCALAPPDATA 'Helmion\voice-dictation.log'
 $speakLog     = Join-Path $env:LOCALAPPDATA 'Helmion\voice-speak.log'
 

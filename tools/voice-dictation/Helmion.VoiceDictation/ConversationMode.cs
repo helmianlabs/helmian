@@ -43,13 +43,13 @@ public static class ConversationMode
     public const string OffValue = "off";
 
     /// <summary>The gate <c>stop_hook_speak.py:139-144</c> reads before it speaks anything.</summary>
-    public const string DefaultStateFile = @"C:\Users\troyh\.claude\voice_enabled.txt";
+    public static readonly string DefaultStateFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "voice_enabled.txt");
 
     /// <summary>
     /// The sentinel <c>~/.claude/scripts/stop_voice.ps1</c> stamps and
     /// <c>StopSentinel.cs</c> watches. Touching it cuts audio mid-word.
     /// </summary>
-    public const string StopSentinelFile = @"C:\Users\troyh\.claude\_voice\STOP";
+    public static readonly string StopSentinelFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "_voice", "STOP");
 
     /// <summary>
     /// The ONLY thing this application ever speaks on its own: Troy's name, alone.

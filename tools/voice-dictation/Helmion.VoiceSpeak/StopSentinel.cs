@@ -35,12 +35,11 @@ namespace Helmion.VoiceSpeak;
 public sealed class StopSentinel
 {
     /// <summary>
-    /// The sentinel written by <c>~/.claude/scripts/stop_voice.ps1</c>. Hard-coded
-    /// to the same absolute path that script and autoplayer.ps1 both use, rather
-    /// than derived, so a different USERPROFILE cannot silently point this at a
-    /// file nobody writes.
+    /// The sentinel written by <c>~/.claude/scripts/stop_voice.ps1</c>, under the
+    /// signed-in user's profile (%USERPROFILE%\.claude\_voice\STOP), the same
+    /// path that script and autoplayer.ps1 both use.
     /// </summary>
-    public const string DefaultPath = @"C:\Users\troyh\.claude\_voice\STOP";
+    public static readonly string DefaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "_voice", "STOP");
 
     private readonly string _path;
 

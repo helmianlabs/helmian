@@ -10,7 +10,7 @@
   "//conversationHotkey": "HANDS-FREE MODE. Press once and every finished Claude Code reply is read aloud by the local Kokoro voice. Press again and it stops talking THIS INSTANT — it cuts the sentence playing and drops anything queued behind it. Leave empty to disable the key and toggle with voice.ps1 -Conversation instead.",
   "conversationHotkey": "ctrl+alt+c",
 
-  "//voiceStateFile": "The file the Claude Code Stop hook checks before it speaks. Empty = C:\\Users\\troyh\\.claude\\voice_enabled.txt, which is the path that hook already reads. Only change this if the hook changes too.",
+  "//voiceStateFile": "The file the Claude Code Stop hook checks before it speaks. Empty = C:\\Users\\<you>\\.claude\\voice_enabled.txt, which is the path that hook already reads. Only change this if the hook changes too.",
   "voiceStateFile": "",
 
   "//speakExePath": "Empty = find 'Helmion Voice Speak.exe' by walking up from this exe to the sibling Helmion.VoiceSpeak\\bin folder. Set it only if the speaker lives somewhere else.",

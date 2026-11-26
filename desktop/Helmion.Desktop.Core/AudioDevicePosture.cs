@@ -28,7 +28,7 @@ public sealed record CaptureDevicePosture(
 /// This exists because of a specific, recorded harm: a previous voice attempt on
 /// this machine left Troy's microphone ducked while it was speaking, so he could
 /// not hear himself being heard
-/// (~/.claude/projects/C--Users-troyh/memory/feedback-2026-07-25-voice-mutes-troys-mic.md,
+/// (~/.claude/projects/C--Users-<you>/memory/feedback-2026-07-25-voice-mutes-troys-mic.md,
 /// 2026-07-25).
 ///
 /// Every member here is a getter. There is deliberately no setter, no

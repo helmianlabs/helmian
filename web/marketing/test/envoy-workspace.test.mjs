@@ -845,9 +845,9 @@ test('monday launch: custom agent creator, free-willy debate, github link, phone
   assert.equal(ghUnlinked.badgeHidden, true);
   assert.equal(ghUnlinked.buttonLabel, 'Link GitHub');
 
-  const ghLinked = githubLinkHeader({ github: { repo: 'troyhelm/helmion', events: ['push', 'pull_request'] }, admin: false });
+  const ghLinked = githubLinkHeader({ github: { repo: 'example/helmion', events: ['push', 'pull_request'] }, admin: false });
   assert.equal(ghLinked.badgeHidden, false);
-  assert.equal(ghLinked.badgeText, 'GitHub troyhelm/helmion');
+  assert.equal(ghLinked.badgeText, 'GitHub example/helmion');
   assert.equal(ghLinked.buttonLabel, 'GitHub linked');
 
   const debateOff = debateHeaderState({ debateMode: 'off', maxRoundTurns: 12 });

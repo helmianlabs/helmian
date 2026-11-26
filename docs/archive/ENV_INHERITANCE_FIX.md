@@ -150,14 +150,14 @@ node -e "import('./src/agent/tools.mjs').then(m => {
 **Child Environment (Complete Output)**:
 ```json
 {
-  "APPDATA": "C:\\Users\\troyh\\AppData\\Roaming",
+  "APPDATA": "C:\\Users\\<you>\\AppData\\Roaming",
   "CommonProgramFiles": "C:\\Program Files\\Common Files",
   "CommonProgramFiles(x86)": "C:\\Program Files (x86)\\Common Files",
   "COMPUTERNAME": "TROY",
   "COMSPEC": "C:\\WINDOWS\\system32\\cmd.exe",
   "HOMEDRIVE": "C:",
-  "HOMEPATH": "\\Users\\troyh",
-  "LOCALAPPDATA": "C:\\Users\\troyh\\AppData\\Local",
+  "HOMEPATH": "\\Users\\<you>",
+  "LOCALAPPDATA": "C:\\Users\\<you>\\AppData\\Local",
   "LOGONSERVER": "\\\\TROY",
   "NUMBER_OF_PROCESSORS": "16",
   "OS": "Windows_NT",
@@ -171,12 +171,12 @@ node -e "import('./src/agent/tools.mjs').then(m => {
   "PSMODULEPATH": "...",
   "SYSTEMDRIVE": "C:",
   "SystemRoot": "C:\\WINDOWS",
-  "TEMP": "C:\\Users\\troyh\\AppData\\Local\\Temp",
+  "TEMP": "C:\\Users\\<you>\\AppData\\Local\\Temp",
   "TERM": "dumb",
-  "TMP": "C:\\Users\\troyh\\AppData\\Local\\Temp",
+  "TMP": "C:\\Users\\<you>\\AppData\\Local\\Temp",
   "USERDOMAIN": "TROY",
-  "USERNAME": "troyh",
-  "USERPROFILE": "C:\\Users\\troyh",
+  "USERNAME": "<you>",
+  "USERPROFILE": "C:\\Users\\<you>",
   "WINDIR": "C:\\WINDOWS"
 }
 ```

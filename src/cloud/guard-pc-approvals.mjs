@@ -10,7 +10,7 @@
 // must never approve actions on Troy's PC). Anything unset = 503, nothing decided.
 //
 // Env (server-side only; the approver token is a Guard credential, not a provider key):
-//   HELMIAN_GUARD_URL               default https://guard.5-78-222-178.sslip.io
+//   HELMIAN_GUARD_URL               default: the Guard host set in code below
 //   HELMIAN_GUARD_APPROVER_TOKEN    Guard approver bearer (approverId "troy")
 //   HELMIAN_GUARD_APPROVER_SUBJECTS comma-separated Clerk user ids allowed to approve
 

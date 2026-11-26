@@ -126,7 +126,7 @@ The no-spill result above is conditional on the GPU being otherwise idle.
 
 ## 4. Install — what was changed on this machine
 
-- **Binary:** `C:\Users\troyh\AppData\Local\Programs\Ollama\ollama.exe` (v0.32.5),
+- **Binary:** `C:\Users\<you>\AppData\Local\Programs\Ollama\ollama.exe` (v0.32.5),
   extracted from the official `ollama-windows-amd64.zip`. Size-verified at
   1,457,824,795 bytes against the GitHub release asset. Includes the CUDA v12/v13
   runners.
@@ -136,7 +136,7 @@ The no-spill result above is conditional on the GPU being otherwise idle.
   UAC prompt, and no GUI — the server only runs when it is deliberately started.
 - **Models on E:, not C:** `E:\ollama-models` via `OLLAMA_MODELS`. C: has 23.6 GB
   free and a documented space problem; E: has 82.1 GB. The default would have
-  been `C:\Users\troyh\.ollama\models`.
+  been `C:\Users\<you>\.ollama\models`.
 - **Nothing else was installed, and no autostart was registered.**
 
 ### Starting and stopping the server

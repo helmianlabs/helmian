@@ -331,7 +331,7 @@ function hostReadJson(rawBody) {
 
 function bigFileList(n) {
   return Array.from({ length: n }, (_, i) => ({
-    path: `C:\\Users\\troyh\\.claude\\agent-os\\estate\\lessons\\lesson-${String(i).padStart(3, '0')}-entry.md`,
+    path: `C:\\Users\\someone\\.claude\\agent-os\\estate\\lessons\\lesson-${String(i).padStart(3, '0')}-entry.md`,
     target: 'claude',
     action: 'created',
     sha256: 'c'.repeat(64),

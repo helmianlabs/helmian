@@ -157,7 +157,7 @@ still connects the ordinary way, once, on the Integrations page
 | --- | --- | --- |
 | hands server | `PAIR_CODE_ISSUER_TOKEN` | random, 32+ chars. Unset = codes off (404). |
 | Vercel (helmian.cloud) | `HELMIAN_PAIR_CODE_ISSUER_TOKEN` | same value |
-| Vercel (helmian.cloud) | `HELMIAN_HANDS_URL` | `https://hands.5-78-222-178.sslip.io` |
+| Vercel (helmian.cloud) | `HELMIAN_HANDS_URL` | `https://<hands-host>` |
 
 Also needed: a `spoke-v1.0.10` release with `Helmian-Spoke-Setup-1.0.10-win-x64.exe`
 (the version the repo's spoke installer script, `spoke-installer/HelmianSpoke.iss`,

@@ -57,7 +57,7 @@ Troy's desktop", the QA-screenshot rule, the Chobani route, the sprite-scale
 night, the ELD adapters never live-tested.
 
 Backup of the pre-restore file:
-`C:\Users\troyh\.claude\LESSONS.BEFORE-RESTORE-20260730-030720.bak`
+`C:\Users\<you>\.claude\LESSONS.BEFORE-RESTORE-20260730-030720.bak`
 
 🔴 **The one hole:** the archive is 2026-07-26 16:51; the first wipe was
 2026-07-28 15:34. Anything written in that ~47h window exists in no copy found.

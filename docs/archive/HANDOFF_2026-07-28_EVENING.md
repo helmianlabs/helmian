@@ -22,7 +22,7 @@
 | ✓ Voice stack: local Whisper STT + Kokoro TTS, System.Speech DELETED | ISpeechEngine/LocalVoiceEngine/WhisperSpeechRecognizer/KokoroSpeechSynthesizer/VoiceAudio/DictationCommands.cs; SpeechEngine.cs + AudioEndpointProbe.cs deleted | headless round-trip in orchestrator's own smoke run: Kokoro WAV → Whisper transcript character-identical |
 | ✓ Live human proof of STT + switcher | Troy's own Pilot run | heard "Hello hello hello" clean; console showed `fast · grok-4.3` |
 | ✓ Per-task model auto-switcher | src/agent/model-router.mjs + loop/session/env/bridge wiring | stub wire-proof 3 distinct models by difficulty; live xAI fast grok-4.3 vs deep grok-4.5; Fable never auto-selected |
-| ✓ Workspace guard | EnvironmentSettingsStore.cs guards + AgentWorkspaceResolver.cs + 10 smoke checks | root cause was poisoned `.env` WORKSPACE_PATH=C:\Users\troyh\.grok (fixed in .env by orchestrator); negative control pasted by agent D |
+| ✓ Workspace guard | EnvironmentSettingsStore.cs guards + AgentWorkspaceResolver.cs + 10 smoke checks | root cause was poisoned `.env` WORKSPACE_PATH=C:\Users\<you>\.grok (fixed in .env by orchestrator); negative control pasted by agent D |
 | ✓ Publish pipeline carries voice assets | publish.ps1 asset block (ASCII only — em dash breaks WinPS 5.1) | fresh publish 15:47: runtimes/, models 141+310MB, 54 voices, 372 espeak, onnx DLLs all auto-present |
 | ✓ Session lessons pushed to Neon | bigsister.agent_logs, 6 events | six OK writes, exit 0 |
 
@@ -122,7 +122,7 @@ badge is real state. `ProfileSyncService` does genuine Npgsql SELECT/UPSERT agai
 across Kokoro). Mic has NO session timer. Hook gates: long-form `rm --recursive --force`
 blocked 4/4; the claimed `TROY-APPROVED`-on-Edit gap is CLOSED (`hook_autonomy_boundary.ps1:189`).
 
-### SiteVector (SEPARATE project, C:\Users\troyh\sitevector — state only, untouched)
+### SiteVector (SEPARATE project, C:\Users\<you>\sitevector — state only, untouched)
 `stops_from_samples` (`app/stops.py:85`) has zero non-test callers; routes at
 `app/main.py:115-147` take a precomputed `duration_s` and call `engine.ingest()`.
 The ms-vs-seconds blind spot is LIVE: `validate.py:67 MAX_DURATION_S=86400` is a pure

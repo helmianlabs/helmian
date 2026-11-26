@@ -366,7 +366,7 @@ test('describeDiff refuses a diff that touches credentials or deploys', async ()
 // ─────────────────────────────────────────────────────────────────────────────
 
 test('flags a real Unity compile error', () => {
-  // Verbatim from C:\Users\troyh\AppData\Local\Unity\Editor\Editor.log:3191
+  // Verbatim from C:\Users\someone\AppData\Local\Unity\Editor\Editor.log:3191
   const line = "(44,52): error CS1061: 'TakeInfo' does not contain a definition for 'duration'";
   const f = scanLogLines(line);
   assert.equal(f.length, 1);

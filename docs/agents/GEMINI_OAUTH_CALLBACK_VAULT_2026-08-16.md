@@ -9,7 +9,7 @@
 This slice is limited to Helmian Cloud Gemini provider OAuth callback,
 client-registration configuration, encrypted vault persistence, migration
 coverage, and their tests. The isolated workspace is
-`C:\Users\troyh\Documents\Codex\2026-08-14\helmian-gemini-oauth-callback-vault` on
+`C:\Users\<you>\Documents\Codex\2026-08-14\helmian-gemini-oauth-callback-vault` on
 branch `codex/gemini-oauth-callback-vault`. Forge TMS, `forgetms.cloud`, and
 unrelated provider invocation code are out of scope.
 

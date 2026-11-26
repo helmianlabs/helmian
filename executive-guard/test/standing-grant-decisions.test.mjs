@@ -49,10 +49,10 @@ function handsAction(tool, args, scope) {
   };
 }
 
-const JOBS_PROMPT_ARGS = { path: 'C:\\Users\\troyh\\pc-seat\\jobs\\3f2504e0-4f89-41d3-9a0c-0305e82c3301.prompt.txt', content: 'do the thing' };
-const SEAT_CALL_ARGS = { commandId: 'run-command', args: { command: "Start-Process powershell -ArgumentList @('-File','C:\\Users\\troyh\\pc-seat\\seat-call.ps1','-Provider','grok')" } };
-const SALVAGE_MKDIR_ARGS = { commandId: 'run-command', args: { command: "New-Item -ItemType Directory -Force -Path 'C:\\Users\\troyh\\pc-seat\\builds\\grok'" } };
-const SALVAGE_FILE_ARGS = { path: 'C:\\Users\\troyh\\pc-seat\\builds\\grok\\reply.txt', content: 'salvaged' };
+const JOBS_PROMPT_ARGS = { path: 'C:\\Users\\sam\\pc-seat\\jobs\\3f2504e0-4f89-41d3-9a0c-0305e82c3301.prompt.txt', content: 'do the thing' };
+const SEAT_CALL_ARGS = { commandId: 'run-command', args: { command: "Start-Process powershell -ArgumentList @('-File','C:\\Users\\sam\\pc-seat\\seat-call.ps1','-Provider','grok')" } };
+const SALVAGE_MKDIR_ARGS = { commandId: 'run-command', args: { command: "New-Item -ItemType Directory -Force -Path 'C:\\Users\\sam\\pc-seat\\builds\\grok'" } };
+const SALVAGE_FILE_ARGS = { path: 'C:\\Users\\sam\\pc-seat\\builds\\grok\\reply.txt', content: 'salvaged' };
 const PLAIN_WRITE_ARGS = { path: 'E:\\Helmion\\notes.txt', content: 'not a seat call' };
 
 async function mintGrant(guard, actions = ALL_ACTIONS) {

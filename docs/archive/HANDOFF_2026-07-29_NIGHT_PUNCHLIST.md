@@ -53,7 +53,7 @@ testing the guard live — do not touch it.**
 
 ## ITEM 2 IS THE ONE BLOCKING THING. Read this before anything else.
 
-`C:\Users\troyh\.claude\scripts\hook_autonomy_boundary.ps1:35` was:
+`C:\Users\<you>\.claude\scripts\hook_autonomy_boundary.ps1:35` was:
 
 ```powershell
 try { $payload = $stdin | ConvertFrom-Json } catch { exit 0 }
@@ -64,8 +64,8 @@ of Tier A / Tier B logic below it. **Measured against the LIVE hook**, not
 theorised: an `ALTER TABLE` command behind a UTF-8 BOM returned **exit 0**, and a
 payload of pure garbage returned **exit 0**.
 
-The fixed file is at **`C:\Users\troyh\hook_autonomy_boundary.FIXED.ps1`** and its
-6-case validator is at **`C:\Users\troyh\hook_autonomy_boundary.VALIDATE.ps1`**.
+The fixed file is at **`C:\Users\<you>\hook_autonomy_boundary.FIXED.ps1`** and its
+6-case validator is at **`C:\Users\<you>\hook_autonomy_boundary.VALIDATE.ps1`**.
 They were saved out of the session scratchpad on purpose so a restart cannot lose
 them.
 

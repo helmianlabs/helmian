@@ -810,7 +810,7 @@ const GOLDEN_ACTIONS = [
   ['run_powershell', { commandId: 'git-status', args: { repo: 'E:\\Helmion' } }, '7fcd4cdd2db5ec5d159d42a4e2173d39d225a0a520a85f81c670ed5ea1a08f51'],
   ['run_powershell', { commandId: 'restart-bridge', args: {} }, '23f9d44ba2f0702c0211d1619bca2bf75babb843d42710d18144920f2a6644ed'],
   ['open_url', { url: 'https://example.com/some/path?token=abc' }, '65dbbf6db2ed6e9475d1e8cc64ba8624942f051523046f8510830f43936a442d'],
-  ['write_file', { path: 'C:\\Users\\troyh\\.claude.json', content: 'api_key = sk-1234567890abcdef\nrest' }, '6e71acd0e60323b5b5953382c7b04ecd4e96aa1034cf378f90beab70975634a1'],
+  ['write_file', { path: 'C:\\Users\\someone\\.claude.json', content: 'api_key = sk-1234567890abcdef\nrest' }, '9fb4ff3253142496097890e35c81c36dbf6d3d7d8a5d395e5ca8e76b6eb93afb'],
 ];
 
 test('golden hashes: the summary enrichment leaves every signed action hash unchanged', () => {
@@ -845,7 +845,7 @@ test('a mutating action carries the human-readable summary: tool, real target, c
 
 test('a secret-shaped value in the args never appears raw in the summary', () => {
   const secret = 'sk-1234567890abcdef';
-  const a = buildGuardAction('write_file', { path: 'C:\\Users\\troyh\\.claude.json', content: `api_key = ${secret}\nrest` });
+  const a = buildGuardAction('write_file', { path: 'C:\\Users\\someone\\.claude.json', content: `api_key = ${secret}\nrest` });
   assert.ok(!a.summary.includes(secret), 'summary leaked the key');
   assert.ok(a.summary.includes('first line withheld (looked sensitive)'), a.summary);
 

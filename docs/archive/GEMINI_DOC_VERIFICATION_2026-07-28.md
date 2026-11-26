@@ -85,7 +85,7 @@ tracks an active tool round.
 
 ---
 
-## Section 5 — hook gate checklist (`C:\Users\troyh\.claude`, READ-ONLY, nothing edited)
+## Section 5 — hook gate checklist (`C:\Users\<you>\.claude`, READ-ONLY, nothing edited)
 
 Verified by reading the hooks and by feeding crafted JSON on stdin. **No `rm` or other
 destructive command was ever actually executed — only strings were passed to the hooks.**
@@ -104,7 +104,7 @@ destructive command was ever actually executed — only strings were passed to t
 
 ---
 
-## Section 4 — DairyForge SiteVector (`C:\Users\troyh\sitevector`) — STATE ONLY, NOT FIXED
+## Section 4 — DairyForge SiteVector (`C:\Users\<you>\sitevector`) — STATE ONLY, NOT FIXED
 
 | # | Item | Claimed | Actual (file:line / output) | Verdict |
 |---|---|---|---|---|
