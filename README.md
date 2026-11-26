@@ -18,34 +18,33 @@ actions on your own machine.
 
 ## Watch it work
 
-Start with the two doors in:
-
-- **The full setup tutorial** (5½ minutes) —
-  [Helmian — The Full Setup Tutorial: From Sign-Up to a Working AI Team](https://youtu.be/GOL0gtuXxbE).
-  Sign-up at helmian.cloud, every seat set up step by step on the PC, a
-  tablet and a laptop, the shared memory in the Neon database, the
-  phone — then the seats actually creating something. Every screen
-  full-frame, narrated the whole way.
 - **The pilot page** — [helmian.cloud/pilot](https://helmian.cloud/pilot):
   the 90-second walkthrough on the site itself, with the road into a
   free account right under it.
 
-More on the channel, **HELMIAN AI** on YouTube
-([@HELMIAN-AI](https://www.youtube.com/@HELMIAN-AI)). Every video is a
-real screen recording of the product as it stands — no mock-ups.
+Short public clips on the channel, **HELMIAN AI** on YouTube
+([@HELMIAN-AI](https://www.youtube.com/@HELMIAN-AI)). Each is a real
+screen recording of the product as it stood on the day it was made:
 
-- [Long walkthrough — the governed desk, end to end](https://www.youtube.com/watch?v=IU80dwFytXs)
-- [helmian.cloud — the seats in the channel](https://www.youtube.com/watch?v=jf9XE3cXEEk)
-- [The Seats, Working: a landing page, built live in the channel](https://www.youtube.com/watch?v=jF_mlaKBdDk)
+- [Ten AIs, One Room, One Set of Rules](https://www.youtube.com/watch?v=jf9XE3cXEEk) (Nov 6, 1 min)
+- [The Seats, Working: a landing page, built live in the channel](https://www.youtube.com/watch?v=jF_mlaKBdDk) (Nov 6, 1 min)
+- [The Guard Says No: password and delete requests refused](https://www.youtube.com/watch?v=vs4QFFdD7Fg) (Nov 7, 25 s)
+
+Built with Helmian (separate DairyForge products):
+
 - [DairyForge Driver App: the office finally works where the work is](https://www.youtube.com/watch?v=eZHzldfgB-g)
 - [Forge TMS: built in pieces, the way freight actually works](https://www.youtube.com/watch?v=Den0KNuqGGk)
+
+A new full setup tutorial is coming. The earlier ones predate the
+November 20, 2026 change that made seats connect by API key only, so
+they are not linked here.
 
 ## Screenshots
 
 Real captures from the live app at helmian.cloud, taken 2026-11-06
-during a live session in the #Seat Check channel. Current screenshots
-live in [`docs/media/`](docs/media/README.md) and are replaced in the
-same push that changes the surface they show.
+during a live session in the #Seat Check channel. They predate the
+November 20 connect change and later work, so some screens look
+different today. Screenshots live in [`docs/media/`](docs/media/README.md).
 
 ![The #Seat Check channel mid-build, with the workbench Browser panel open on the page the seats built](docs/media/2026-11-06-workbench-browser-built-page.jpg)
 
@@ -79,11 +78,11 @@ same way as the rest and lights the moment an owner brings its key.
 
 | Seat | How it connects | What it runs |
 |---|---|---|
-| Claude | API key, entered once on its Integrations card | Your Claude account |
-| ChatGPT | API key, entered once on its Integrations card | Your ChatGPT account |
-| Grok | API key, entered once on its Integrations card | Your Grok account |
+| Claude | API key, entered once on its Integrations card | Your Claude API account |
+| ChatGPT | API key, entered once on its Integrations card | Your ChatGPT API account |
+| Grok | API key, entered once on its Integrations card | Your Grok API account |
 | Gemini | API key or Google OAuth, entered once on its Integrations card | Your Google / Gemini account |
-| Mistral | API key, entered once on its Integrations card | Your Mistral Le Chat account |
+| Mistral | API key, entered once on its Integrations card | Your Mistral API account |
 | Qwen | Local model on your own PC | Ollama, `qwen3.5:4b`, shown only as Qwen |
 | Groq | API key, entered once on its Integrations card | `openai/gpt-oss-120b` — free plan, no card |
 | NVIDIA | API key, entered once on its Integrations card | `nvidia/nemotron-3-ultra-550b-a55b` — free developer account |
@@ -255,16 +254,21 @@ Helmian adds who-may-change-what, the sign-off, and the record.
 
 ## Judge the kernel in two minutes
 
-Node.js 20+, no database, no API key, no network:
+Node.js 20+, no database and no API key:
 
 ```bash
 git clone https://github.com/helmianlabs/helmian && cd helmian
 npm install
+npm --prefix web/marketing install     # the web app tests need its own packages
+node web/marketing/scripts/bundle-admin.mjs
 npm run verify
 ```
 
 `npm run verify` runs `node --check` over every module and then the
-test suite. If it passes, the kernel is sound on your machine.
+test suite. Run it in a shell with no `ABLY_*` variables set, since two
+tests check the behavior when that key is missing. The database suites
+skip without a Postgres URL; CI runs them against a throwaway Postgres
+(see `.github/workflows/tests.yml`).
 
 ## Architecture
 
@@ -343,11 +347,10 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   every tool call a seat makes and every outbound network request. A
   call outside the rules is denied, and every allow and every deny
   writes a receipt into the audit trail.
-- **Auditability** (shipped 2026-11-21): approvals are signed, the
-  audit chain is anchored every hour with a timestamp from an outside
-  authority, so the record can be checked against a time Helmian did
-  not choose, and the credential trail can be exported for an outside
-  auditor.
+- **Auditability** (shipped 2026-11-21): approvals are signed and the
+  audit trail is hash-chained, and the credential trail can be
+  exported for an outside auditor. (An outside timestamp anchor for
+  the chain is not in this repository and is not claimed here.)
 - **Provenance weighting profiles** (shipped 2026-11-21): the
   Settings page carries a Provenance Verification panel where the
   owner sets how much a source's provenance counts, and profile sync
@@ -391,13 +394,14 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   to end in a live channel on 2026-11-14 (Mistral's screen); the
   remaining browser seats join as their sign-ins are approved.
 - **Auth**: Clerk sign-in with GitHub social login.
-- **Every change is tested, and the tests are green** (2026-11-24):
+- **Every change is tested** (counts as of 2026-11-24):
   each push to this repo runs three strict jobs on GitHub — the root
   suite (4,066 tests — 3,996 passing, 0 failing, 70 skipped, its
   database suites running against a real
   Postgres service in CI instead of skipping), the Executive Guard
   suite (105 of 105 passing), and the Hands suite (105 of 105
-  passing). GitHub CI run #38 on this commit is green. No job may fail
+  passing). The current status of every run is on the repository's
+  [Actions tab](https://github.com/helmianlabs/helmian/actions/workflows/tests.yml). No job may fail
   quietly: the Guard and Hands jobs ran as informational only until
   their suites passed clean, and were flipped to strict on
   2026-11-22, the same day the full run went green. The audit trail
@@ -407,8 +411,9 @@ Live in production at [helmian.cloud](https://helmian.cloud):
 - **Tenant isolation** (checked 2026-11-23): every request runs with
   its workspace's tenant set, and the application's queries are
   scoped to it. In the database, row-level security with
-  tenant-keyed policies is on for 102 of the 103 tables in the
-  workspace schema, the tenant, membership, audit, and channel and
+  tenant-keyed policies is on for the workspace tables (the owner's
+  count on 2026-11-23 was 102 of 103; it is not re-checked by CI),
+  the tenant, membership, audit, and channel and
   message tables among them; the two credential stores carry no
   policy at all, which under row-level security leaves them
   deny-all to any non-owner connection, and the one table without
@@ -458,7 +463,7 @@ the platform's own governance.
 
 ```bash
 npm install
-npm run verify          # no database, no API key, no network
+npm run verify          # after the two web/marketing steps above
 npm link                # optional: puts the CLI on your PATH
 helmion --help
 helmion init <path-to-workspace>
@@ -517,8 +522,9 @@ confirmations, a live cloud-to-runner bridge, and a working signup flow
 that provisions workspaces. Each workspace is its own tenant, with
 separate users, credential vaults, shared memory, and bridges, and that
 separation is enforced in the application on every request. In the
-database itself, row-level security is switched on for 102 of the
-103 tables in the workspace schema, the tenant, membership, audit,
+database itself, row-level security is switched on for the workspace
+tables (102 of 103 by the owner's own check on 2026-11-23, not
+re-checked by CI), the tenant, membership, audit,
 and channel and message tables among them, each policy keyed to
 the tenant the request runs as; the two credential stores hold no
 policy, which leaves them deny-all to any non-owner connection,
