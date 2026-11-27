@@ -738,3 +738,32 @@ test('the local desktop-pipe bridge exposes only presence, selected session, ins
   assert.equal('shell' in bridge, false);
   assert.equal('files' in bridge, false);
 });
+
+test('the pairing cookie is HttpOnly and SameSite always, and Secure when the phone came over HTTPS', async () => {
+  const herald = await startHerald({ workspace: 'unused-by-fixture', port: 0, digestBuilder: async () => ({}) });
+  try {
+    const plain = await fetch(`http://127.0.0.1:${herald.port}/api/pair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code: herald.pairingCode, deviceId: DEVICE_A }),
+    });
+    const plainCookie = plain.headers.get('set-cookie') ?? '';
+    assert.match(plainCookie, /HttpOnly/);
+    assert.match(plainCookie, /SameSite=Strict/);
+    assert.doesNotMatch(plainCookie, /Secure/);
+  } finally {
+    await herald.close();
+  }
+  const proxied = await startHerald({ workspace: 'unused-by-fixture', port: 0, digestBuilder: async () => ({}) });
+  try {
+    const viaTls = await fetch(`http://127.0.0.1:${proxied.port}/api/pair`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-proto': 'https' },
+      body: JSON.stringify({ code: proxied.pairingCode, deviceId: DEVICE_B }),
+    });
+    assert.equal(viaTls.status, 200);
+    assert.match(viaTls.headers.get('set-cookie') ?? '', /HttpOnly; SameSite=Strict; Path=\/; Max-Age=\d+; Secure/);
+  } finally {
+    await proxied.close();
+  }
+});

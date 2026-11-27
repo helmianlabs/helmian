@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 
 import { buildDigest } from './digest.mjs';
+import { hardenServerTimeouts } from '../cloud/http-guard.mjs';
 import {
   APPROVAL_DECIDE_SCOPE,
   HeraldPairingRegistry,
@@ -31,6 +32,13 @@ import {
   HERALD_SERVICE_WORKER,
   renderMobileShell,
 } from './mobile-shell.mjs';
+
+
+function requestIsHttps(request) {
+  if (request?.socket?.encrypted) return true;
+  const proto = String(request?.headers?.['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase();
+  return proto === 'https';
+}
 
 export const DEFAULT_PORT = 7420;
 export const SESSION_COOKIE = 'helmian_herald_session';
@@ -187,7 +195,10 @@ export async function startHerald({
           scopes: result.scopes,
           expiresAt: result.expiresAt,
         }, {
-          'set-cookie': `${SESSION_COOKIE}=${encodeURIComponent(result.token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`,
+          // Secure whenever the phone reached Herald over HTTPS (directly
+          // or through a TLS proxy). Plain-http LAN pairing keeps working;
+          // a Secure cookie would never be sent back over http.
+          'set-cookie': `${SESSION_COOKIE}=${encodeURIComponent(result.token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${requestIsHttps(request) ? '; Secure' : ''}`,
         });
       } catch (error) {
         sendJson(response, error?.status ?? 400, { error: 'invalid_pairing_request', message: error.message });
@@ -361,6 +372,8 @@ export async function startHerald({
     // shell, write, approval, and traversal-looking routes all end here.
     sendJson(response, 404, { error: 'route_not_found' });
   });
+
+  hardenServerTimeouts(server);
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);

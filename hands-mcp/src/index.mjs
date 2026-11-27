@@ -27,6 +27,14 @@ const mailer = createScribeMailer({ ...config.scribe, stateFile: `${config.state
 const hands = createHands({ config, guard, hub, audit, mailer, mailboxFor: (clientId) => mailboxForClient(oauth.clientName(clientId)) });
 const spokeTokens = createSpokeTokens({ file: `${config.stateDir}/spoke-tokens.json`, passphrase: config.passphrase, staticToken: config.spokeToken });
 const app = createApp({ config, oauth, hands, hub, spokeTokens });
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.error(`helmian-hands-mcp on :${config.port} public=${config.publicUrl} hands=${config.handsEnabled ? 'on' : 'off'} guard=${guard.live ? 'live' : 'NOT LIVE (mutating denied)'} mailback=${mailer ? 'on' : 'off'}`);
 });
+// Slow-request bounds (Helmian Site Guard HTTP layer, see
+// docs/SECURITY_EDGE_AND_TRANSPORT.md): a client gets 15 s to send its
+// headers and 30 s to send the whole request. Responses (long polls,
+// streams) are not limited by these.
+server.headersTimeout = 15_000;
+server.requestTimeout = 30_000;
+server.keepAliveTimeout = 5_000;
+server.maxHeadersCount = 100;

@@ -725,5 +725,13 @@ export function createExecutiveGuard({
   }
 
   const server = http.createServer((req, res) => { handle(req, res); });
+  // Slow-request bounds (Helmian Site Guard HTTP layer, see
+  // docs/SECURITY_EDGE_AND_TRANSPORT.md): a client gets 15 s to send its
+  // headers and 30 s to send the whole request. Responses (long polls,
+  // streams) are not limited by these.
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 30_000;
+  server.keepAliveTimeout = 5_000;
+  server.maxHeadersCount = 100;
   return { server, approvals, handle, issuedDecisions, candidates, grants, provenancePolicy };
 }

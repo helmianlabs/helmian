@@ -92,6 +92,19 @@ export function createApp({ config, oauth, hands, hub, spokeTokens }) {
   const ISSUER = new URL(config.publicUrl);
   const RESOURCE_URL = new URL(`${config.publicUrl}${config.mcpPath}`);
   const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(RESOURCE_URL);
+  // Transport and framing headers (Helmian Site Guard HTTP layer, see
+  // docs/SECURITY_EDGE_AND_TRANSPORT.md). The consent page takes a
+  // passphrase, so it must never be framed; HSTS only when the hub is
+  // served over https.
+  const httpsPublic = ISSUER.protocol === 'https:';
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (httpsPublic) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+  });
 
   app.get('/', (_req, res) => res.json({
     name: 'helmian-hands-mcp', status: 'ok', mcp_endpoint: RESOURCE_URL.toString(), transport: 'streamable-http', auth: 'oauth2.1+pkce+dcr',

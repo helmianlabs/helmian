@@ -8,10 +8,17 @@ import { createConsoleCommandWorker } from '../helmian-admin/src/cloud/console-c
 import { createAgentTaskWorker } from '../helmian-admin/src/cora/agent-task-worker.mjs';
 import { createArtifactExecutionWorker } from '../helmian-admin/src/cora/artifact-execution-worker.mjs';
 import { createConnectorOutboundWorker } from '../helmian-admin/src/cora/connector-outbound-worker.mjs';
+import { createHttpGuard } from '../helmian-admin/src/cloud/http-guard.mjs';
 import pg from 'pg';
 
 const REQUIRED = ['HELMION_DATABASE_URL', 'HELMION_EXPECTED_ENDPOINT_ID', 'HELMION_ADMIN_ISSUER', 'HELMION_ADMIN_CLIENT_ID', 'HELMION_ADMIN_REDIRECT_URI', 'HELMION_ADMIN_SESSION_SECRET'];
 let state = null;
+// Helmian Site Guard HTTP layer (src/cloud/http-guard.mjs): per-IP and
+// per-credential rate limits, a request-size ceiling, the HTTPS rule and
+// baseline security headers, per function instance. Volumetric DDoS is
+// the edge's job (docs/SECURITY_EDGE_AND_TRANSPORT.md).
+// HELMIAN_HTTP_GUARD=off turns it off.
+const httpGuard = createHttpGuard();
 
 function boot() {
   if (!state) {
@@ -49,6 +56,7 @@ export function restorePath(rawUrl) {
 }
 
 export default async function handler(req, res) {
+  if (httpGuard.check(req, res)) return;
   const path = restorePath(req.url);
   if (!path) { res.statusCode = 404; res.end('{"valid":false,"code":"ADMIN_ROUTE_NOT_FOUND"}'); return; }
   req.url = path;

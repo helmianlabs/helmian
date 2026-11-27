@@ -985,3 +985,17 @@ test('run_phone changes the phone only after a human Guard approval the PC verif
   assert.equal(badType.ok, false);
   assert.match(badType.error, /can only type plain/);
 });
+
+test('every response carries the anti-framing and anti-sniff headers; HSTS only over https', async () => {
+  const app = await boot();
+  try {
+    const res = await fetch(`${app.base}/healthz`);
+    assert.equal(res.headers.get('x-frame-options'), 'DENY');
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(res.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/);
+    // The test hub's public URL is plain http on loopback, so no HSTS.
+    assert.equal(res.headers.get('strict-transport-security'), null);
+  } finally {
+    await app.close();
+  }
+});
