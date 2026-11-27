@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#07111d">
     <script src="theme-init.js"></script>
-    <meta name="description" content="Helmian pricing: Taste $0, Solo from $29/mo, Team $49 per person, Business from $199/mo. Bring your own AI accounts; pay for the governed layer.">
+    <meta name="description" content="Helmian pricing: Free $0, Pro $8/month or $80/year, Team $15 per seat per month. Bring your own AI accounts; pay for the governed layer.">
     <meta property="og:title" content="Helmian Pricing">
     <meta property="og:description" content="Every Helmian tier and price, in the open. Bring your own AI accounts; pay for the room, the memory, the hands, and the approvals.">
     <meta property="og:type" content="website">
@@ -20,7 +20,7 @@
     <link rel="stylesheet" href="styles.css">
     <script src="site-config.js" defer></script>
     <script src="site.js" defer></script>
-    <title>Helmian Pricing — Taste $0, Solo $29/mo, Business $199/mo</title>
+    <title>Helmian Pricing — Free $0, Pro $8/mo, Team $15/seat</title>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -73,7 +73,7 @@
           <ul class="posture-list" aria-label="Pricing posture">
             <li>Bring your own AI</li>
             <li>Approvals in every paid tier</li>
-            <li>No per-seat charges for people</li>
+            <li>Helmian charges for the layer, never for tokens</li>
           </ul>
         </div>
       </section>
@@ -81,57 +81,68 @@
       <section class="section shell" id="solo" aria-labelledby="solo-title">
         <div class="section-heading">
           <p class="eyebrow"><span></span> For one person, or a few</p>
-          <h2 id="solo-title">Start with a taste. Pay when the agents start acting.</h2>
-          <p>Talking is the taste. Acting &mdash; hands, approvals, a memory that persists, a debate that runs itself &mdash; is the product.</p>
+          <h2 id="solo-title">Start free. Pay when the agents start acting.</h2>
+          <p>Acting &mdash; hands, approvals, a memory that persists, a debate that runs itself &mdash; is the product.</p>
         </div>
-        <div class="feature-grid">
-          <article class="feature-card price-card">
-            <p class="index">01</p>
-            <h3>Taste</h3>
-            <p class="price-amount">$0 <small>forever</small></p>
-            <p class="price-desc">The free tier a workspace steps down to. A new account does not start here &mdash; it starts in a Trial workspace, Maestro on, the seats offered, the approvals panel present &mdash; and lands on Taste only if the trial ends without a plan.</p>
-            <ul class="price-includes">
-              <li>1 AI seat connected</li>
-              <li>1 room, talk-only</li>
-              <li>Guard feed visible, read-only</li>
-              <li>7 days of history &mdash; memory does not persist</li>
-              <li>No hands, no Guard approvals</li>
-              <li>No channel mirrors, no Free-Willy debates</li>
-            </ul>
-            <a class="button button-secondary" href="/get-started">Create account</a>
-          </article>
-          <article class="feature-card price-card">
-            <p class="index">02</p>
-            <h3>Solo</h3>
-            <p class="price-amount">$29 <small>/mo Founding</small></p>
-            <p class="price-sub">$29 locked for life for the first 100 paying customers</p>
-            <p class="price-desc">The full governed room for one person. List price is $39/mo once the Founding cohort closes; $290/yr billed annually.</p>
-            <ul class="price-includes">
-              <li>Claude, ChatGPT, Grok, Gemini, and Mistral in one room &mdash; plus the wider bench the Agents tab offers: Runway, Groq, NVIDIA, Cloudflare, OpenRouter, and Muse</li>
-              <li>Unlimited rooms, Free-Willy debates</li>
-              <li>Guard approvals and the full audit trail</li>
-              <li>Persistent shared memory</li>
-              <li>Hands on your own PC, through the spoke</li>
-              <li>Discord and Slack mirrors</li>
-            </ul>
-            <a class="button button-primary" href="/get-started">Start the 14-day trial</a>
-            <p class="price-note">Every new account starts with 14 days of full Solo &mdash; no card. When it ends the workspace steps down to Taste, never deleted.</p>
-          </article>
-          <article class="feature-card price-card">
-            <p class="index">03</p>
-            <h3>Team</h3>
-            <p class="price-amount">$49 <small>per person /mo</small></p>
-            <p class="price-desc">Solo, shared: several people working in the same governed rooms.</p>
-            <ul class="price-includes">
-              <li>Everything in Solo</li>
-              <li>Several people in the same rooms</li>
-              <li>Per-person Guard policies</li>
-              <li>Shared workspaces and admin</li>
-            </ul>
-            <a class="button button-secondary" href="/get-started">Create account</a>
-            <p class="price-note">Running a whole company on Helmian? The Business plans below are priced per company &mdash; people are never charged there.</p>
-          </article>
+        <div class="price-table">
+          <input type="radio" name="pricing-page-billing" id="pricing-billing-monthly" checked>
+          <input type="radio" name="pricing-page-billing" id="pricing-billing-annual">
+          <div class="billing-toggle" role="group" aria-label="Billing period">
+            <label class="billing-option billing-option-monthly" for="pricing-billing-monthly">Monthly</label>
+            <label class="billing-option billing-option-annual" for="pricing-billing-annual">Annually</label>
+          </div>
+          <div class="feature-grid price-grid">
+            <article class="feature-card price-card">
+              <h3>Free</h3>
+              <p class="price-amount">$0 <small>/month</small></p>
+              <p class="price-sub">Fully open source</p>
+              <p class="price-desc">The free tier a workspace steps down to after a trial ends without a plan.</p>
+              <p class="price-includes-label">What's included:</p>
+              <ul class="price-includes">
+                <li>1 AI seat connected</li>
+                <li>1 room, talk-only</li>
+                <li>Guard feed visible, read-only</li>
+                <li>7 days of history &mdash; memory does not persist</li>
+              </ul>
+              <a class="button button-secondary" href="/get-started">Start for free</a>
+            </article>
+            <article class="feature-card price-card price-card-featured">
+              <h3>Pro</h3>
+              <p class="price-amount price-amount-monthly">$8 <small>/month</small></p>
+              <p class="price-amount price-amount-annual">$80 <small>/year</small></p>
+              <p class="price-sub">For personal use</p>
+              <p class="price-desc">The full governed room for one person.</p>
+              <p class="price-includes-label">Everything in Free, plus:</p>
+              <ul class="price-includes">
+                <li>Claude, ChatGPT, Grok, Gemini, and Mistral in one room</li>
+                <li>Unlimited rooms and Free-Willy debates</li>
+                <li>Guard approvals and the full audit trail</li>
+                <li>Persistent shared memory</li>
+                <li>Hands on your own PC, through the spoke</li>
+                <li>Discord and Slack mirrors</li>
+              </ul>
+              <div class="price-cta">
+                <p class="price-note">Every new account starts with 14 days of full Pro &mdash; no card. When it ends the workspace steps down to Free, never deleted.</p>
+                <a class="button button-primary" href="/get-started">Start the 14-day trial</a>
+              </div>
+            </article>
+            <article class="feature-card price-card">
+              <h3>Team</h3>
+              <p class="price-amount">$15 <small>/seat/month</small></p>
+              <p class="price-sub">Billed monthly</p>
+              <p class="price-desc">Several people working in the same governed rooms.</p>
+              <p class="price-includes-label">Everything in Pro, plus:</p>
+              <ul class="price-includes">
+                <li>Several people in the same rooms</li>
+                <li>Per-person Guard policies</li>
+                <li>Shared workspaces and admin</li>
+              </ul>
+              <a class="button button-secondary" href="/get-started">Choose Team</a>
+            </article>
+          </div>
+          <p class="price-license-note">The Free tier is fully open source. Paid tiers are licensed under the Business Source License (BSL).</p>
         </div>
+        <p class="price-company-link">Running a whole company on Helmian? The Business plans below are priced per company &mdash; people are never charged there.</p>
       </section>
 
       <section class="section section-rule shell" id="company" aria-labelledby="company-title">
@@ -218,7 +229,7 @@
           </li>
           <li>
             <span>04</span>
-            <div><h3>Trials end in a downgrade, not a deletion</h3><p>When a trial or pilot ends, the workspace steps down to Taste. Rooms and history stay readable; the seats stop acting until a plan starts. Your memory is never held hostage.</p></div>
+            <div><h3>Trials end in a downgrade, not a deletion</h3><p>When a trial or pilot ends, the workspace steps down to Free. Rooms and history stay readable; the seats stop acting until a plan starts. Your memory is never held hostage.</p></div>
           </li>
           <li>
             <span>05</span>

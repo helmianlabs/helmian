@@ -197,11 +197,77 @@
           <h2 id="plans-title">Choose the workspace that fits the work.</h2>
           <p>Create an account, then your download starts. No card required.</p>
         </div>
-        <div class="feature-grid">
-          <article class="feature-card"><h3>Helmian Solo</h3><p><strong>$29/mo Founding</strong> &mdash; locked for life for the first 100 paying customers ($39/mo after). The full governed room for one person: Claude, ChatGPT, Grok, Gemini, and Mistral in one room &mdash; plus the wider bench the Agents tab offers: Runway, Groq, NVIDIA, Cloudflare, OpenRouter, and Muse &mdash; with Guard approvals, persistent memory, and hands on your own PC. Every new account starts with 14 days of full Solo, no card. Taste is $0 &mdash; the free tier a workspace steps down to; a new account starts in a Trial workspace, Maestro on, the seats offered, the approvals panel present, and lands on Taste only if the trial ends without a plan.</p><a class="button button-primary" href="https://github.com/helmianlabs/helmian/releases" data-download="helmian">Download Helmian Desktop 1.0.6 for Windows</a><p class="download-note">The current Windows installer is Helmian Desktop 1.0.6, offered after sign-up and from the GitHub Releases page. <a href="/pricing.html">See full pricing</a> &mdash; Team, Business, and Enterprise tiers included.</p></article>
-          <article class="feature-card"><h3>Helmian Guard</h3><p>Browser posture and evidence review package.</p><a class="button button-primary" href="/api/billing/checkout?product=helmian_guard" data-download="guard">Get Guard</a></article>
+        <div class="price-table">
+          <input type="radio" name="pricing-billing" id="billing-monthly" checked>
+          <input type="radio" name="pricing-billing" id="billing-annual">
+          <div class="billing-toggle" role="group" aria-label="Billing period">
+            <label class="billing-option billing-option-monthly" for="billing-monthly">Monthly</label>
+            <label class="billing-option billing-option-annual" for="billing-annual">Annually</label>
+          </div>
+          <div class="feature-grid price-grid">
+            <article class="feature-card price-card">
+              <h3>Free</h3>
+              <p class="price-amount">$0 <small>/month</small></p>
+              <p class="price-sub">Fully open source</p>
+              <p class="price-desc">The free tier a workspace steps down to after a trial ends without a plan.</p>
+              <p class="price-includes-label">What's included:</p>
+              <ul class="price-includes">
+                <li>1 AI seat connected</li>
+                <li>1 room, talk-only</li>
+                <li>Guard feed visible, read-only</li>
+                <li>7 days of history &mdash; memory does not persist</li>
+              </ul>
+              <a class="button button-secondary" href="/get-started">Start for free</a>
+            </article>
+            <article class="feature-card price-card price-card-featured">
+              <h3>Pro</h3>
+              <p class="price-amount price-amount-monthly">$8 <small>/month</small></p>
+              <p class="price-amount price-amount-annual">$80 <small>/year</small></p>
+              <p class="price-sub">For personal use</p>
+              <p class="price-desc">The full governed room for one person.</p>
+              <p class="price-includes-label">Everything in Free, plus:</p>
+              <ul class="price-includes">
+                <li>Claude, ChatGPT, Grok, Gemini, and Mistral in one room</li>
+                <li>Unlimited rooms and Free-Willy debates</li>
+                <li>Guard approvals and the full audit trail</li>
+                <li>Persistent shared memory</li>
+                <li>Hands on your own PC, through the spoke</li>
+                <li>Discord and Slack mirrors</li>
+              </ul>
+              <div class="price-cta">
+                <p class="price-note">Every new account starts with 14 days of full Pro &mdash; no card. When it ends the workspace steps down to Free, never deleted.</p>
+                <a class="button button-primary" href="/get-started">Start the 14-day trial</a>
+              </div>
+            </article>
+            <article class="feature-card price-card">
+              <h3>Team</h3>
+              <p class="price-amount">$15 <small>/seat/month</small></p>
+              <p class="price-sub">Billed monthly</p>
+              <p class="price-desc">Several people working in the same governed rooms.</p>
+              <p class="price-includes-label">Everything in Pro, plus:</p>
+              <ul class="price-includes">
+                <li>Several people in the same rooms</li>
+                <li>Per-person Guard policies</li>
+                <li>Shared workspaces and admin</li>
+              </ul>
+              <a class="button button-secondary" href="/get-started">Choose Team</a>
+            </article>
+          </div>
+          <p class="price-license-note">The Free tier is fully open source. Paid tiers are licensed under the Business Source License (BSL).</p>
         </div>
-        <p>Every tier and price is on the <a href="/pricing.html">pricing page</a> &mdash; including Business plans from $199/mo per company, with people never charged.</p>
+        <div class="feature-grid plans-extras">
+          <article class="feature-card">
+            <h3>Helmian Desktop</h3>
+            <p>The current Windows installer is Helmian Desktop 1.0.6, offered after sign-up and from the GitHub Releases page.</p>
+            <a class="button button-primary" href="https://github.com/helmianlabs/helmian/releases" data-download="helmian">Download Helmian Desktop 1.0.6 for Windows</a>
+            <p class="download-note"><a href="/pricing.html">See company plans</a> on the pricing page.</p>
+          </article>
+          <article class="feature-card">
+            <h3>Helmian Guard</h3>
+            <p>Browser posture and evidence review package.</p>
+            <a class="button button-primary" href="/api/billing/checkout?product=helmian_guard" data-download="guard">Get Guard</a>
+          </article>
+        </div>
         <p data-guard-checkout-status>Account required so we can send updates. No payment is taken.</p>
       </section>
 
