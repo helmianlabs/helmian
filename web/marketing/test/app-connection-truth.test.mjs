@@ -98,20 +98,16 @@ test('a provider that has answered reads Answered — model rows and cards alike
 // fresh-signup walk found: the credential-connect route has always
 // accepted runway, so it now carries the same fields; Bite 12's
 // removal of its keys-help action stands.
-//
-// Superseded in part on 2026-11-17 (letter 935): the fields are now
-// the API-key fields for every seat; the ConnectFields (email +
-// password) road is retired on this page. The no-old-roads half of
-// this test stands unchanged.
+
+// The email + password ConnectFields road is live again (restored
+// 2026-11-27). The API-key fields stay on every seat alongside it.
+// The no-old-roads half of this test stands unchanged.
 
 test('bite 4: the sign-in AI cards carry connect fields when not connected, and lose the old roads', () => {
   const cards = Object.fromEntries(integrationSections({ presence: [], providers: { connections: [] }, connectors: {} })
     .flatMap((s) => s.cards).map((c) => [c.key, c]));
   for (const key of ['claude', 'openai', 'gemini', 'grok', 'mistral', 'runway']) {
-    // Since 2026-11-17 (letter 935) the fields these cards carry are
-    // the API-key fields; the email + password connect fields are
-    // retired on this page, so card.connect is null for every seat.
-    assert.equal(cards[key].connect, null, key);
+    assert.deepEqual(cards[key].connect, { provider: key }, key);
     assert.deepEqual(cards[key].apiKeyConnect, { provider: key, fields: ['api_key'] }, key);
     assert.equal(cards[key].action, null, `${key}: no link action and no help act remains`);
   }
@@ -148,8 +144,8 @@ test('change road: Runway has a truth row — a saved connection reads Connected
     .flatMap((s) => s.cards).map((c) => [c.key, c]));
   assert.equal(cards.runway.statusText, 'Connected', 'the card reads Connected from the same row');
   assert.equal(cards.runway.connect, null, 'a connected card shows no first-connect fields');
-  assert.equal(cards.runway.changeConnect, null, 'the password change road is retired on this page since 2026-11-17');
-  assert.deepEqual(cards.runway.changeApiKey, { provider: 'runway', fields: ['api_key'], label: 'New API key' }, 'and offers the key change road like every other seat');
+  assert.deepEqual(cards.runway.changeConnect, { provider: 'runway', label: 'New username and password' }, 'and offers the password change road like every sign-in seat');
+  assert.deepEqual(cards.runway.changeApiKey, { provider: 'runway', fields: ['api_key'], label: 'New API key' }, 'and keeps the key change road alongside it');
   assert.equal(cards.runway.action.label, 'Manage');
 });
 

@@ -7,10 +7,10 @@ You sign up for each AI with a username and password at that AI's
 own site. How Helmian then uses the account depends on the seat, and
 on whether its Integrations card already says **Connected**.
 
-API keys are optional for a seat that is already Connected, and for
-someone who already pays for a plan and wants to use that plan's
-key. A brand-new connect on the website today uses the key form on
-the card, described in section 3.
+On the Integrations cards you can type the free account's username
+(email) and password. An API key on the same card is optional — a
+backup, or for someone who already pays for a plan and wants to use
+that plan's key.
 
 ## 1. Make a Helmian account
 
@@ -69,32 +69,28 @@ password and stored them in the workspace credential vault as a
 `password_session`. That is how many existing Connected seats were
 first saved, including **Mistral Le Chat**.
 
-The live app still shows those cards. The password form on the card
-was removed on 20 November 2026 (commit `9ce1a8a1a1ff`). The connect
-route refuses a new username or password (it answers 410). Stored
-passwords were not deleted by that change. The connect route says
-the box executor can still read them until a separate per-tenant
-revocation.
+The live app shows those cards. The password form on the card was
+removed on 20 November 2026 (commit `9ce1a8a1a1ff`) and was turned
+back on on 27 November 2026, so a new user can type email and
+password on the card again. Stored passwords and already-Connected
+rows were not deleted.
 
 ### To connect a seat that is not yet Connected, on the website today
 
 1. On the Agents tab, press **Connect** on the card.
-2. The card opens in place. The form asks you to paste a key from
-   that provider's account (Cloudflare asks for an Account ID and an
-   API token). Press **Save key**.
+2. For Claude, ChatGPT, Gemini, Grok, Mistral Le Chat, and Runway,
+   the card opens in place with the email (username) and password
+   fields. Type the free account's username and password and save.
+   The same card also has a key field if you would rather paste a
+   key.
 3. Gemini's card can also offer **Connect with Google** when that
    road is switched on for the site.
-4. The card does not take a username and password today.
+4. Groq, NVIDIA, OpenRouter, Cloudflare, and Muse use the key form
+   on the card (Cloudflare asks for an Account ID and an API token).
 
-**Manage** on a Connected card opens the same card in place and
-offers **New API key** (Cloudflare: **New account number and API
-key**). That is the way to replace a saved connection with a key.
-It does not offer **New username and password**.
-
-The Settings page still has leftover wording that tells you to
-connect some seats with "email and password, right on its card."
-That sentence is out of date. The live card form is the key form
-above.
+**Manage** on a Connected sign-in card opens the same card in place
+and offers **New username and password**, and also **New API key**
+(Cloudflare: **New account number and API key**).
 
 ### Official account sign-in on the Windows app or Spoke (username and password on the AI's own page)
 
@@ -124,10 +120,9 @@ hands-spoke login grok
 hands-spoke login claude
 ```
 
-**Mistral Le Chat** is not in that official-CLI list. A new Mistral
-connect on the website uses the key form on its Integrations card. A
-card that already says Connected can be a username and password
-saved before 20 November 2026, as described above.
+**Mistral Le Chat** is not in that official-CLI list. On the website
+you sign in on its Integrations card with the account's username and
+password (or paste a key on the same card).
 
 A first official sign-in can meet a verification step only you can
 pass — a device check, a 2-Step prompt, or an emailed sign-in link.
@@ -143,17 +138,17 @@ with no saved connection reads **Synced · Not connected**.
 | Seat | How it signs in | Notes |
 | --- | --- | --- |
 | Helm | No external sign-in | Helmian-built. It is in the channel crew; it has no Integrations card. |
-| Claude | Official CLI sign-in on the Windows app or Spoke (username and password on Anthropic's page), or a key on the Integrations card. A card already Connected may be a username and password saved before 20 November 2026. | Card name: Claude. |
-| ChatGPT | Official CLI sign-in (**Login with ChatGPT**; username and password on OpenAI's page), or a key on the Integrations card. A card already Connected may be a username and password saved before 20 November 2026. | Card name: ChatGPT. |
-| Gemini | Official CLI sign-in (**Login with Google**), or **Connect with Google** on the card when that road is on, or a key on the Integrations card. A card already Connected may be a username and password saved before 20 November 2026, or a Google sign-in. | Card name: Gemini. |
-| Grok | Official CLI sign-in (**Login with SuperGrok**; username and password on xAI's page; plan must include Grok Build), or a key on the Integrations card. A card already Connected may be a username and password saved before 20 November 2026. | Card name: Grok. |
-| Mistral Le Chat | No official CLI in Helmian. A new connect on the website is a key on the Integrations card. A card already Connected may be a username and password saved before 20 November 2026. | Card name: Mistral Le Chat. Channel name: Mistral. |
+| Claude | Username and password on the Integrations card, or official CLI sign-in on the Windows app or Spoke (username and password on Anthropic's page), or a key on the card. | Card name: Claude. |
+| ChatGPT | Username and password on the Integrations card, or official CLI sign-in (**Login with ChatGPT**; username and password on OpenAI's page), or a key on the card. | Card name: ChatGPT. |
+| Gemini | Username and password on the Integrations card, or official CLI sign-in (**Login with Google**), or **Connect with Google** on the card when that road is on, or a key on the card. | Card name: Gemini. |
+| Grok | Username and password on the Integrations card, or official CLI sign-in (**Login with SuperGrok**; username and password on xAI's page; plan must include Grok Build), or a key on the card. | Card name: Grok. |
+| Mistral Le Chat | Username and password on the Integrations card (no official CLI in Helmian), or a key on the card. | Card name: Mistral Le Chat. Channel name: Mistral. |
 | Qwen | Local model on your own PC (Ollama). | In the channel crew. No Integrations card. |
 | Groq | Create a free Groq account with your username and password at the provider's site, then paste an API key on the Integrations card. | Free to create, no card needed. |
 | NVIDIA | Create a free NVIDIA Build account with your username and password at the provider's site, then paste an API key on the Integrations card. | Free to create. |
 | Cloudflare | Create a free Cloudflare account with your username and password at the provider's site, then paste the Account ID and API token on the Integrations card. | Free daily allocation for Workers AI. |
 | OpenRouter | Create a free OpenRouter account with your username and password at the provider's site, then paste an API key on the Integrations card. | Models ending in `:free` cost nothing. Replies byline the model that answered. |
-| Runway | A key from a Runway developer account, on the Integrations card. | For video and image generation. If the PC has reported it but no connection is saved, the card reads **Synced · Not connected**. |
+| Runway | Username and password on the Integrations card, or a key from a Runway developer account on the same card. | For video and image generation. If the PC has reported it but no connection is saved, the card reads **Synced · Not connected**. |
 | Muse | A Meta Model API key from <https://dev.meta.ai>, on the Integrations card. | Bills by use, no free tier. If the PC has reported it but no connection is saved, the card reads **Synced · Not connected**. |
 
 Where a new connect on the website uses a key, the card fields are
