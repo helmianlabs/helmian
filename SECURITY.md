@@ -14,7 +14,7 @@ fix it before you talk about it publicly.
 
 - This repository's code: the `helmion` CLI and hooks, Executive Guard
   (`executive-guard/`), the Helmian Guard extension (`extension/`), Site
-  Guard (`src/cloud/site-guard.mjs`), the Hands hub, door and PC spoke
+  Guard (`src/cloud/site-guard*.mjs`, `src/cloud/http-guard.mjs`), the Hands hub, door and PC spoke
   (`hands-mcp/`, `door/`, `src/hands/`), the bridges, and the web app and
   API in `web/marketing/`.
 - The hosted service at helmian.cloud and door.helmian.cloud.

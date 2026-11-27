@@ -35,15 +35,19 @@
 // erasure-intent patterns belong in the kernel itself if they are
 // ever to be shared — a kernel bite, not a fork here.
 //
-// The posture is the claim lane's: flag and surface. A screen that
-// fires records a Guard finding (guard-findings.mjs, the feed the
-// Guard panel reads) and the turn proceeds untouched. The stops are
-// two, both explicit: the destructive class — the Site Guard intake
-// stop — and sustained volume over the rate limiter's stop line
-// (bite A2, below). Either way the mesh hands out no work item for
-// the message, and each due seat's reply is the Site Guard's
+// The posture (2026-11-26, the blocking change): the destructive
+// class, the attack rules (prompt injection, secret-fishing, data
+// exfiltration — site-guard-rules.mjs, each rule block / flag / off,
+// default block) and sustained volume over the rate limiter's stop
+// line (bite A2, below) stop a turn. Then the mesh hands out no work
+// item for the message, and each due seat's reply is the Site Guard's
 // refusal, in the same terminal shape as a Guard spine refusal.
-// Nothing else stops a turn.
+// Weak markers, rules set to 'flag', and any attack rule on a seat's
+// own message are witnessed as a warning finding and the turn
+// proceeds untouched. (Before this change only the destructive class
+// and the rate stop could stop a turn; injection was flag-only.)
+// Seat replies get a second line, outbound redaction
+// (site-guard-outbound.mjs, wired in envoy-mesh.mjs postAsAgent).
 //
 // Findings carry the Site Guard's own 'site-guard' source: sql/083
 // widens sql/047's CHECK to admit it, guard-findings.mjs's enum
@@ -84,6 +88,17 @@
 
 import { detectDestructiveOperation } from '../core/governance.mjs';
 import { validateArtifactScriptContent } from '../cora/artifact-script-content-validation.mjs';
+import {
+  SITE_GUARD_ACTION,
+  SITE_GUARD_RULE_CLASS,
+  SITE_GUARD_RULES,
+  resolveSiteGuardPolicy,
+  screenAttackRules,
+  siteGuardRuleLabel,
+} from './site-guard-rules.mjs';
+
+export { SITE_GUARD_ACTION, SITE_GUARD_RULES, resolveSiteGuardPolicy } from './site-guard-rules.mjs';
+export { siteGuardPolicyFromEnv } from './site-guard-rules.mjs';
 
 export const SITE_GUARD_NAME = 'Helmian Site Guard';
 export const SITE_GUARD_FINDING_SOURCE = 'site-guard';
@@ -92,8 +107,14 @@ export const SITE_GUARD_KIND = 'helmian-site-guard-intake-screening';
 
 export const SITE_GUARD_CLASS = Object.freeze({
   DESTRUCTIVE: 'destructive-command',
-  INJECTION: 'prompt-injection',
+  INJECTION: SITE_GUARD_RULE_CLASS.INJECTION,
+  SECRET_FISHING: SITE_GUARD_RULE_CLASS.SECRET_FISHING,
+  EXFILTRATION: SITE_GUARD_RULE_CLASS.EXFILTRATION,
 });
+
+// The order classes are listed in a verdict, a stop record and a
+// refusal: the most serious first.
+const CLASS_ORDER = [SITE_GUARD_CLASS.DESTRUCTIVE, SITE_GUARD_CLASS.SECRET_FISHING, SITE_GUARD_CLASS.EXFILTRATION, SITE_GUARD_CLASS.INJECTION];
 
 // Bodies the mesh hands out are capped at 4,000 chars at every
 // insertion road; the screen still bounds its own input to the
@@ -104,45 +125,89 @@ const MAX_SCREEN_CHARS = 12000;
 /**
  * Screen one piece of inbound content. Pure: no I/O, no clocks.
  * Returns a frozen verdict:
- *   { blocked, classes: [{ class, hits }] }
- * `blocked` is true only when the destructive-command class fired —
- * the one class that stops a turn. `hits` names what matched, in the
- * owning kernel's own words (governance pattern labels;
- * prompt-injection.* check ids), so a finding can name the pattern
- * the same way every other Guard surface names it.
+ *   { blocked, classes: [{ class, hits, action }] }
+ * Four classes can fire:
+ *   - destructive-command: the governance kernel. Always blocks.
+ *   - prompt-injection, secret-fishing, data-exfiltration: the attack
+ *     rules in site-guard-rules.mjs. Each rule has its own action,
+ *     'block' by default ('flag' for the weak one-word markers), set
+ *     per rule or per class through `policy` (see
+ *     resolveSiteGuardPolicy and HELMIAN_SITE_GUARD_RULES).
+ * `hits` names what matched: governance pattern labels for the
+ * destructive class, rule ids for the others (plus the legacy
+ * prompt-injection.* check ids from the artifact validator, which
+ * stay flag-only). An entry's `action` is 'block' when any of its
+ * hits blocks, else 'flag'. `blocked` is true when any class blocks.
+ *
+ * `authorKind: 'agent'` (a seat's own message, such as a debate turn)
+ * turns every attack-rule block into a flag: seats quote the content
+ * they work on, and a seat's turn is not a visitor's attack. The
+ * destructive stop applies to every author, as before.
  */
-export function screenIntakeContent(body) {
+export function screenIntakeContent(body, { policy = null, authorKind = null } = {}) {
   const text = String(body ?? '').slice(0, MAX_SCREEN_CHARS);
-  const classes = [];
+  const byClass = new Map();
+  const add = (cls, hit, action) => {
+    const entry = byClass.get(cls) ?? { hits: [], action: SITE_GUARD_ACTION.FLAG };
+    if (!entry.hits.includes(hit)) entry.hits.push(hit);
+    if (action === SITE_GUARD_ACTION.BLOCK) entry.action = SITE_GUARD_ACTION.BLOCK;
+    byClass.set(cls, entry);
+  };
   if (text.trim()) {
     const destructive = detectDestructiveOperation({ command: text });
     if (destructive.blocked) {
-      classes.push(Object.freeze({ class: SITE_GUARD_CLASS.DESTRUCTIVE, hits: Object.freeze([...destructive.hits]) }));
+      for (const hit of destructive.hits) add(SITE_GUARD_CLASS.DESTRUCTIVE, hit, SITE_GUARD_ACTION.BLOCK);
     }
-    const validation = validateArtifactScriptContent({ scriptKind: 'narration', text });
-    const injectionIds = validation.failedCheckIds.filter((id) => id.startsWith('prompt-injection.'));
-    if (injectionIds.length) {
-      classes.push(Object.freeze({ class: SITE_GUARD_CLASS.INJECTION, hits: Object.freeze(injectionIds) }));
+    const resolved = resolveSiteGuardPolicy(policy);
+    const attack = screenAttackRules(text, { policy: resolved });
+    const fromSeat = String(authorKind ?? '') === 'agent';
+    for (const hit of attack.hits) {
+      add(hit.class, hit.rule, fromSeat ? SITE_GUARD_ACTION.FLAG : hit.action);
+    }
+    // The legacy markers from the artifact validator: flag-only
+    // witnesses, kept so the findings feed still names them.
+    const weak = resolved['prompt-injection.weak-marker'];
+    if (weak !== SITE_GUARD_ACTION.OFF) {
+      const validation = validateArtifactScriptContent({ scriptKind: 'narration', text });
+      for (const id of validation.failedCheckIds.filter((x) => x.startsWith('prompt-injection.'))) {
+        add(SITE_GUARD_CLASS.INJECTION, id, SITE_GUARD_ACTION.FLAG);
+      }
     }
   }
+  const classes = CLASS_ORDER.filter((cls) => byClass.has(cls)).map((cls) => Object.freeze({
+    class: cls,
+    hits: Object.freeze([...byClass.get(cls).hits]),
+    action: byClass.get(cls).action,
+  }));
   return Object.freeze({
-    blocked: classes.some((entry) => entry.class === SITE_GUARD_CLASS.DESTRUCTIVE),
+    blocked: classes.some((entry) => entry.action === SITE_GUARD_ACTION.BLOCK),
     classes: Object.freeze(classes),
   });
 }
 
-function severityForClass(cls) {
-  // The store's existing convention: the extension posts its
-  // destructive-command findings as critical and its other flags as
-  // warning (envoy-findings.mjs carries the same note).
-  return cls === SITE_GUARD_CLASS.DESTRUCTIVE ? 'critical' : 'warning';
+function entryBlocks(entry) {
+  return entry.class === SITE_GUARD_CLASS.DESTRUCTIVE || entry.action === SITE_GUARD_ACTION.BLOCK;
 }
 
-function titleForClass(cls, channelSlug) {
+function severityForEntry(entry) {
+  // The store's existing convention: the extension posts its
+  // destructive-command findings as critical and its other flags as
+  // warning (envoy-findings.mjs carries the same note). A blocked
+  // attack is critical too: it stopped a turn.
+  return entryBlocks(entry) ? 'critical' : 'warning';
+}
+
+const CLASS_PHRASE = Object.freeze({
+  [SITE_GUARD_CLASS.DESTRUCTIVE]: 'destructive command pattern',
+  [SITE_GUARD_CLASS.INJECTION]: 'prompt-injection markers',
+  [SITE_GUARD_CLASS.SECRET_FISHING]: 'secret-fishing attempt',
+  [SITE_GUARD_CLASS.EXFILTRATION]: 'data-exfiltration attempt',
+});
+
+function titleForEntry(entry, channelSlug) {
   const where = channelSlug ? ` in #${channelSlug}` : '';
-  return cls === SITE_GUARD_CLASS.DESTRUCTIVE
-    ? `${SITE_GUARD_NAME} stopped an inbound message${where} — destructive command pattern`
-    : `${SITE_GUARD_NAME} flagged an inbound message${where} — prompt-injection markers`;
+  const verb = entryBlocks(entry) ? 'stopped' : 'flagged';
+  return `${SITE_GUARD_NAME} ${verb} an inbound message${where} — ${CLASS_PHRASE[entry.class] ?? entry.class}`;
 }
 
 /**
@@ -174,12 +239,13 @@ export function siteGuardFindingsForScreening(screening, { channelId, channelSlu
   return screening.classes.map((entry) => Object.freeze({
     fingerprint: `${SITE_GUARD_FINGERPRINT_PREFIX}:${entry.class}:${String(messageId)}`,
     source: SITE_GUARD_FINDING_SOURCE,
-    severity: severityForClass(entry.class),
-    title: titleForClass(entry.class, channelSlug),
+    severity: severityForEntry(entry),
+    title: titleForEntry(entry, channelSlug),
     detail: Object.freeze({
       kind: SITE_GUARD_KIND,
       class: entry.class,
       hits: [...entry.hits],
+      action: entryBlocks(entry) ? SITE_GUARD_ACTION.BLOCK : SITE_GUARD_ACTION.FLAG,
       stopped: screening.blocked,
       channelId: String(channelId),
       ...(channelSlug ? { channelSlug: String(channelSlug) } : {}),
@@ -212,15 +278,35 @@ export function siteGuardStopRecord(screening) {
 
 /**
  * The refusal as the seat's reply text when the intake stop fires:
- * what stopped the message and which pattern matched, in plain
- * words, in the Site Guard's name — never the spine's (the spine
- * did not refuse this ask; it never evaluated it as one).
+ * what stopped the message, in plain words, in the Site Guard's name
+ * — never the spine's (the spine did not refuse this ask; it never
+ * evaluated it as one). It names the kind of pattern, never quotes
+ * the content, and never says which exact phrase tripped an attack
+ * rule (that would teach a prober the way around).
  */
 export function siteGuardRefusalText(screening) {
-  const destructive = screening.classes.find((entry) => entry.class === SITE_GUARD_CLASS.DESTRUCTIVE);
-  const labels = destructive ? destructive.hits.join(', ') : 'destructive command pattern';
-  return `${SITE_GUARD_NAME} stopped this message before it reached a seat. `
-    + `What matched: a destructive command pattern (${labels}). Nothing was run and nothing was changed.`;
+  const blocking = (screening?.classes ?? []).filter(entryBlocks);
+  const destructive = blocking.find((entry) => entry.class === SITE_GUARD_CLASS.DESTRUCTIVE);
+  if (destructive) {
+    return `${SITE_GUARD_NAME} stopped this message before it reached a seat. `
+      + `What matched: a destructive command pattern (${destructive.hits.join(', ')}). Nothing was run and nothing was changed.`;
+  }
+  const classes = new Set(blocking.map((entry) => entry.class));
+  const reasons = [];
+  if (classes.has(SITE_GUARD_CLASS.SECRET_FISHING)) reasons.push('it asks for keys, passwords, tokens, configuration or the system prompt, which are never shared');
+  if (classes.has(SITE_GUARD_CLASS.EXFILTRATION)) reasons.push('it asks to send data somewhere outside this conversation');
+  if (classes.has(SITE_GUARD_CLASS.INJECTION)) reasons.push('it tries to change or override the assistant\'s instructions');
+  const why = reasons.length ? reasons.join('; ') : 'it matched a blocked pattern';
+  return `${SITE_GUARD_NAME} stopped this message before it reached a seat, because ${why}. `
+    + 'Nothing was run, nothing was shared, and nothing was changed. If this was a genuine question, please rephrase it.';
+}
+
+/**
+ * Rule labels for a verdict, for the block log: rule id and its plain
+ * label, never content.
+ */
+export function siteGuardHitLabels(screening) {
+  return (screening?.classes ?? []).flatMap((entry) => entry.hits.map((hit) => (SITE_GUARD_RULES[hit] ? `${hit} (${siteGuardRuleLabel(hit)})` : hit)));
 }
 
 /**

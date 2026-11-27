@@ -4,7 +4,7 @@ Every environment variable the code reads, grouped by the part of the repo that 
 
 How this list was made (2026-11-26): a scan of non-test source for `process.env.X`, `env.X`, `env['X']`, `$env:X` (PowerShell), `Environment.GetEnvironmentVariable("X")` (C#) and `os.environ` (Python), merged with the five checked-in example files below. Operating-system variables (`PATH`, `USERPROFILE`, `LOCALAPPDATA`, …) are left out. A variable read through a computed name will not show up; when in doubt, search the source for the name.
 
-222 variables are listed.
+231 variables are listed.
 
 ## Example files in the repo
 
@@ -40,9 +40,18 @@ Most variables use the original spelling `HELMION_*`; newer ones use `HELMIAN_*`
 | `HELMIAN_HANDS_DISABLED` | `true` | `bin/pc-bridge.mjs` |
 | `HELMIAN_HANDS_PASSPHRASE` | `<secret — set in your secret store>` | `bin/hands-spoke.mjs`, `spoke-installer/install-pair.mjs` |
 | `HELMIAN_HANDS_URL` | `https://example.com` | `src/cloud/spoke-setup.mjs` |
+| `HELMIAN_HTTP_GUARD` | `off` (default on) | `src/cloud/http-guard.mjs` |
+| `HELMIAN_HTTP_MAX_BODY_BYTES` | `4194304` | `src/cloud/http-guard.mjs` |
+| `HELMIAN_HTTP_RATE_ANON_PER_IP` | `300` | `src/cloud/http-guard.mjs` |
+| `HELMIAN_HTTP_RATE_IP_CEILING` | `6000` | `src/cloud/http-guard.mjs` |
+| `HELMIAN_HTTP_RATE_PER_CREDENTIAL` | `1200` | `src/cloud/http-guard.mjs` |
+| `HELMIAN_HTTP_RATE_WINDOW_MS` | `60000` | `src/cloud/http-guard.mjs` |
+| `HELMIAN_HTTP_REQUIRE_HTTPS` | `off` (local dev only; default on) | `src/cloud/http-guard.mjs` |
 | `HELMIAN_PAIR_CODE` | `ABCD-1234` | `bin/hands-spoke.mjs` |
 | `HELMIAN_PAIR_CODE_ISSUER_TOKEN` | `<secret — set in your secret store>` | `src/cloud/spoke-setup.mjs` |
 | `HELMIAN_ROOT` | `/path/to/root` | `bin/hands-spoke.mjs`, `desktop/Helmion.BridgeService/BridgeSupervisor.cs` (+1 more) |
+| `HELMIAN_SITE_GUARD_OUTBOUND` | `off` (default on) | `src/cloud/envoy-mesh.mjs` |
+| `HELMIAN_SITE_GUARD_RULES` | `{"secret-fishing.env-config":"flag"}` | `src/cloud/site-guard-rules.mjs` |
 | `HELMION_ADMIN_ACCOUNT_PORTAL_URL` | `(empty)` | `src/cloud/identity-gateway.mjs` |
 | `HELMION_ADMIN_BOOTSTRAP_TENANT` | `example-tenant` | `src/cloud/owner-claim.mjs` |
 | `HELMION_ADMIN_BOOTSTRAP_TENANT_NAME` | `Example` | `src/cloud/owner-claim.mjs` |

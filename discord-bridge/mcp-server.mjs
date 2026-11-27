@@ -89,7 +89,7 @@ export function buildCore(config, overrides = {}) {
 }
 
 export function createHttpServer(config, core) {
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
     const json = (status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(body === undefined ? '' : JSON.stringify(body)); };
     const path = String(req.url ?? '').split('?')[0];
     if (req.method === 'GET' && path === '/healthz') {
@@ -118,6 +118,15 @@ export function createHttpServer(config, core) {
       }
     });
   });
+  // Slow-request bounds (Helmian Site Guard HTTP layer, see
+  // docs/SECURITY_EDGE_AND_TRANSPORT.md): a client gets 15 s to send its
+  // headers and 30 s to send the whole request. Responses (long polls,
+  // streams) are not limited by these.
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 30_000;
+  server.keepAliveTimeout = 5_000;
+  server.maxHeadersCount = 100;
+  return server;
 }
 
 async function runStdio(core) {
