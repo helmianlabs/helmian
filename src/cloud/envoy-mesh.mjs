@@ -44,8 +44,9 @@ import { classifySeatAskThread } from './envoy-actions.mjs';
 import { readConfigBody, readTenantConfigBodies, readAllConfigBodies, findConfigChannelsByBodyLike, writeConfigBody } from './envoy-config-store.mjs';
 import { evaluateSeatAction, guardRefusalText } from './envoy-guard.mjs';
 import { createGuardStore } from './guard-findings.mjs';
+import { redactOutbound, siteGuardOutboundRecord, siteGuardOutboundFinding } from './site-guard-outbound.mjs';
 import { ingestEvaluationFinding } from './envoy-findings.mjs';
-import { screenIntakeContent, siteGuardRefusalText, siteGuardStopRecord, ingestSiteGuardFindings, createSiteGuardRateLimiter, siteGuardSenderKey, siteGuardRateRefusalText, siteGuardRateStopRecord, ingestSiteGuardRateFinding, SITE_GUARD_RATE_CLASS, SITE_GUARD_RATE_FLAG_THRESHOLD, SITE_GUARD_RATE_STOP_THRESHOLD, SITE_GUARD_RATE_WINDOW_MS } from './site-guard.mjs';
+import { screenIntakeContent, siteGuardPolicyFromEnv, resolveSiteGuardPolicy, siteGuardRefusalText, siteGuardStopRecord, ingestSiteGuardFindings, createSiteGuardRateLimiter, siteGuardSenderKey, siteGuardRateRefusalText, siteGuardRateStopRecord, ingestSiteGuardRateFinding, SITE_GUARD_RATE_CLASS, SITE_GUARD_RATE_FLAG_THRESHOLD, SITE_GUARD_RATE_STOP_THRESHOLD, SITE_GUARD_RATE_WINDOW_MS } from './site-guard.mjs';
 import { readNotebookBlock, readNotebookEntries } from './envoy-notebook.mjs';
 import { createLibrarianStore, deriveChannelName, fileAssignmentCompletion, fileDispatchAsk, fileHelmSearchAnswer, fileIncidentFromDispatch, isGenericChannelTitle, nameChannelIfGeneric, readKnowledgeBaseBlock } from './envoy-librarian.mjs';
 import { settleMaestroAssignmentsIfNeeded } from './envoy-assignments.mjs';
@@ -393,7 +394,7 @@ function answeredEngineFor(customAgents, handle) {
   return normalizeProvider(engine) ?? engine;
 }
 
-export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, keepLoadedReadImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null, helmLogImpl = null, helmEntriesReadImpl = null, helmConnectorReadImpl = null, helmSearchImpl = null } = {}) {
+export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = null, nameLookup = null, agentStateImpl = null, guardWorkspace = undefined, guardStoreImpl = null, guardLogImpl = null, siteGuardLogImpl = null, siteGuardRateImpl = null, siteGuardPolicy = undefined, siteGuardOutbound = undefined, notebookImpl = null, notebookLogImpl = null, skillReadImpl = null, skillLogImpl = null, armingReadImpl = null, armingLogImpl = null, keepLoadedReadImpl = null, librarianImpl = null, librarianLogImpl = null, kbImpl = null, kbLogImpl = null, helmLogImpl = null, helmEntriesReadImpl = null, helmConnectorReadImpl = null, helmSearchImpl = null } = {}) {
   const tx = (actor, work) => withTenantTransaction(pool, contextFor(actor), async (client, context) => {
     await requireActiveTenantMembership(client, context);
     return work(client);
@@ -409,6 +410,15 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
   // store is the in-process map inside the limiter itself; the
   // stated limits (per process, forgotten on restart) are written
   // where it is built, in site-guard.mjs.
+  // Site Guard attack-rule actions (block / flag / off per rule).
+  // Built once per mesh: the constructor option wins, else
+  // HELMIAN_SITE_GUARD_RULES, else every rule's default.
+  // Site Guard outbound redaction of seat replies: on unless the
+  // constructor option or HELMIAN_SITE_GUARD_OUTBOUND says 'off'.
+  const outboundRedactionOn = siteGuardOutbound === undefined
+    ? String(process.env.HELMIAN_SITE_GUARD_OUTBOUND ?? '').trim().toLowerCase() !== 'off'
+    : siteGuardOutbound !== false && siteGuardOutbound !== 'off';
+  const siteGuardRulePolicy = siteGuardPolicy === undefined ? siteGuardPolicyFromEnv() : resolveSiteGuardPolicy(siteGuardPolicy);
   const siteGuardRate = siteGuardRateImpl ?? createSiteGuardRateLimiter({ now });
   // Intake rate trips (envoy-chat.mjs marks the exact messages that
   // crossed the flag and stop lines on the send path) are witnessed
@@ -1501,10 +1511,13 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           // message carrying prompt-injection markers, or a
           // kernel-shaped destruction the ask classifier's subset
           // never types, passed with no record at all.
-          // A flag (the prompt-injection class) is witnessed into
+          // A flag (a weak marker, a rule set to 'flag', or an
+          // attack rule on a seat's own message) is witnessed into
           // the Guard findings feed after commit and changes
-          // nothing about the turn. The destructive class is the
-          // one stop — the Site Guard intake stop: no work item is
+          // nothing about the turn. A block (the destructive class,
+          // or an attack rule at its default 'block' — prompt
+          // injection, secret-fishing, data exfiltration) is the
+          // Site Guard intake stop: no work item is
           // handed out, and each due seat's reply is the Site
           // Guard's refusal, written in its name with the stop
           // record in its metadata, marking the message answered
@@ -1559,7 +1572,7 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
             }
             continue;
           }
-          const screening = screenIntakeContent(message.body);
+          const screening = screenIntakeContent(message.body, { policy: siteGuardRulePolicy, authorKind: message.authorKind });
           if (screening.classes.length) {
             siteGuardJobs.push({ screening, channelId: String(channel.id), channelSlug: channel.slug, messageId: message.id, authorKind: message.authorKind, authorSubject: message.authorSubject, authorSource });
             if (screening.blocked) {
@@ -1951,12 +1964,20 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // seat, not an agent, so a 'maestro' post is refused outright —
       // even where a historical roster still lists it (Bite 2).
       if (provider === 'maestro') throw fail(400, 'ENVOY_AGENT_NOT_AN_AGENT');
-      const body = String(input?.body ?? '').trim();
-      if (!body || body.length > 4000) throw fail(400, 'ENVOY_MESSAGE_INVALID');
+      const rawBody = String(input?.body ?? '').trim();
+      if (!rawBody || rawBody.length > 4000) throw fail(400, 'ENVOY_MESSAGE_INVALID');
       const replyTo = input?.replyTo ? String(input.replyTo) : null;
       if (replyTo && !/^[0-9a-f-]{36}$/i.test(replyTo)) throw fail(400, 'ENVOY_REPLY_INVALID');
       const key = replyTo ? `reply:${replyTo}` : String(input?.idempotencyKey ?? '').trim();
       if (key.length < 8 || key.length > 200) throw fail(400, 'ENVOY_IDEMPOTENCY_INVALID');
+      // Helmian Site Guard outbound redaction (site-guard-outbound.mjs):
+      // anything secret-shaped in the seat's reply is replaced before
+      // the row is written, so no reader (desk, bridges, public chat)
+      // ever sees it. The metadata names kinds and counts only.
+      const outbound = outboundRedactionOn ? redactOutbound(rawBody) : null;
+      const body = outbound?.redacted ? outbound.text.slice(0, 4000) : rawBody;
+      const outboundMeta = outbound?.redacted ? { siteGuardOutbound: siteGuardOutboundRecord(outbound) } : null;
+      let outboundJob = null;
       let out = null;
       let answeredProvider = null;
       const result = await tx(actor, async (client) => {
@@ -1966,10 +1987,11 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
           throw fail(400, 'ENVOY_AGENT_UNSUPPORTED');
         }
         if (!config?.agents.includes(provider)) throw fail(403, 'ENVOY_AGENT_NOT_MEMBER');
-        const { row, replayed } = await insertMessage(client, { tenantId: actor.tenantId, channelId: String(channel.id), subject: agentSubject(provider, config?.customAgents ?? []), kind: 'agent', body, key });
+        const { row, replayed } = await insertMessage(client, { tenantId: actor.tenantId, channelId: String(channel.id), subject: agentSubject(provider, config?.customAgents ?? []), kind: 'agent', body, key, metadata: outboundMeta });
         if (!row) throw fail(500, 'ENVOY_RECEIPT_NOT_DURABLE');
         if (!replayed) {
           out = row;
+          if (outboundMeta) outboundJob = { channelId: String(channel.id), channelSlug: channel.slug, messageId: String(row.id), provider };
           answeredProvider = stdProvider ?? answeredEngineFor(config?.customAgents ?? [], provider);
         }
         return { receipt: { durable: true, replayed, message: messageOut(row) } };
@@ -1979,6 +2001,18 @@ export function createEnvoyMesh({ pool, now = () => Date.now(), publishImpl = nu
       // stamp the answer time on its presence row, after the reply's own
       // transaction has committed.
       if (answeredProvider) await stampAgentAnswered(pool, actor.tenantId, answeredProvider);
+      if (outboundJob) {
+        // Witnessed after commit, through a write that cannot throw:
+        // the redaction already happened; a findings failure only
+        // leaves a gap in the feed, logged loudly.
+        const input = siteGuardOutboundFinding(outbound, { ...outboundJob, at: new Date(now()).toISOString() });
+        const log = siteGuardLogImpl ?? ((...args) => console.error(...args));
+        try {
+          await (guardStoreImpl ?? createGuardStore(pool)).ingestFinding({ tenantId: actor.tenantId, subject: actor.subject }, input);
+        } catch (error) {
+          log(`[site-guard] Guard findings write FAILED (source site-guard, class outbound-secret, channel ${outboundJob.channelId}, message ${outboundJob.messageId}): ${error?.message ?? error} — the reply was redacted; the findings feed has a gap for it.`);
+        }
+      }
       return result;
     },
 

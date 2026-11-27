@@ -113,7 +113,11 @@ test('mesh on Postgres: T9 re-run — findings name the road each flagged messag
   const device = { tenantId, subject: owner.subject, role: 'owner', viaDeviceToken: true };
   await pool.query('insert into helmion.tenants(tenant_id, display_name) values ($1,$2)', [tenantId, 'Findings source test']);
   await pool.query('insert into helmion.tenant_memberships(tenant_id, subject, role) values ($1,$2,$3)', [tenantId, owner.subject, 'owner']);
-  const mesh = createEnvoyMesh({ pool, publishImpl: async () => {}, nameLookup: async () => 'Troy' });
+  // The T9 bodies are verbatim, and since the Site Guard attack rules
+  // block an instruction override by default, this run sets the
+  // prompt-injection class to flag: the test is about which road each
+  // flagged message arrived by, not about the stop.
+  const mesh = createEnvoyMesh({ pool, publishImpl: async () => {}, nameLookup: async () => 'Troy', siteGuardPolicy: { 'prompt-injection': 'flag' } });
   const chat = createEnvoyStore(pool);
   const pause = () => new Promise((r) => setTimeout(r, 20));
   try {
