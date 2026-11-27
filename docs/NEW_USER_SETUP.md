@@ -1,13 +1,16 @@
 # New user setup (helmian.cloud)
 
-Plain steps for a new person who wants to use Helmian with free AI
-accounts. You do not need an API key to get started.
+Plain steps for a new person who wants to use Helmian. The AI seats
+are free-account seats unless a section below says otherwise.
 
-The usual path is: create your Helmian account, install Helmian on
-your Windows PC, then sign in to each AI on that AI's own sign-in
-page. Helmian never asks for, and never stores, your AI account
-password. API keys are optional, and only for someone who already
-pays for a plan and wants to use that plan's key.
+You sign up for each AI with a username and password at that AI's
+own site. How Helmian then uses the account depends on the seat, and
+on whether its Integrations card already says **Connected**.
+
+API keys are optional for a seat that is already Connected, and for
+someone who already pays for a plan and wants to use that plan's
+key. A brand-new connect on the website today uses the key form on
+the card, described in section 3.
 
 ## 1. Make a Helmian account
 
@@ -19,8 +22,7 @@ pays for a plan and wants to use that plan's key.
 
 ## 2. Install Helmian on your PC
 
-Seats answer once your computer is linked and at least one AI is
-signed in.
+Seats that run on your computer answer once the PC is linked.
 
 1. On the Get started page, download **Helmian for Windows** (the
    current installer is Helmian-Setup-1.0.6-win-x64.exe). If the
@@ -29,7 +31,7 @@ signed in.
 2. Open the installer. Windows asks you to allow it; press **Yes**.
 3. Sign in with the same Helmian account you just created.
 4. Leave Helmian running. In the web app, open **Integrations**. The
-   **Your PC** card turns **Online** by itself.
+   **Your PC** card (Devices tab) turns **Online** by itself.
 
 macOS and Linux installs are not offered yet; Windows is ready.
 
@@ -39,14 +41,70 @@ once, for 10 minutes) into the installer. Owners can type the hands
 passphrase on that page instead. The current spoke installer is
 `Helmian-Spoke-Setup-1.0.10-win-x64.exe`.
 
-## 3. Sign in to your AI accounts (the main path — no API key)
+## 3. Connect your AI
 
-Do this in the Helmian desktop app on your PC, under Settings, or
-from the Spoke Start menu. Each sign-in opens that AI's own official
-sign-in. You type your email and password there, not into a Helmian
-form. Helmian never sees the password or the token.
+Open <https://helmian.cloud/app#integrations>. The page title is
+**Integrations**. Under it: "Connect the things Helmian works with.
+Passwords and keys are never shown here."
 
-You only need to sign in to the AIs you want to use.
+The tabs are **Agents**, **Devices**, **Chat and code**, and
+**Account**. The AI cards live on the **Agents** tab, under the
+heading **Connect your AI**.
+
+A card that already says **Connected** has a **Manage** button. A
+card that is only stamped from your PC, with no saved connection,
+says **Synced · Not connected** and has a **Connect** button.
+
+**Connected** means a saved row in the workspace connections store.
+The word does not say whether that row is a username and password
+saved earlier, an API key, or a Google sign-in.
+
+### If the card already says Connected
+
+You do not need to add a key to keep using that seat.
+
+From 2 November 2026 through 20 November 2026 (America/Boise), the
+same Integrations cards took the free account's username (email) and
+password and stored them in the workspace credential vault as a
+`password_session`. That is how many existing Connected seats were
+first saved, including **Mistral Le Chat**.
+
+The live app still shows those cards. The password form on the card
+was removed on 20 November 2026 (commit `9ce1a8a1a1ff`). The connect
+route refuses a new username or password (it answers 410). Stored
+passwords were not deleted by that change. The connect route says
+the box executor can still read them until a separate per-tenant
+revocation.
+
+### To connect a seat that is not yet Connected, on the website today
+
+1. On the Agents tab, press **Connect** on the card.
+2. The card opens in place. The form asks you to paste a key from
+   that provider's account (Cloudflare asks for an Account ID and an
+   API token). Press **Save key**.
+3. Gemini's card can also offer **Connect with Google** when that
+   road is switched on for the site.
+4. The card does not take a username and password today.
+
+**Manage** on a Connected card opens the same card in place and
+offers **New API key** (Cloudflare: **New account number and API
+key**). That is the way to replace a saved connection with a key.
+It does not offer **New username and password**.
+
+The Settings page still has leftover wording that tells you to
+connect some seats with "email and password, right on its card."
+That sentence is out of date. The live card form is the key form
+above.
+
+### Official account sign-in on the Windows app or Spoke (username and password on the AI's own page)
+
+For Claude, ChatGPT, Gemini, and Grok, you can also sign in on your
+PC through that AI's official login. You type your username and
+password there (or use Google), not into a Helmian form. Helmian
+never sees the password.
+
+Do this in the Helmian desktop app under Settings, or from the Spoke
+Start menu. You only need to sign in to the AIs you want to use.
 
 | AI | What you press | What happens |
 | --- | --- | --- |
@@ -66,53 +124,64 @@ hands-spoke login grok
 hands-spoke login claude
 ```
 
+**Mistral Le Chat** is not in that official-CLI list. A new Mistral
+connect on the website uses the key form on its Integrations card. A
+card that already says Connected can be a username and password
+saved before 20 November 2026, as described above.
+
+A first official sign-in can meet a verification step only you can
+pass — a device check, a 2-Step prompt, or an emailed sign-in link.
+That step belongs to the AI's own sign-in. Finish it in the official
+window.
+
 When the sign-in is finished, the PC reports that seat as present.
-You do not hand the same account over again for every message.
+Presence alone is not the same as **Connected**: a presence stamp
+with no saved connection reads **Synced · Not connected**.
 
-A first sign-in can meet a verification step only you can pass — a
-device check, a 2-Step prompt, or an emailed sign-in link. That step
-belongs to the AI's own sign-in. Finish it in the official window.
+### Each seat
 
-Do not type your AI account email and password into the Integrations
-cards in the web app or the desktop. That old form is retired: the
-connect route refuses a username or password and nothing is saved.
-
-### Other seats that use a free account key
-
-These seats have no official account sign-in in Helmian. You create
-a free account with the provider, then paste what they give you once
-on the seat's Integrations card (or the same card in the desktop
-app). This is not a paid-plan API key.
-
-| Seat | What the card takes | Where it comes from |
+| Seat | How it signs in | Notes |
 | --- | --- | --- |
-| Groq | API key | Sign up at <https://console.groq.com>, then create a key under API Keys. Free plan, no card. |
-| NVIDIA | API key | Create a free NVIDIA Developer account at <https://build.nvidia.com>, then generate an API key. |
-| OpenRouter | API key | Sign up at <https://openrouter.ai>, then create a key under Keys. Models ending in `:free` cost nothing. |
-| Cloudflare | Account ID and API token | Create a free account at <https://dash.cloudflare.com>, open Workers AI, copy your Account ID, then create an API token with the Workers AI permission. |
+| Helm | No external sign-in | Helmian-built. It is in the channel crew; it has no Integrations card. |
+| Claude | Official CLI sign-in on the Windows app or Spoke (username and password on Anthropic's page), or a key on the Integrations card. A card already Connected may be a username and password saved before 20 November 2026. | Card name: Claude. |
+| ChatGPT | Official CLI sign-in (**Login with ChatGPT**; username and password on OpenAI's page), or a key on the Integrations card. A card already Connected may be a username and password saved before 20 November 2026. | Card name: ChatGPT. |
+| Gemini | Official CLI sign-in (**Login with Google**), or **Connect with Google** on the card when that road is on, or a key on the Integrations card. A card already Connected may be a username and password saved before 20 November 2026, or a Google sign-in. | Card name: Gemini. |
+| Grok | Official CLI sign-in (**Login with SuperGrok**; username and password on xAI's page; plan must include Grok Build), or a key on the Integrations card. A card already Connected may be a username and password saved before 20 November 2026. | Card name: Grok. |
+| Mistral Le Chat | No official CLI in Helmian. A new connect on the website is a key on the Integrations card. A card already Connected may be a username and password saved before 20 November 2026. | Card name: Mistral Le Chat. Channel name: Mistral. |
+| Qwen | Local model on your own PC (Ollama). | In the channel crew. No Integrations card. |
+| Groq | Create a free Groq account with your username and password at the provider's site, then paste an API key on the Integrations card. | Free to create, no card needed. |
+| NVIDIA | Create a free NVIDIA Build account with your username and password at the provider's site, then paste an API key on the Integrations card. | Free to create. |
+| Cloudflare | Create a free Cloudflare account with your username and password at the provider's site, then paste the Account ID and API token on the Integrations card. | Free daily allocation for Workers AI. |
+| OpenRouter | Create a free OpenRouter account with your username and password at the provider's site, then paste an API key on the Integrations card. | Models ending in `:free` cost nothing. Replies byline the model that answered. |
+| Runway | A key from a Runway developer account, on the Integrations card. | For video and image generation. If the PC has reported it but no connection is saved, the card reads **Synced · Not connected**. |
+| Muse | A Meta Model API key from <https://dev.meta.ai>, on the Integrations card. | Bills by use, no free tier. If the PC has reported it but no connection is saved, the card reads **Synced · Not connected**. |
 
-The card fields are named `api_key` (Cloudflare uses `account_id` and
-`api_token`). Press **Save key**. The card reads **Connected** (or
-**API key saved** on the desktop) when the connection is saved. The
+Where a new connect on the website uses a key, the card fields are
+named `api_key` (Cloudflare uses `account_id` and `api_token`). The
 key is stored in your workspace vault, not in a file on your PC and
 not as an environment variable.
 
 ## 4. Open a channel and talk
 
-1. Confirm **Your PC** is **Online** and the seats you signed in
-   show as present (Synced, Connected, or the desktop sign-in
-   status, such as "Using ChatGPT subscription").
+The channel crew can include Helm, Claude, ChatGPT, Grok, Gemini,
+Mistral, Qwen, Groq, NVIDIA, Cloudflare, and OpenRouter — the seats
+that are in the room. Runway and Muse have Integrations cards as
+well.
+
+1. Confirm **Your PC** is **Online** if you are using official CLI
+   sign-in or Qwen on that PC.
 2. Open a channel and talk. Mention a seat by name (`@gemini`) to
    task one seat, or `@all` to give every signed-in seat a slice. A
    message with no name goes to every seat in the channel, the same
    as `@all`.
-3. After a seat answers, its card can read **Answered**.
+3. After a seat answers, its card can read **Answered**. Answered is
+   not the same as Connected.
 
 ## 5. API keys (optional, for paid plans)
 
 Skip this section unless you already pay for a plan and want to use
-that plan's key. The account sign-in in section 3 is enough for the
-usual free path.
+that plan's key, or you want to replace an earlier connection with a
+key.
 
 In the desktop app, each of these is labelled as a **fallback**
 under Settings:
@@ -125,15 +194,10 @@ under Settings:
 - Gemini: **GOOGLE GEMINI API KEY (fallback)**
 - Grok: the xAI API key under the SuperGrok sign-in, as a fallback
 
-On the web Integrations page, the same seats also have an API key
-field on the card (**Save key**, or **New API key** to replace one).
-Gemini's card can also offer **Connect with Google** when that road
-is switched on for the site.
-
-Muse connects only with a Meta Model API key from
-<https://dev.meta.ai> (billed per use, no free tier). Runway
-connects with a key from a Runway developer account, for video and
-image generation.
+On the web Integrations page, press **Manage** on a Connected card
+and then **New API key** (or **Connect** and **Save key** on a card
+that is not connected). Gemini's card can also offer **Connect with
+Google** when that road is switched on for the site.
 
 A key you paste is stored in the workspace vault. You do not set
 environment variables on your PC for the hosted app. If you run
@@ -142,8 +206,9 @@ Helmian yourself, operator settings are in
 
 ## 6. Link Slack and Discord (Envoy)
 
-1. Open **Team** chat and pick the channel.
-2. Press **Link Discord** or **Link Slack** and follow the prompts.
+1. Open **Integrations**, then the **Chat and code** tab.
+2. Press **Link a channel** on Discord or Slack and follow the
+   prompts. You can also start this from **Team** chat.
 3. Messages then mirror both ways. Details: `docs/TEAM_CONNECTORS.md`.
 
 ## 7. Shared memory — nothing to connect
@@ -177,21 +242,13 @@ audio comes back); if that is unavailable, Kokoro runs in your own
 browser tab, and if the local model cannot load, the browser's
 built-in speech covers as a labelled backup.
 
-## 9. Plugins — bundles from the catalog
+## 9. Plugins
 
-A plugin bundles a connector and its skill together in one install:
-
-1. Open **Integrations** and go to the **Plugins** tab.
-2. The catalog lists what the workspace can install. Today it holds
-   **Weather** (National Weather Service forecasts, alerts, and
-   current conditions, with the reading-a-forecast skill) and
-   **GitHub Review** (pull-request reviews over the workspace's
-   GitHub connection, with the reviewing-a-pull-request skill).
-3. Press **Install** on a bundle. Its skill lands on the seat's
-   shelf. Uninstall from the same tab whenever you like.
-
-Installing a plugin is not a connection — the connector it names
-still connects the ordinary way, once, on the Integrations page.
+Plugins are not an Integrations tab. They attach from the composer
+(the **Plugins** group) and live on your PC bridge. Attaching one
+gives the agent its approved tools for that turn. Installing or
+connecting the underlying service still happens the ordinary way
+(a GitHub link from Chat and code, and so on).
 
 ## Operator settings for one-time pairing codes
 
