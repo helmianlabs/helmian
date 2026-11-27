@@ -9,6 +9,7 @@ A map of `docs/`. Most files are dated design notes and handoffs written while t
 | [PRODUCT_TOUR.md](PRODUCT_TOUR.md) | Helmian — product tour and status |
 | [ENTRY_POINTS_AND_HOOKS.md](ENTRY_POINTS_AND_HOOKS.md) | Entry points and hooks |
 | [CONFIGURATION.md](CONFIGURATION.md) | Configuration and environment variables |
+| [SECURITY_EDGE_AND_TRANSPORT.md](SECURITY_EDGE_AND_TRANSPORT.md) | Edge, DDoS and transport security: what the code does and what to switch on at Cloudflare, Vercel and the box |
 | [REFERENCE.md](REFERENCE.md) | Helmian reference |
 | [NEW_USER_SETUP.md](NEW_USER_SETUP.md) | New user setup (helmian.cloud) |
 | [self-host-hetzner.md](self-host-hetzner.md) | Self-hosting Helmian on Hetzner |

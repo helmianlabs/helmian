@@ -63,22 +63,79 @@ this repo it sits in the desk's message path (`src/cloud/site-guard.mjs`,
 called from `src/cloud/envoy-mesh.mjs`), so every channel message is
 screened before it is handed to a seat.
 
-**What it hard-blocks — only two things:**
+**What it blocks (by default):**
 
 1. **Destructive commands** (the same pattern kernel the desktop gate and
-   the extension use).
-2. **Floods**: a sender over 90 messages in 60 seconds is stopped until the
+   the extension use). Always blocks; not configurable.
+2. **Prompt injection**: instruction overrides ("ignore all previous
+   instructions", fake `system:` / `[INST]` / `<|im_start|>` turns),
+   instructions planted for the AI inside pasted content, role-play
+   jailbreaks ("you are DAN", "developer mode with no filters"), and any
+   of these hidden by base64, hex, URL or `\u` escapes, HTML entities,
+   zero-width characters, look-alike letters, spaced letters, fullwidth
+   text or leetspeak.
+3. **Secret-fishing**: asks for the AI's or the site's keys, passwords,
+   tokens or connection strings; for the system prompt or hidden
+   instructions; or for environment variables and config files
+   (`cat .env`, `print process.env`, `~/.ssh/id_rsa`).
+4. **Data exfiltration**: asks to send the conversation, user data or
+   secrets to an outside address, markdown-image beacons, and asks for
+   other users' personal data.
+5. **Floods**: a sender over 90 messages in 60 seconds is stopped until the
    window cools (flagged from 30).
 
-Everything else is **flag only**. Prompt-injection markers are recorded as a
-warning finding in the Guard feed and the message still goes through. This
-code does not have a secret-fishing check. Findings store patterns and ids,
-never the message text.
+A blocked message never reaches a seat. The seat's reply is a short
+refusal that says which kind of thing was stopped, never quotes the
+message, and never says which phrase tripped it. A critical finding lands
+in the Guard feed with the rule ids, and no message text.
+
+**What it only flags:** the weak one-word markers (a lone "jailbreak", a
+line starting `system:`), because they hit ordinary messages ("how do I
+jailbreak my phone"). They raise a warning finding and the message goes
+through. A seat's own messages (debate turns) are also flag-only for the
+attack rules, because seats quote the content they work on.
+
+**Per-rule settings.** Every attack rule is `block`, `flag` or `off`,
+set with `HELMIAN_SITE_GUARD_RULES` (JSON, by rule id or by class), for
+example `{"secret-fishing.env-config":"flag"}` or
+`{"prompt-injection":"flag"}`. Unknown ids and values are ignored, so a
+typo can never switch a rule off. The rule ids are listed in
+`src/cloud/site-guard-rules.mjs`.
+
+**Outbound redaction.** Every seat reply is scanned before it is stored
+(`src/cloud/site-guard-outbound.mjs`, wired in `postAsAgent`). API keys
+and tokens, private keys, JWTs, passwords given as `password: …`,
+credentials inside URLs, database URLs, public server IP addresses and
+IP-in-hostname names (`1-2-3-4.sslip.io`) are replaced with
+`[REDACTED]` / `[REDACTED-ADDRESS]`. The desk, the Discord and Slack
+bridges and the public chat all read the stored row, so none of them can
+see the original. Git SHAs, checksums, UUIDs, private and loopback
+addresses and version numbers are left alone. Turn it off with
+`HELMIAN_SITE_GUARD_OUTBOUND=off`.
+
+**False positives.** The rules are tested against 94 attack lines and
+112 benign look-alikes (`test-support/site-guard-corpus.mjs`, run by
+`test/site-guard-attack-corpus.test.mjs`), including a held-out set
+written after tuning. Run over the 3,247 paragraphs of this repo's own
+docs before this change (security writing full of attack talk), the
+rules blocked 10, all of which quote an attack verbatim.
+
+**HTTP layer.** The cloud function (`web/marketing/api/helmian-admin.js`)
+also runs `src/cloud/http-guard.mjs`: per-credential and per-IP request
+limits, a 4 MB request ceiling, HTTPS-only (plain http is redirected or
+refused), and baseline security headers. The Node servers (Executive
+Guard, hands-mcp, the Scribe door, the Discord MCP server, Herald) cap
+how long a client may take to send a request (15 s for headers, 30 s for
+the whole request). These limits are per instance; stopping a real
+volumetric DDoS is the edge's job. What to switch on at Vercel,
+Cloudflare and the Hetzner box is in
+[docs/SECURITY_EDGE_AND_TRANSPORT.md](docs/SECURITY_EDGE_AND_TRANSPORT.md).
 
 The public page at [helmian.cloud/site-guard](https://helmian.cloud/site-guard)
-describes a deployment on another site that also blocks secret-fishing and
-injection. That deployment's code is not in this repo, so this README does
-not claim those blocks. There is no self-serve download for other sites.
+describes the TorqueSoft deployment. With this change the code in this
+repo blocks the same three classes the page names (destructive,
+secret-fishing, prompt injection) and strips secrets from what the AI
+sends back. There is no self-serve download for other sites.
 
 ## Architecture
 
@@ -228,6 +285,7 @@ database suites run there. Test exclusions, if any, live only in
 
 - Every command, service, HTTP endpoint and hook: [docs/ENTRY_POINTS_AND_HOOKS.md](docs/ENTRY_POINTS_AND_HOOKS.md)
 - Every environment variable, with example values: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+- DDoS, HTTPS and edge settings (what the code does, what to switch on outside it): [docs/SECURITY_EDGE_AND_TRANSPORT.md](docs/SECURITY_EDGE_AND_TRANSPORT.md)
 - Deeper reference (Maestro phases, signed confirmations, migrations, Codex adapter): [docs/REFERENCE.md](docs/REFERENCE.md)
 
 ## Watch it work

@@ -101,7 +101,9 @@ Device callers authenticate with `EXEC_GUARD_DEVICE_TOKENS`; human approvers wit
 | Per-agent hook settings | `templates/agent-os/targets/<agent>/` (`settings.hooks.json`, `hooks.json`, `hooks.toml`) | Installed by `helmion agent-os install` | Merged into the agent's own settings by `src/core/agent-os.mjs` (`mergeHookSettings`), between marker lines so they can be removed cleanly. |
 | Rule gates (not installed by default) | listed in `templates/agent-os/rules/RULES.json` with `"installed": false` | Stop / PreToolUse / PostToolUse | Described rules whose gate scripts are not shipped yet. |
 | Browser send-time check | `extension/content/` | Pressing send in claude.ai, ChatGPT, Gemini, Grok | Stops an explicit request to erase a whole computer, drive or data set; hides destructive code blocks behind a warning. |
-| Site Guard intake screen | `src/cloud/site-guard.mjs`, called from `src/cloud/envoy-mesh.mjs` | Every channel message about to be handed to a seat | Flags or stops (see the README for exactly what it stops). |
+| Site Guard intake screen | `src/cloud/site-guard.mjs`, called from `src/cloud/envoy-mesh.mjs` | Every channel message about to be handed to a seat | Blocks destructive commands, prompt injection, secret-fishing and data-exfiltration asks (rules in `src/cloud/site-guard-rules.mjs`, per-rule block/flag/off via `HELMIAN_SITE_GUARD_RULES`); flags weak markers; stops floods. See the README. |
+| Site Guard outbound redaction | `src/cloud/site-guard-outbound.mjs`, called from `postAsAgent` in `src/cloud/envoy-mesh.mjs` | Every seat reply, before it is stored | Replaces keys, tokens, passwords, URL credentials and public server addresses with `[REDACTED]`; records kinds and counts as a finding. |
+| Site Guard HTTP layer | `src/cloud/http-guard.mjs`, called first in `web/marketing/api/helmian-admin.js` | Every request to the cloud function | Per-credential / per-IP rate limits (429), 4 MB ceiling (413), HTTPS-only (308 / 403), security headers. |
 
 **Wiring the PreToolUse hook yourself.** `helmion init` copies the hook
 script into the workspace but does not edit any agent's settings file.
