@@ -1,8 +1,8 @@
 // Integrations page: small cards, plain words. Nothing internal is shown here:
 // no setting names, ids, addresses of services, or keys. The model is pure (tested);
 // renderIntegrations draws it.
-import { integrationsModel, profileSyncResultModel, usageModel } from './app-model.mjs?v=f214740deef24b87';
-import { avatarFor } from './avatars.mjs?v=f214740deef24b87';
+import { integrationsModel, profileSyncResultModel, usageModel } from './app-model.mjs?v=c91096780e1aff1b';
+import { avatarFor } from './avatars.mjs?v=c91096780e1aff1b';
 // The art URLs minted here ride the shell stamp (optimization
 // bite 2, 2026-11-12): the import graph loads this module under
 // `?v=<shell stamp>` (scripts/shell-stamp.mjs), so the stamp is
@@ -23,27 +23,18 @@ export const PHONE_URL = 'https://helmian.cloud/app';
 // runway, so its card was a dead end for no product reason — it now
 // carries the same fields as the other sign-in seats.
 //
-// PASSWORD FORM RETIRED ON THIS PAGE (Troy's order, 2026-11-17,
-// Scribe letter 935 — Helmian stops storing customers' AI account
-// passwords): the set is empty now. No AI card renders the email +
-// password form; every seat connects with the API-key form below,
-// which the credential-connect route records as the connection of
-// record since the same order's first bite. The constant and the
-// card fields it feeds (connect, changeConnect) stay in the model —
-// they simply come out null, exactly as they already did for the
-// key seats. The ConnectFields component itself is not deleted: the
-// server-side password shape retires in its own later bite.
-const CONNECT_FIELD_PROVIDERS = new Set([]);
-// Every AI seat now connects the same way: with a key the person
-// pastes on the card (api-key-fields.mjs), stored under the seat's
-// own name. The provider-catalog seats (src/cloud/provider-
-// registry.mjs) came first; the six former sign-in seats (claude,
-// openai, gemini, grok, mistral, runway) joined on 2026-11-17 —
-// per-provider roads verified against provider documentation that
-// day: an API key is the only self-serve official road for those
-// providers. The field lists are one key for most, and Cloudflare's
-// two pieces, which the connect route composes into the one saved
-// record its seat reads.
+// Sign-in seats carry the email + password fields (connect-fields.mjs).
+// This set was emptied on 2026-11-20 (commit 9ce1a8a1a1ff) and restored
+// on 2026-11-27 so a new user can type username and password on the
+// card again. The API-key form stays on every seat alongside it.
+const CONNECT_FIELD_PROVIDERS = new Set(['claude', 'openai', 'gemini', 'grok', 'mistral', 'runway']);
+// Every AI seat can also connect with a key the person pastes on the
+// card (api-key-fields.mjs), stored under the seat's own name. The
+// provider-catalog seats (src/cloud/provider-registry.mjs) came first;
+// the six sign-in seats also have a key slot, as a backup beside the
+// password road. The field lists are one key for most, and
+// Cloudflare's two pieces, which the connect route composes into the
+// one saved record its seat reads.
 const API_KEY_CONNECT_FIELDS = Object.freeze({
   claude: ['api_key'],
   openai: ['api_key'],
@@ -97,12 +88,12 @@ export function integrationSections({ presence = null, connectors = {}, provider
   const answered = new Set((Array.isArray(presence) ? presence : []).filter((p) => p?.lastAnsweredAt ?? p?.last_answered_at).map((p) => { const n = String(p.provider ?? p.providerName ?? '').toLowerCase(); return n === 'xai' ? 'grok' : n; }));
   const truth = new Map(integrationsModel(connectors, providers, { toolConnections, presence, now }).map((i) => [i.key, i]));
   const ai = [
-    ['claude', 'anthropic', 'Claude', 'Connect with a key from your Claude Console account.'],
-    ['openai', 'openai', 'ChatGPT', 'Connect with a key from your OpenAI account.'],
-    ['gemini', 'google', 'Gemini', 'Connect with a key from your Google AI Studio account.'],
-    ['grok', 'xai', 'Grok', 'Connect with a key from your xAI account.'],
-    ['mistral', 'mistral', 'Mistral Le Chat', 'Connect with a key from your Mistral account.'],
-    ['runway', 'runway', 'Runway', 'Connect with a key from your Runway developer account — for video and image generation.'],
+    ['claude', 'anthropic', 'Claude', 'Sign in with your Claude account.'],
+    ['openai', 'openai', 'ChatGPT', 'Sign in with your ChatGPT account.'],
+    ['gemini', 'google', 'Gemini', 'Sign in with your Google account.'],
+    ['grok', 'xai', 'Grok', 'Sign in with your Grok account.'],
+    ['mistral', 'mistral', 'Mistral Le Chat', 'Sign in with your Mistral account.'],
+    ['runway', 'runway', 'Runway', 'Use your Runway account for video and image generation.'],
     ['groq', 'groq', 'Groq', 'Connect with a key from your Groq account — free to create, no card needed.'],
     ['nvidia', 'nvidia', 'NVIDIA', 'Connect with a key from your NVIDIA Build account — free to create.'],
     ['cloudflare', 'cloudflare', 'Cloudflare', 'Connect with the two saved pieces from your Cloudflare account — free every day.'],
@@ -145,13 +136,11 @@ export function integrationSections({ presence = null, connectors = {}, provider
     // also carries a plain button that opens the same fields in
     // change mode, so the person can put in new values over the old
     // ones — before this, a connected card offered no way to correct
-    // its saved values from the page at all. Since 2026-11-17 every
-    // seat's change road is the key road ("New API key", Cloudflare
-    // names both of its pieces): for a card still connected by a
-    // stored password, this button is the migration path — paste a
-    // key and the key becomes the connection of record. The
-    // changeConnect line below stays for the model's shape and comes
-    // out null while CONNECT_FIELD_PROVIDERS is empty.
+    // its saved values from the page at all. The labels are the
+    // owner's own words for the button: sign-in seats get "New
+    // username and password", key seats get "New API key", and
+    // Cloudflare names both of its pieces. Sign-in seats also keep
+    // the key change road alongside the password one.
     const changeConnect = connected && CONNECT_FIELD_PROVIDERS.has(key) ? { provider: key, label: 'New username and password' } : null;
     const changeApiKey = connected && API_KEY_CONNECT_FIELDS[key]
       ? { provider: key, fields: API_KEY_CONNECT_FIELDS[key], label: key === 'cloudflare' ? 'New account number and API key' : 'New API key' }

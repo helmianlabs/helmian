@@ -1,48 +1,32 @@
-// Credential connect: the cloud side of the one connect road (owner's
-// law, 2026-11-01 — every AI provider connects the same way: a username
-// or email and a password, entered in the connect step itself). That
-// law is REVERSED by Troy's order of 2026-11-17 (Scribe letter 935):
-// Helmian stops storing customers' AI account passwords and moves to
-// official OAuth or API keys. The API-key road paragraph below
-// carries the current rule; the password shape is refused 410 (see
-// the fence in the POST handler), and stored passwords are revoked
-// per tenant in the separate revocation step.
+// Credential connect: the cloud side of the connect roads for AI seats.
 //
-// POST /api/admin/envoy/credential/connect { provider, apiKey } (or a
-// multi-field provider's named fields) — the shapes this route still
-// accepts. It used to also accept { provider, username, password } and
-// store the pair as a kind 'password' credential under
-// vault://tenant/<tenant>/<provider>/password with a
-// 'password_session' connections row. THAT ROAD IS RETIRED (Troy's
-// order, 2026-11-17, letter 935; the fence landed with the surface
-// bites): a body carrying username or password fields is refused 410
-// below, before any storage is touched. Password credentials stored
-// before the order stay readable by the box executor until the
-// per-tenant revocation step removes them; this route never resolves
-// anything and never returns secret material.
+// POST /api/admin/envoy/credential/connect { provider, username, password }
+//   1. stores the pair in the credential service as a kind 'password'
+//      credential under vault://tenant/<tenant>/<provider>/password;
+//   2. writes the provider_connections row the surfaces read
+//      (auth_mode 'password_session', credential reference only — the row
+//      never carries secret material, per the sql/031 contract).
+// The box executor resolves the password once per session establishment
+// (Guard-gated under the F4 rules) and answers off the stored session;
+// this route never resolves anything and never returns secret material.
+// This road was refused 410 from 2026-11-20 (commit 9ce1a8a1a1ff, after
+// Troy's 2026-11-17 order in Scribe letter 935) and was restored on
+// 2026-11-27 so a new user can type email and password on the
+// Integrations card again. Existing Connected rows and stored
+// credentials are left in place.
 //
 // API keys (Troy, 2026-11-04 — "we need API slots", for backups and for
-// tool services): POST { provider, apiKey } stores a kind 'api_key'
-// credential under vault://tenant/<tenant>/<provider>/api-key.
-//
-// API KEY AS A PRIMARY ROAD (Troy's order, 2026-11-17, Scribe letter
-// 935 — stop storing customers' AI account passwords; move to official
-// OAuth or API keys): a deliberate API-key connect is now a primary
-// connection, not a backup. The key is recorded as the connection of
-// record (auth_mode 'api_key'), replacing a 'password_session' record
-// when one exists. The stored password credential itself is NOT
-// deleted here — revoking it is a separate per-tenant step that runs
-// only after the tenant's replacement road works. One record is never
-// displaced by a key: an 'oauth_subscription' connection stays the
-// record, and the key lands in the vault only (recorded: false), the
-// same protection the old backup rule gave every row. Per-provider
-// roads were verified against provider documentation on 2026-11-17:
-// API keys are the only self-serve official road for claude, openai,
-// grok, mistral and runway; gemini additionally offers a documented
-// Google OAuth road, built separately. GET on this same path returns
-// the caller's connection rows (references and lifecycle only, never
-// secrets) so any client — web or desktop — renders card state from
-// the same read.
+// tool services): POST { provider, apiKey } (or a multi-field provider's
+// named fields) stores a kind 'api_key' credential under
+// vault://tenant/<tenant>/<provider>/api-key and, when the provider has
+// no connection row yet, records it (auth_mode 'api_key'). A key is a
+// BACKUP credential: when a row already exists (a password sign-in, an
+// OAuth connection) the key lands in the vault only and the row is left
+// untouched — a backup never replaces the primary connection record.
+// Gemini additionally offers a documented Google OAuth road, built
+// separately. GET on this same path returns the caller's connection
+// rows (references and lifecycle only, never secrets) so any client —
+// web or desktop — renders card state from the same read.
 //
 // Who may write: the owner/admin PERSON, on either client. A signed-in
 // session is one road; the other is the desktop link token, which is
@@ -77,6 +61,8 @@ export const CREDENTIAL_CONNECT_PATH = '/api/admin/envoy/credential/connect';
 // that posts here, but was missing from this set, so a Muse key could
 // never be stored through this route at all.
 const CONNECT_PROVIDERS = new Set(['claude', 'openai', 'grok', 'gemini', 'mistral', 'runway', 'ollama', 'heygen', 'higgsfield', 'groq', 'nvidia', 'cloudflare', 'openrouter', 'muse']);
+const MAX_USERNAME_CHARS = 256;
+const MAX_PASSWORD_CHARS = 1024;
 const MAX_API_KEY_CHARS = 1024;
 // A multi-field row's composed bundle (cloudflare: account_id +
 // api_token as one JSON record) is two values in one stored string.
@@ -95,6 +81,10 @@ function getPool() {
   return sharedPool;
 }
 
+export function credentialReferenceFor(tenantId, providerId) {
+  return `vault://tenant/${tenantId}/${providerId}/password`;
+}
+
 export function credentialApiKeyReferenceFor(tenantId, providerId) {
   return `vault://tenant/${tenantId}/${providerId}/api-key`;
 }
@@ -109,22 +99,39 @@ export function createCredentialConnectClient(env = process.env) {
 const SELECT = 'provider_id, auth_mode, credential_reference, lifecycle, adapter, updated_at';
 
 // The connections-row half of a connect: same insert shape and conflict
-// target as provider-connection-repository.save(). Runs inside the
-// caller's tenant transaction with membership re-verified. (The
-// writer's recordPasswordSession half was removed with the password
-// road's retirement, 2026-11-17: nothing may write a password_session
-// row any more.)
+// target as provider-connection-repository.save(), with the
+// password_session auth mode sql/063 widened the table for. Runs inside
+// the caller's tenant transaction with membership re-verified.
 export function createProviderConnectionWriter(pool) {
   return Object.freeze({
+    async recordPasswordSession(context, { providerId, credentialReference } = {}) {
+      return withTenantTransaction(pool, context, async (client) => {
+        await requireActiveTenantMembership(client, context);
+        const result = await client.query(
+          `insert into helmion.provider_connections (tenant_id, provider_id, auth_mode, credential_reference, lifecycle, adapter, updated_by_subject) values ($1,$2,'password_session',$3,'pending','credential_service',$4) on conflict (tenant_id,provider_id) do update set auth_mode=excluded.auth_mode, credential_reference=excluded.credential_reference, lifecycle='pending', adapter=excluded.adapter, updated_by_subject=excluded.updated_by_subject, updated_at=clock_timestamp() returning ${SELECT}`,
+          [context.tenantId, providerId, credentialReference, context.actorSubject],
+        );
+        if (result.rowCount !== 1) throw new Error('provider connection was not durable');
+        const item = result.rows[0];
+        return {
+          connection: {
+            providerId: item.provider_id,
+            authMode: item.auth_mode,
+            credentialReference: item.credential_reference,
+            lifecycle: item.lifecycle,
+            adapter: item.adapter,
+            updatedAt: item.updated_at,
+          },
+        };
+      });
+    },
+
     // The API-key half: the key itself lands in the vault (kind
-    // 'api_key') and, since 2026-11-17, the key is a PRIMARY road: a
-    // deliberate connect records the api_key row as the connection of
-    // record, replacing a 'password_session' record in place (the
-    // stored password credential is revoked separately, per tenant,
-    // after the replacement road works — never here). The one record
-    // a key never displaces is an 'oauth_subscription' connection:
-    // when that row exists it is read back unchanged and returned
-    // with recorded: false.
+    // 'api_key'); the row is recorded ONLY when the provider has no
+    // connection row yet. A backup key never replaces the primary
+    // connection record — when a row exists it is read back unchanged
+    // and returned with recorded: false. An 'oauth_subscription' row
+    // is protected the same way.
     async recordApiKey(context, { providerId, credentialReference } = {}) {
       return withTenantTransaction(pool, context, async (client) => {
         await requireActiveTenantMembership(client, context);
@@ -139,19 +146,17 @@ export function createProviderConnectionWriter(pool) {
             updatedAt: item.updated_at,
           },
         });
+        const inserted = await client.query(
+          `insert into helmion.provider_connections (tenant_id, provider_id, auth_mode, credential_reference, lifecycle, adapter, updated_by_subject) values ($1,$2,'api_key',$3,'pending','credential_service',$4) on conflict (tenant_id,provider_id) do nothing returning ${SELECT}`,
+          [context.tenantId, providerId, credentialReference, context.actorSubject],
+        );
+        if (inserted.rowCount === 1) return shape(inserted.rows[0], true);
         const existing = await client.query(
           `select ${SELECT} from helmion.provider_connections where tenant_id=$1 and provider_id=$2`,
           [context.tenantId, providerId],
         );
-        if (existing.rowCount === 1 && existing.rows[0].auth_mode === 'oauth_subscription') {
-          return shape(existing.rows[0], false);
-        }
-        const recorded = await client.query(
-          `insert into helmion.provider_connections (tenant_id, provider_id, auth_mode, credential_reference, lifecycle, adapter, updated_by_subject) values ($1,$2,'api_key',$3,'pending','credential_service',$4) on conflict (tenant_id,provider_id) do update set auth_mode=excluded.auth_mode, credential_reference=excluded.credential_reference, lifecycle='pending', adapter=excluded.adapter, updated_by_subject=excluded.updated_by_subject, updated_at=clock_timestamp() returning ${SELECT}`,
-          [context.tenantId, providerId, credentialReference, context.actorSubject],
-        );
-        if (recorded.rowCount !== 1) throw new Error('provider connection was not durable');
-        return shape(recorded.rows[0], true);
+        if (existing.rowCount !== 1) throw new Error('provider connection was not durable');
+        return shape(existing.rows[0], false);
       });
     },
 
@@ -243,16 +248,10 @@ export async function handleCredentialConnectRoute({
     if (Object.keys(body).some((key) => !['provider', 'username', 'password', 'apiKey', 'fields'].includes(key))) {
       throw Object.assign(new Error('credential connect body contains a forbidden field'), { status: 400 });
     }
-    // PASSWORD ROAD RETIRED (Troy's order, 2026-11-17, letter 935):
-    // a body carrying the password shape is refused 410 before any
-    // storage is touched — the road is gone, not malformed. The
-    // username/password keys stay in the allowlist above so this
-    // fence, not the 400, is what a password-shaped body meets.
-    if ('username' in body || 'password' in body) {
-      throw Object.assign(new Error('the password connect road is retired; connect with an API key or OAuth'), { status: 410, code: 'CREDENTIAL_PASSWORD_ROAD_RETIRED' });
-    }
     const provider = String(body.provider ?? '').toLowerCase();
     if (!CONNECT_PROVIDERS.has(provider)) throw Object.assign(new Error('unknown provider'), { status: 400 });
+    const username = typeof body.username === 'string' ? body.username.trim() : '';
+    const password = typeof body.password === 'string' ? body.password : '';
     const rawApiKey = typeof body.apiKey === 'string' ? body.apiKey : '';
     const registryRow = providerRegistryRow(provider);
     let apiKey = rawApiKey;
@@ -273,7 +272,11 @@ export async function handleCredentialConnectRoute({
       throw Object.assign(new Error('provider fields are only for multi-field providers'), { status: 400 });
     }
     const hasApiKey = apiKey.length > 0;
-    if (!hasApiKey) throw Object.assign(new Error('an API key is required'), { status: 400 });
+    const hasPair = username.length > 0 || password.length > 0;
+    if (hasApiKey && hasPair) {
+      throw Object.assign(new Error('send either an API key or a username and password, not both'), { status: 400 });
+    }
+    if (!hasApiKey && !hasPair) throw Object.assign(new Error('username and password, or an API key, is required'), { status: 400 });
 
     const client = injectedClient ?? createCredentialConnectClient();
     if (!client) throw Object.assign(new Error('credential service not configured'), { status: 503, code: 'CREDENTIAL_SERVICE_NOT_CONFIGURED' });
@@ -308,6 +311,39 @@ export async function handleCredentialConnectRoute({
       return true;
     }
 
+    if (!username || username.length > MAX_USERNAME_CHARS) throw Object.assign(new Error('username is required'), { status: 400 });
+    if (!password || password.length > MAX_PASSWORD_CHARS) throw Object.assign(new Error('password is required'), { status: 400 });
+
+    const credentialReference = credentialReferenceFor(actor.tenantId, provider);
+    const stored = await client.storeCredential({
+      tenantId: actor.tenantId,
+      actorSubject: actor.subject,
+      actorRole: actor.role,
+      sessionId: actor.sessionId,
+      requestId: actor.requestId,
+      providerId: provider,
+      credentialReference,
+      credentialKind: 'password',
+      username,
+      password,
+    });
+    if (!stored?.accepted) {
+      // Nothing is written on a refused store: no half-connected rows.
+      send(response, storeRefusalStatus(stored), JSON.stringify({
+        valid: false,
+        code: 'CREDENTIAL_STORE_REFUSED',
+        serviceStatus: String(stored?.status ?? 'credential_store_failed'),
+        secretMaterial: 'not_returned',
+      }));
+      return true;
+    }
+
+    const writer = injectedWriter ?? createProviderConnectionWriter(getPool());
+    const { connection } = await writer.recordPasswordSession(
+      { tenantId: actor.tenantId, actorSubject: actor.subject, actorRole: actor.role, sessionId: actor.sessionId, requestId: actor.requestId },
+      { providerId: provider, credentialReference },
+    );
+    send(response, 200, JSON.stringify({ valid: true, stored: true, connection, secretMaterial: 'not_returned' }));
   } catch (error) {
     const status = membershipError(error) ? 403 : (error?.status ?? 400);
     send(response, status, JSON.stringify({

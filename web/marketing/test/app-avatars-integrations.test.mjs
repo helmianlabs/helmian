@@ -30,17 +30,15 @@ test('integrations: plain cards, no internal jargon, honest states', () => {
   for (const [title, lines] of Object.values(HELP)) for (const t of [title, ...lines]) assert.doesNotMatch(t, JARGON, t);
   const by = Object.fromEntries(cards.map((c) => [c.key, c]));
   assert.equal(by.grok.statusText, 'Synced', 'a presence row alone reads Synced, never Connected (connection-truth correction, 2026-11-01)');
-  // One connect road (2026-11-01, Bite 4): a not-connected AI card
-  // carries the connect fields, not a link out or a help act. Since
-  // 2026-11-17 (letter 935) those fields are the API-key fields for
-  // every seat; the email + password fields (card.connect) are null.
-  assert.equal(by.grok.connect, null);
-  assert.deepEqual(by.grok.apiKeyConnect, { provider: 'grok', fields: ['api_key'] }, 'not connected → the key fields, not Manage');
+  // A not-connected sign-in card carries the email + password fields
+  // and the API-key fields alongside them, not a link out or a help act.
+  assert.deepEqual(by.grok.connect, { provider: 'grok' }, 'not connected → the connect fields, not Manage');
+  assert.deepEqual(by.grok.apiKeyConnect, { provider: 'grok', fields: ['api_key'] }, 'the key form stays alongside');
   assert.equal(by.grok.action, null);
-  assert.equal(by.openai.connect, null);
+  assert.deepEqual(by.openai.connect, { provider: 'openai' });
   assert.deepEqual(by.openai.apiKeyConnect, { provider: 'openai', fields: ['api_key'] });
   assert.equal(by.openai.action, null);
-  assert.equal(by.claude.connect, null);
+  assert.deepEqual(by.claude.connect, { provider: 'claude' });
   assert.deepEqual(by.claude.apiKeyConnect, { provider: 'claude', fields: ['api_key'] });
   assert.equal(by.claude.action, null);
   assert.equal(by.pc.statusText, 'Online');
@@ -71,15 +69,14 @@ test('integrations: AI card icons are settled letter tiles — asset images or t
   for (const c of ai) assert.equal(c.icon.glyph, undefined, `${c.key} carries no emoji glyph icon`);
 });
 
-test('integrations: every AI seat carries key fields, not sign-in fields, until connected', () => {
+test('integrations: sign-in seats carry email + password fields, and every seat also carries key fields, until connected', () => {
   const ai = integrationSections({}).find((s) => s.id === 'ai').cards;
   const by = Object.fromEntries(ai.map((c) => [c.key, c]));
-  // Since 2026-11-17 (letter 935) the six former sign-in seats carry
-  // the key form too, and no AI card carries the email + password
-  // form at all.
+  // The six sign-in seats carry the email + password form again, and
+  // keep the key form alongside it.
   for (const key of ['claude', 'openai', 'gemini', 'grok', 'mistral', 'runway']) {
-    assert.deepEqual(by[key].apiKeyConnect, { provider: key, fields: ['api_key'] }, `${key} connects with an API key`);
-    assert.equal(by[key].connect, null, `${key} never gets the email + password fields`);
+    assert.deepEqual(by[key].connect, { provider: key }, `${key} gets the email + password fields`);
+    assert.deepEqual(by[key].apiKeyConnect, { provider: key, fields: ['api_key'] }, `${key} also has an API key slot`);
   }
   // Gemini's Google road appears only when the deployment's roads
   // read says it is configured (restored 2026-11-17).
@@ -119,13 +116,11 @@ test('integrations: connected cards carry the plain change button; not-connected
     { providerId: 'cloudflare', authMode: 'api_key' },
   ] }, presence: [] }).find((s) => s.id === 'ai').cards.map((c) => [c.key, c]));
   // Mistral's saved connection now reads through her truth row, so
-  // her card closes the connect fields, reads Connected, and offers
-  // the change button. Since 2026-11-17 that button is the key road
-  // even for a password-connected card: it is the migration path off
-  // the stored password.
+  // her card closes the first-connect fields, reads Connected, and
+  // offers both change roads: New username and password, and New API key.
   assert.equal(on.mistral.statusText, 'Connected');
   assert.equal(on.mistral.connect, null, 'a connected card shows no first-connect fields');
-  assert.equal(on.mistral.changeConnect, null);
+  assert.deepEqual(on.mistral.changeConnect, { provider: 'mistral', label: 'New username and password' });
   assert.deepEqual(on.mistral.changeApiKey, { provider: 'mistral', fields: ['api_key'], label: 'New API key' });
   // Cloudflare's button names both of its pieces.
   assert.deepEqual(on.cloudflare.changeApiKey, { provider: 'cloudflare', fields: ['account_id', 'api_token'], label: 'New account number and API key' });
