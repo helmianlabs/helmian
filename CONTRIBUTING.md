@@ -8,6 +8,8 @@ Thanks for taking a look.
 4. Never commit secrets, connection strings, or `.env` files. `.env.example` holds placeholders only.
 5. The CLI and env vars use the spelling `helmion`. Please don't rename them; the product name is Helmian.
 
+New to the code? Start with the [README](README.md), then [docs/ENTRY_POINTS_AND_HOOKS.md](docs/ENTRY_POINTS_AND_HOOKS.md) and [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Security problems: see [SECURITY.md](SECURITY.md), not a public issue.
+
 Contributions are accepted under the repository [LICENSE](LICENSE) (Business Source License 1.1).
 
 Questions: open an issue, or email helmianlabs@gmail.com.

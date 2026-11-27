@@ -9,8 +9,12 @@ What it does:
 
 - It connects outward to Helmian on its own. Nothing on your PC opens a port
   or listens for incoming connections.
-- It can only run a fixed list of built-in commands. It has no free shell:
-  nobody can use it to run arbitrary programs on your PC.
+- It runs a fixed list of built-in commands, plus one free-text PowerShell
+  command type. A free-text command never runs on its own: every one needs a
+  human approval through Executive Guard, approved for that exact text, and
+  the spoke re-checks that approval on this PC before it runs. (Corrected
+  2026-11-26: this line used to say the spoke had no free shell, which
+  stopped being true when the free-text command was added on 2026-10-31.)
 - Reading is limited to the folders you allow. Files that look like secrets
   (password files, keys, credential stores) are always refused.
 - Anything that changes something — on the PC or the phone — needs a human
