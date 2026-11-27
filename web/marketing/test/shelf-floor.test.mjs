@@ -61,7 +61,7 @@ test('the fixed children inside the crew section are pinned, the pill block capp
 test('sized approvals section clips at its own box the same way', () => {
   assert.match(css, /\.ew-guard\.appr-sized \.ew-approvals \{[^}]*overflow:hidden/, 'the sized approvals section clips its content');
   assert.match(css, /\.ew-guard\.appr-sized \.ew-approvals-list \{[^}]*overflow:auto/, 'the approvals list scrolls inside');
-  assert.match(css, /\.ew-guard\.appr-sized \.ew-approvals-open \{ flex:none;/, 'the Open-approvals link is pinned');
+  assert.match(css, /\.ew-guard\.appr-sized \.ew-approvals \.ew-subhead \{ flex:none; \}/, 'the APPROVALS subhead is pinned');
 });
 
 test('a height stored under the old floor restores to natural, never to broken', () => {
