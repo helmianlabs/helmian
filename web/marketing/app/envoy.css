@@ -88,7 +88,6 @@ html[data-theme="midnight"] { --bg:#1A202C; --panel:#1F2733; --panel-2:#2D3748; 
 .ew-guard.appr-sized .ew-approvals { height:var(--ew-appr-h); display:flex; flex-direction:column; overflow:hidden; }
 .ew-guard.appr-sized .ew-approvals .ew-subhead { flex:none; }
 .ew-guard.appr-sized .ew-approvals-list { flex:1 1 auto; min-height:0; overflow:auto; }
-.ew-guard.appr-sized .ew-approvals-open { flex:none; align-self:flex-start; }
 
 .ew-head { display:flex; align-items:center; gap:8px; min-height:46px; padding:8px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
 .ew-head strong { font-weight:600; overflow:hidden; text-overflow:ellipsis; }
@@ -754,7 +753,6 @@ input, textarea { background:var(--bg); border:1px solid var(--border); border-r
 .ew-approval-main { display:flex; justify-content:space-between; gap:8px; }
 .ew-approval-meta { color:var(--muted); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ew-approval-btns { display:flex; gap:6px; }
-.ew-approvals-open { display:inline-block; margin:8px 10px 0; text-decoration:none; }
 .ew-field { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); }
 .ew-field select { width:100%; }
 /* A field's caption line: full-strength, so labels read as labels
