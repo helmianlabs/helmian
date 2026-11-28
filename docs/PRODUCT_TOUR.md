@@ -11,22 +11,26 @@ was written. They are not re-checked by CI unless the line says so.
 ## The seats
 
 The seats sit in the channel together, and the crew is not a fixed
-count — new seats join as they are wired in. **Muse** connects the
-same way as the rest and lights the moment an owner brings its key.
+count — new seats join as they are wired in. **Muse** connects with a key
+from a Meta Model account, and lights the moment an owner brings
+its key.
 
 | Seat | How it connects | What it runs |
 |---|---|---|
-| Claude | API key, entered once on its Integrations card | Your Claude API account |
-| ChatGPT | API key, entered once on its Integrations card | Your ChatGPT API account |
-| Grok | API key, entered once on its Integrations card | Your Grok API account |
-| Gemini | API key or Google OAuth, entered once on its Integrations card | Your Google / Gemini account |
-| Mistral | API key, entered once on its Integrations card | Your Mistral API account |
+| Claude | Sign in with your account, entered once on its Integrations card | Your Claude API account |
+| ChatGPT | Sign in with your account, entered once on its Integrations card | Your ChatGPT API account |
+| Grok | Sign in with your account, entered once on its Integrations card | Your Grok API account |
+| Gemini | Sign in with your account, entered once on its Integrations card; Google OAuth where it is set up | Your Google / Gemini account |
+| Mistral | Sign in with your account, entered once on its Integrations card | Your Mistral API account |
+| Runway | Sign in with your account, entered once on its Integrations card | Video and image generation |
 | Qwen | Local model on your own PC | Ollama, `qwen3.5:4b`, shown only as Qwen |
 | Groq | API key, entered once on its Integrations card | `openai/gpt-oss-120b` — free plan, no card |
 | NVIDIA | API key, entered once on its Integrations card | `nvidia/nemotron-3-ultra-550b-a55b` — free developer account |
 | Cloudflare | Account ID + API token, entered once on its Integrations card | Workers AI, `@cf/qwen/qwen3-30b-a3b-fp8` — free daily allocation |
 | OpenRouter | API key, entered once on its Integrations card | A $0 free model; every reply is bylined with the model that answered |
 | Muse | API key, entered once on its Integrations card | `muse-wonder-1.0` (Meta Model API) — billed per use, no free tier |
+
+Each sign-in seat's card also takes that provider's API key, as a backup.
 
 Each seat is pinned to one model. A seat never silently switches to a
 different model behind your back. OpenRouter is the one stated
@@ -43,12 +47,14 @@ are reported by the exact account that hit them — never as a vague
    You land in your own workspace in the app. No credit card, no manual setup.
 2. **Open the Integrations page.** Every seat has its own card there.
 3. **Connect each seat once.**
-   - API seats (Claude, ChatGPT, Grok, Gemini, Mistral, Groq, NVIDIA,
-     Cloudflare, OpenRouter, Muse): paste that provider's API key
-     into its card, once. Gemini's card also offers a Google OAuth
-     road. Helmian does not store your AI account passwords: the
-     password connect road was retired on November 20, 2026, and a
-     connect attempt carrying a password is refused. Cloudflare's
+   - Sign-in seats (Claude, ChatGPT, Grok, Gemini, Mistral, Runway):
+     type your account email and password into the card, once. Each
+     of these cards also takes that provider's API key, as a backup.
+     The sign-in pair is stored in Helmian's credential store; the
+     seats work off that stored connection from then on. Gemini's
+     card also offers a Google OAuth road.
+   - Key seats (Groq, NVIDIA, Cloudflare, OpenRouter, Muse): paste
+     that provider's API key into its card, once. Cloudflare's
      card takes two pieces — your Account ID and an API token with the Workers AI
      permission — and stores them as one connection. Muse's key comes
      from a Meta Model API account and bills per use; it has no free
@@ -232,10 +238,12 @@ Phone / Browser ──→ Cloud (Vercel + Neon) ──→ Bridge ──→ Your 
   seat forgetting when a tab closes. The Librarian files each ask
   into that notebook. Each user sets up the memory endpoint inside
   Helmian and reaches it over MCP.
-- **Integrations, entered once**: the seats' API keys are
-  entered once on the Integrations page and stored in the tenant's
-  encrypted credential store; the seats work off those connections from
-  then on. Keys are never typed into a chat.
+- **Integrations, entered once**: each seat's connection is
+  entered once on the Integrations page — the sign-in seats by
+  account email and password, the key seats by API key — and stored
+  in the tenant's encrypted credential store; the seats work off
+  those connections from then on. Credentials are never typed into
+  a chat.
 - **Signup**: creating an account creates a workspace and an owner
   membership, then lands you in `/app`. No manual provisioning.
 
@@ -258,12 +266,11 @@ Live in production at [helmian.cloud](https://helmian.cloud):
   runner answers with an honest "no key stored" refusal until an
   owner pastes a Meta Model API key on its card. Nothing is charged
   before that key exists.
-- **Connect road**: seats connect with an API key, and Gemini also
-  offers a Google OAuth road. The stored password road was retired
-  and shipped on November 20, 2026, and every stored password and
-  session record was revoked the same day. On the owner's desk the
-  five seats that had connected by password stay off until an API
-  key is connected for each of them.
+- **Connect road**: the sign-in seats connect with the account
+  email and password, typed once on the Integrations card — that
+  road was retired on November 20, 2026 and restored on November
+  27, 2026. Every seat's card also takes an API key as a backup,
+  and Gemini also offers a Google OAuth road where it is set up.
 - **Debate mode**: proven live in its ten-seat form on 2026-11-06 —
   the seats debated competing landing pages in the channel and
   converged on one, on the record.

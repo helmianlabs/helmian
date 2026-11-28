@@ -244,8 +244,8 @@ Built with Helmian (separate DairyForge products):
 [DairyForge Driver App](https://www.youtube.com/watch?v=eZHzldfgB-g) ·
 [Forge TMS](https://www.youtube.com/watch?v=Den0KNuqGGk)
 
-A new setup tutorial is coming. Earlier tutorials predate the November 20,
-2026 change that made seats connect by API key only, so they are not linked.
+A new setup tutorial is coming. Earlier tutorials predate the November 27,
+2026 restore of the email-and-password connect form, so they are not linked.
 What media exists and what is missing: [docs/MEDIA_INVENTORY.md](docs/MEDIA_INVENTORY.md).
 
 ## Screenshots
