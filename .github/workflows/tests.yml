@@ -64,27 +64,8 @@ jobs:
       - name: Root test suite
         run: npm test
 
-  # Strict (flipped 2026-11-22): the standing-grant tests pass on main
-  # as shipped (10/10), and the suite runs green by hand. The two TIMING
-  # tests measure steady-state scan time after a warm-up call, so the
-  # 100 ms bound judges the scanner, not first-call JIT compilation.
-  executive-guard:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install root dependencies
-        run: npm ci --no-audit --no-fund
-
-      # Directory targets fail at load on current Node; run file by file,
-      # the same way the suite is run by hand.
-      - name: Executive Guard suite
-        run: node --test executive-guard/test/*.test.mjs
+  # The executive-guard tree (and its suite) moved to the private
+  # troy83352/helmian-internal repo on 2026-11-28 (IP boundary audit).
 
   # Strict (flipped 2026-11-22): the suite runs green by hand (105/105)
   # across repeated runs. The package's own test script targets the
