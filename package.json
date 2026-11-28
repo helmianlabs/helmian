@@ -16,6 +16,7 @@
     "docs",
     "hooks",
     "src",
+    "sql",
     "templates",
     "README.md",
     "LICENSE"
